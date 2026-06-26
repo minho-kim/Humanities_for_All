@@ -7,7 +7,8 @@ import {
   groupBy,
   byId,
   normalizeSafeUrl,
-  publicSupabase,
+  SUPABASE_PUBLISHABLE_KEY,
+  SUPABASE_URL,
   statusLabels,
   supabase,
   URL_RULES,
@@ -177,6 +178,30 @@ function getSubmitForm(event) {
   return event.target instanceof HTMLFormElement ? event.target : null;
 }
 
+async function loadPublicReviews() {
+  const params = new URLSearchParams({
+    select: "id,course_id,author_name,body,verification_status,created_at",
+    order: "created_at.desc",
+  });
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/reviews?${params}`, {
+    headers: {
+      apikey: SUPABASE_PUBLISHABLE_KEY,
+      Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    return {
+      data: [],
+      error: { message: `공개 후기 조회 실패 (${response.status}): ${message.slice(0, 160)}` },
+    };
+  }
+
+  return { data: await response.json(), error: null };
+}
+
 function publicOrganizations() {
   return state.organizations.filter((organization) => organization.is_active !== false);
 }
@@ -276,7 +301,7 @@ async function loadData() {
     ["courses", supabase.from("courses").select("*").order("starts_at", { ascending: true })],
     ["sessions", supabase.from("course_sessions").select("*").order("starts_at", { ascending: true })],
     ["archives", supabase.from("course_archives").select("*").order("sort_order", { ascending: true })],
-    ["reviews", publicSupabase.from("reviews").select("id, course_id, author_name, body, verification_status, created_at").order("created_at", { ascending: false })],
+    ["reviews", loadPublicReviews()],
   ];
 
   const requests = await Promise.allSettled(requestMap.map(([, request]) => request));

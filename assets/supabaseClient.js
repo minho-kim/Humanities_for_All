@@ -4,7 +4,7 @@ export const SUPABASE_URL = "https://wmynvcuedusjnufmhdqv.supabase.co";
 export const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_rXN3xjZ2aJGeb00QMEs1KQ_bChOdSRI";
 export const ARCHIVE_BUCKET = "archive-media";
 export const SITE_MEDIA_BUCKET = "site-media";
-export const APP_VERSION = "2026.06.26.1414";
+export const APP_VERSION = "2026.06.26.1442";
 
 export const URL_RULES = Object.freeze({
   external: Object.freeze({ protocols: ["https:"] }),
@@ -24,14 +24,6 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
-  },
-});
-
-export const publicSupabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-  auth: {
-    persistSession: false,
-    autoRefreshToken: false,
-    detectSessionInUrl: false,
   },
 });
 
