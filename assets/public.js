@@ -189,32 +189,53 @@ function composeCourses() {
 
 async function loadData() {
   elements.resultSummary.textContent = "교육 정보를 불러오는 중입니다.";
-  const requests = await Promise.all([
-    supabase.from("organizations").select("*").order("sort_order", { ascending: true }),
-    supabase.from("instructors").select("*").order("name", { ascending: true }),
-    supabase.from("venues").select("*").order("name", { ascending: true }),
-    supabase.from("courses").select("*").order("starts_at", { ascending: true }),
-    supabase.from("course_sessions").select("*").order("starts_at", { ascending: true }),
-    supabase.from("course_archives").select("*").order("sort_order", { ascending: true }),
-    supabase.from("reviews").select("id, course_id, author_name, body, verification_status, created_at").order("created_at", { ascending: false }),
-  ]);
+  const requestMap = [
+    ["organizations", supabase.from("organizations").select("*").order("sort_order", { ascending: true })],
+    ["instructors", supabase.from("instructors").select("*").order("name", { ascending: true })],
+    ["venues", supabase.from("venues").select("*").order("name", { ascending: true })],
+    ["courses", supabase.from("courses").select("*").order("starts_at", { ascending: true })],
+    ["sessions", supabase.from("course_sessions").select("*").order("starts_at", { ascending: true })],
+    ["archives", supabase.from("course_archives").select("*").order("sort_order", { ascending: true })],
+    ["reviews", supabase.from("reviews").select("id, course_id, author_name, body, verification_status, created_at").order("created_at", { ascending: false })],
+  ];
 
-  const error = requests.find((result) => result.error)?.error;
-  if (error) throw error;
+  const requests = await Promise.allSettled(requestMap.map(([, request]) => request));
+  const failed = [];
+  const dataByKey = new Map();
 
-  [
-    state.organizations,
-    state.instructors,
-    state.venues,
-    state.courses,
-    state.sessions,
-    state.archives,
-    state.reviews,
-  ] = requests.map((result) => result.data || []);
+  requests.forEach((result, index) => {
+    const key = requestMap[index][0];
+    if (result.status === "rejected") {
+      failed.push(`${key}: ${result.reason?.message || "요청 실패"}`);
+      console.error(`[모두의 인문학] ${key} 데이터 요청 실패`, result.reason);
+      dataByKey.set(key, []);
+      return;
+    }
+    if (result.value.error) {
+      failed.push(`${key}: ${result.value.error.message}`);
+      console.error(`[모두의 인문학] ${key} 데이터 로딩 실패`, result.value.error);
+      dataByKey.set(key, []);
+      return;
+    }
+    dataByKey.set(key, result.value.data || []);
+  });
+
+  state.organizations = dataByKey.get("organizations") || [];
+  state.instructors = dataByKey.get("instructors") || [];
+  state.venues = dataByKey.get("venues") || [];
+  state.courses = dataByKey.get("courses") || [];
+  state.sessions = dataByKey.get("sessions") || [];
+  state.archives = dataByKey.get("archives") || [];
+  state.reviews = dataByKey.get("reviews") || [];
 
   composeCourses();
   populateFilters();
   render();
+
+  if (failed.length) {
+    showToast("일부 정보를 불러오지 못했습니다. 새로고침 후 다시 확인해 주세요.");
+    elements.resultSummary.textContent += " 일부 정보는 일시적으로 표시되지 않을 수 있습니다.";
+  }
 }
 
 function populateFilters() {

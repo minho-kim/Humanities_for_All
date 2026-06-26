@@ -3,7 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 export const SUPABASE_URL = "https://wmynvcuedusjnufmhdqv.supabase.co";
 export const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_rXN3xjZ2aJGeb00QMEs1KQ_bChOdSRI";
 export const ARCHIVE_BUCKET = "archive-media";
-export const APP_VERSION = "2026.06.26.1228";
+export const APP_VERSION = "2026.06.26.1234";
 
 if (!globalThis.__HUMANITIES_FOR_ALL_VERSION_LOGGED__) {
   globalThis.__HUMANITIES_FOR_ALL_VERSION_LOGGED__ = true;
