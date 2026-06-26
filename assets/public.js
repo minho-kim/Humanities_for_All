@@ -8,7 +8,6 @@ import {
   byId,
   statusLabels,
   supabase,
-  verificationLabels,
 } from "./supabaseClient.js";
 
 const state = {
@@ -113,7 +112,7 @@ function composeCourses() {
 }
 
 async function loadData() {
-  elements.resultSummary.textContent = "Supabase에서 교육을 불러오는 중입니다.";
+  elements.resultSummary.textContent = "교육 정보를 불러오는 중입니다.";
   const requests = await Promise.all([
     supabase.from("organizations").select("*").order("sort_order", { ascending: true }),
     supabase.from("instructors").select("*").order("name", { ascending: true }),
@@ -145,7 +144,7 @@ async function loadData() {
 function populateFilters() {
   const orgNames = state.organizations.map((org) => org.name);
   const topics = [...new Set(state.courses.map((course) => course.topic))].sort((a, b) => a.localeCompare(b, "ko"));
-  populateSelect(elements.orgFilter, "전체 단체", orgNames);
+  populateSelect(elements.orgFilter, "전체 기관", orgNames);
   populateSelect(elements.topicFilter, "전체 주제", topics);
 }
 
@@ -193,7 +192,7 @@ function renderStats() {
 function renderCards(courses) {
   elements.courseResults.className = "course-grid";
   if (!courses.length) {
-    elements.courseResults.innerHTML = `<div class="empty">조건에 맞는 교육이 없습니다. 검색어나 필터를 조금 넓혀보세요.</div>`;
+    elements.courseResults.innerHTML = `<div class="empty">조건에 맞는 교육이 없습니다. 검색어나 필터를 다시 확인해 주세요.</div>`;
     return;
   }
 
@@ -208,14 +207,14 @@ function renderCards(courses) {
         </div>
         <h3>${escapeHtml(course.title)}</h3>
         <div class="meta">
-          <span>🏛️ ${escapeHtml(course.organization?.name || "단체 미정")}</span>
+          <span>🏛️ ${escapeHtml(course.organization?.name || "기관 미정")}</span>
           <span>🎙️ ${escapeHtml(course.instructor?.name || "강사 미정")} 강사</span>
           <span>📍 ${escapeHtml(course.venue?.name || "장소 미정")}</span>
           <span>🗓️ ${escapeHtml(formatDate(firstSession?.starts_at || course.starts_at))}</span>
         </div>
         <p>${escapeHtml(course.summary || "")}</p>
         <div class="footer">
-          <span class="review-note">후기 ${course.reviews.length}개 · 자료 ${course.archives.length}개</span>
+          <span class="review-note">후기 ${course.reviews.length}개 · 기록 ${course.archives.length}개</span>
           <button class="btn small" type="button" data-open-course="${course.id}">상세 보기</button>
         </div>
       </article>
@@ -262,7 +261,7 @@ function renderReviews(course) {
   if (!course.reviews.length) return `<li class="review-item">아직 등록된 후기가 없습니다. 교육 후 첫 후기를 남겨보세요.</li>`;
   return course.reviews.map((review) => `
     <li class="review-item">
-      <strong>${escapeHtml(review.author_name)} <span class="badge ${review.verification_status === "verified" ? "green" : "gray"}">${escapeHtml(verificationLabels[review.verification_status] || "후기")}</span></strong><br>
+      <strong>${escapeHtml(review.author_name)} <span class="badge ${review.verification_status === "verified" ? "green" : "gray"}">${review.verification_status === "verified" ? "참여 확인" : "후기"}</span></strong><br>
       ${escapeHtml(review.body)}
     </li>
   `).join("");
@@ -270,18 +269,18 @@ function renderReviews(course) {
 
 function renderReviewForm(course) {
   if (!state.user) {
-    return `<p>후기 작성을 위해 간편 로그인이 필요합니다. 열람은 로그인 없이 가능합니다.</p><button class="btn" type="button" data-login-for-review>간편 로그인 후 작성</button>`;
+    return `<p>후기를 남기려면 로그인이 필요합니다. 교육 정보는 로그인 없이 볼 수 있습니다.</p><button class="btn" type="button" data-login-for-review>로그인 후 후기 쓰기</button>`;
   }
   if (course.status !== "finished") {
     return `<p>후기는 교육 종료 후 작성할 수 있습니다. 현재 상태: <strong>${escapeHtml(statusLabels[course.status] || course.status)}</strong></p>`;
   }
   return `
     <form id="reviewForm">
-      <label>참여 확인 코드<input name="participation_code" placeholder="현장에서 받은 코드가 있으면 입력"></label>
+      <label>참여 코드(선택)<input name="participation_code" placeholder="교육 현장에서 안내받은 코드가 있으면 입력해 주세요"></label>
       <label style="margin-top: 10px;">후기<textarea name="body" placeholder="교육에서 좋았던 점, 기억에 남은 질문, 다음 참여자에게 전하고 싶은 말을 적어주세요." required minlength="10"></textarea></label>
       <div class="actions" style="margin-top: 12px;">
         <button class="btn" type="submit">후기 등록</button>
-        <span class="badge green">코드 입력 시 관리자 확인 대기</span>
+        <span class="badge green">참여 코드는 확인 후 반영됩니다</span>
       </div>
     </form>
   `;
@@ -307,7 +306,7 @@ function openCourseDetail(courseId) {
           ${course.sessions.map((session) => `<li><strong>${escapeHtml(session.title)} · ${escapeHtml(formatDateTime(session.starts_at))}</strong><br>${escapeHtml(session.room || course.venue?.name || "")}</li>`).join("")}
         </ul>
         <div class="actions" style="margin-top: 14px;">
-          ${course.application_url ? `<a class="btn small" href="${escapeHtml(course.application_url)}" target="_blank" rel="noreferrer">신청 링크</a>` : ""}
+          ${course.application_url ? `<a class="btn small" href="${escapeHtml(course.application_url)}" target="_blank" rel="noreferrer">신청하기</a>` : ""}
           <button class="btn small secondary" type="button" data-login-for-review>후기 쓰기</button>
         </div>
       </div>
@@ -316,16 +315,16 @@ function openCourseDetail(courseId) {
         <p><strong>${escapeHtml(course.instructor?.name || "강사 미정")}</strong> ${escapeHtml(course.instructor?.title || "")}</p>
         <p>${escapeHtml(course.instructor?.bio || "")}</p>
         <p>📍 ${escapeHtml(course.venue?.name || "장소 미정")} ${course.venue?.address ? `· ${escapeHtml(course.venue.address)}` : ""}</p>
-        <p>운영 단체: ${escapeHtml(course.organization?.name || "")}</p>
+        <p>주관 기관: ${escapeHtml(course.organization?.name || "")}</p>
       </aside>
       <div class="section">
         <h3>후기 ${course.reviews.length}개</h3>
         <ul class="review-list">${renderReviews(course)}</ul>
       </div>
       <div class="section">
-        <h3>사진·영상 아카이브</h3>
+        <h3>사진·영상 기록</h3>
         <div class="media-grid">
-          ${course.archives.length ? course.archives.map((item) => `<a class="media" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer"><strong>${escapeHtml(item.type)} · ${escapeHtml(item.title)}</strong><small>${escapeHtml(item.caption || "자료 보기")}</small></a>`).join("") : `<p class="muted">등록된 아카이브 자료가 없습니다.</p>`}
+          ${course.archives.length ? course.archives.map((item) => `<a class="media" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer"><strong>${escapeHtml(item.type)} · ${escapeHtml(item.title)}</strong><small>${escapeHtml(item.caption || "자료 보기")}</small></a>`).join("") : `<p class="muted">등록된 사진·영상 기록이 없습니다.</p>`}
         </div>
       </div>
       <div class="section" style="grid-column: 1 / -1;">
@@ -360,11 +359,14 @@ async function handleReviewSubmit(event) {
 
   if (error) {
     if (error.code === "23505") showToast("이미 이 교육에 후기를 작성했습니다.");
-    else showToast(`후기 등록 실패: ${error.message}`);
+    else {
+      console.error("Review submission failed", error);
+      showToast("후기를 등록하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    }
     return;
   }
 
-  showToast(participationCode ? "후기가 등록되었습니다. 참여 확인은 관리자 검수 후 반영됩니다." : "후기가 등록되었습니다.");
+  showToast(participationCode ? "후기가 등록되었습니다. 참여 확인은 확인 후 반영됩니다." : "후기가 등록되었습니다.");
   await loadData();
   openCourseDetail(course.id);
 }
@@ -372,7 +374,7 @@ async function handleReviewSubmit(event) {
 async function refreshSession() {
   const { data } = await supabase.auth.getSession();
   state.user = data.session?.user || null;
-  elements.loginButton.textContent = state.user ? `${getDisplayName(state.user)}님` : "후기 로그인";
+  elements.loginButton.textContent = state.user ? `${getDisplayName(state.user)}님` : "후기 쓰기";
   elements.loginStatus.textContent = state.user ? `${state.user.email || getDisplayName(state.user)}로 로그인 중입니다.` : "로그인하지 않았습니다.";
 }
 
@@ -385,7 +387,8 @@ async function handleLogin(event) {
     options: { emailRedirectTo: getCurrentUrlWithoutHash() },
   });
   if (error) {
-    showToast(`로그인 링크 발송 실패: ${error.message}`);
+    console.error("Login link request failed", error);
+    showToast("로그인 링크를 보내지 못했습니다. 이메일을 확인한 뒤 다시 시도해 주세요.");
     return;
   }
   showToast("이메일로 로그인 링크를 보냈습니다.");
@@ -448,6 +451,7 @@ async function initialize() {
 }
 
 initialize().catch((error) => {
+  console.error("Public page initialization failed", error);
   elements.resultSummary.textContent = "교육을 불러오지 못했습니다.";
-  elements.courseResults.innerHTML = `<div class="empty">오류: ${escapeHtml(error.message)}</div>`;
+  elements.courseResults.innerHTML = `<div class="empty">일시적으로 교육 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.</div>`;
 });
