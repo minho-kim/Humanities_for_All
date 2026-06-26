@@ -378,6 +378,12 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand-2); box-sh
 .table-list { display: grid; gap: 10px; }
 .table-row { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 18px; background: #fff; }
 .row-top { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.media-preview { display: flex; gap: 12px; align-items: center; margin-top: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 16px; background: #fbf6ec; }
+.media-preview img, .admin-thumb { width: 58px; height: 58px; object-fit: cover; border-radius: 16px; border: 1px solid var(--line); background: #fff; }
+.media-preview a { color: var(--brand); font-weight: 900; }
+.media-upload-note { margin: 6px 0 0; color: var(--muted); font-size: 0.86rem; }
+.admin-thumb { justify-self: start; }
+.admin-thumb.round { border-radius: 50%; }
 .muted { color: var(--muted); }
 .code { padding: 10px 12px; border-radius: 14px; background: #2c241b; color: #fff; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.86rem; }
 

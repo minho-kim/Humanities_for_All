@@ -1,5 +1,6 @@
 import {
   ARCHIVE_BUCKET,
+  SITE_MEDIA_BUCKET,
   escapeHtml,
   formatDateTime,
   getDisplayName,
@@ -38,6 +39,14 @@ const elements = {
   refreshButton: document.getElementById("refreshButton"),
   toast: document.getElementById("toast"),
 };
+
+const SITE_IMAGE_TYPES = new Map([
+  ["image/jpeg", ".jpg"],
+  ["image/png", ".png"],
+  ["image/webp", ".webp"],
+  ["image/gif", ".gif"],
+]);
+const SITE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 
 function showToast(message) {
   elements.toast.textContent = message;
@@ -78,6 +87,48 @@ function localDateTimeValue(value) {
 
 function toIso(value) {
   return value ? new Date(value).toISOString() : null;
+}
+
+function hasSelectedFile(file) {
+  return file instanceof File && file.size > 0;
+}
+
+function safeStorageSegment(value, fallback) {
+  const segment = String(value || fallback)
+    .normalize("NFKD")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase()
+    .slice(0, 48);
+  return segment || fallback;
+}
+
+async function uploadSiteImage(file, folder, baseName) {
+  if (!hasSelectedFile(file)) return "";
+  if (!SITE_IMAGE_TYPES.has(file.type)) {
+    throw new Error("이미지는 JPG, PNG, WEBP, GIF 형식만 업로드할 수 있습니다.");
+  }
+  if (file.size > SITE_IMAGE_MAX_BYTES) {
+    throw new Error("이미지는 5MB 이하로 업로드해 주세요.");
+  }
+
+  const extension = SITE_IMAGE_TYPES.get(file.type);
+  const uniqueId = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const path = `${folder}/${safeStorageSegment(baseName, "image")}-${uniqueId}${extension}`;
+  const { error } = await supabase.storage.from(SITE_MEDIA_BUCKET).upload(path, file, {
+    cacheControl: "3600",
+    contentType: file.type,
+    upsert: false,
+  });
+  if (error) throw error;
+  const { data } = supabase.storage.from(SITE_MEDIA_BUCKET).getPublicUrl(path);
+  return { publicUrl: data.publicUrl, path };
+}
+
+async function removeUploadedSiteImage(path) {
+  if (!path) return;
+  const { error } = await supabase.storage.from(SITE_MEDIA_BUCKET).remove([path]);
+  if (error) console.warn("[모두의 인문학] 업로드 롤백 파일 삭제 실패", error);
 }
 
 function statusBadge(status) {
@@ -228,6 +279,9 @@ function renderOrganizationForm(organization = {}) {
         <label>홈페이지<input name="website_url" value="${escapeHtml(organization.website_url || "")}" placeholder="https://"></label>
       </div>
       <label style="margin-top: 10px;">단체 소개<textarea name="description" placeholder="공개 페이지에 표시할 단체 소개를 입력하세요.">${escapeHtml(organization.description || "")}</textarea></label>
+      ${organization.logo_url ? `<div class="media-preview"><img src="${escapeHtml(organization.logo_url)}" alt="${escapeHtml(organization.name || "단체")} 로고"><a href="${escapeHtml(organization.logo_url)}" target="_blank" rel="noreferrer">현재 로고 보기</a></div>` : ""}
+      <label style="margin-top: 10px;">로고 이미지 업로드<input name="logo_file" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>
+      <p class="media-upload-note">JPG, PNG, WEBP, GIF 형식 · 5MB 이하. 파일을 선택하면 저장할 때 Supabase Storage에 업로드됩니다.</p>
       <label style="margin-top: 10px;">로고 이미지 URL<input name="logo_url" value="${escapeHtml(organization.logo_url || "")}" placeholder="https://"></label>
       <label style="margin-top: 10px;">연락처<input name="contact_email" value="${escapeHtml(organization.contact_email || "")}" placeholder="이메일, 전화번호, 담당자 연락처 등"></label>
       <label style="margin-top: 10px;"><span><input name="is_active" type="checkbox" ${organization.is_active !== false ? "checked" : ""} style="width:auto;min-height:auto;"> 공개 페이지에 표시</span></label>
@@ -251,7 +305,7 @@ function renderOrganizations() {
     <div class="table-list">
       ${state.organizations.map((organization) => {
         const courseCount = state.courses.filter((course) => course.organization_id === organization.id).length;
-        return `<div class="table-row"><div class="row-top"><strong>${escapeHtml(organization.name)}</strong><span class="badge ${organization.is_active !== false ? "green" : "gray"}">${organization.is_active !== false ? "공개" : "숨김"}</span></div><span class="muted">교육 ${courseCount}개 · ${escapeHtml(organization.slug)}</span><p>${escapeHtml(organization.description || "소개 없음")}</p></div>`;
+        return `<div class="table-row">${organization.logo_url ? `<img class="admin-thumb" src="${escapeHtml(organization.logo_url)}" alt="${escapeHtml(organization.name)} 로고">` : ""}<div class="row-top"><strong>${escapeHtml(organization.name)}</strong><span class="badge ${organization.is_active !== false ? "green" : "gray"}">${organization.is_active !== false ? "공개" : "숨김"}</span></div><span class="muted">교육 ${courseCount}개 · ${escapeHtml(organization.slug)}</span><p>${escapeHtml(organization.description || "소개 없음")}</p></div>`;
       }).join("") || `<div class="empty">등록된 단체가 없습니다.</div>`}
     </div>
   `;
@@ -266,6 +320,9 @@ function renderInstructorForm(instructor = {}) {
         <label>직함/소개 한 줄<input name="title" value="${escapeHtml(instructor.title || "")}" placeholder="예: 인문학 연구자, 작가, 기획자"></label>
       </div>
       <label style="margin-top: 10px;">프로필 소개<textarea name="bio" placeholder="공개 페이지에 표시할 강사 소개를 입력하세요.">${escapeHtml(instructor.bio || "")}</textarea></label>
+      ${instructor.photo_url ? `<div class="media-preview"><img src="${escapeHtml(instructor.photo_url)}" alt="${escapeHtml(instructor.name || "강사")} 사진"><a href="${escapeHtml(instructor.photo_url)}" target="_blank" rel="noreferrer">현재 사진 보기</a></div>` : ""}
+      <label style="margin-top: 10px;">프로필 사진 업로드<input name="photo_file" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>
+      <p class="media-upload-note">JPG, PNG, WEBP, GIF 형식 · 5MB 이하. 파일을 선택하면 저장할 때 Supabase Storage에 업로드됩니다.</p>
       <label style="margin-top: 10px;">프로필 사진 URL<input name="photo_url" value="${escapeHtml(instructor.photo_url || "")}" placeholder="https://"></label>
       <label style="margin-top: 10px;"><span><input name="is_active" type="checkbox" ${instructor.is_active !== false ? "checked" : ""} style="width:auto;min-height:auto;"> 공개 페이지에서 사용</span></label>
       <div class="actions" style="margin-top: 14px;">
@@ -286,7 +343,7 @@ function renderInstructors() {
     <div style="margin-top: 14px;">${renderInstructorForm(selectedInstructor)}</div>
     <h3>강사 목록</h3>
     <div class="table-list">
-      ${state.instructors.map((instructor) => `<div class="table-row"><div class="row-top"><strong>${escapeHtml(instructor.name)}</strong><span class="badge ${instructor.is_active !== false ? "green" : "gray"}">${instructor.is_active !== false ? "사용" : "숨김"}</span></div><span class="muted">${escapeHtml(instructor.title || "직함 없음")}</span><p>${escapeHtml(instructor.bio || "프로필 소개 없음")}</p></div>`).join("") || `<div class="empty">등록된 강사가 없습니다.</div>`}
+      ${state.instructors.map((instructor) => `<div class="table-row">${instructor.photo_url ? `<img class="admin-thumb round" src="${escapeHtml(instructor.photo_url)}" alt="${escapeHtml(instructor.name)} 사진">` : ""}<div class="row-top"><strong>${escapeHtml(instructor.name)}</strong><span class="badge ${instructor.is_active !== false ? "green" : "gray"}">${instructor.is_active !== false ? "사용" : "숨김"}</span></div><span class="muted">${escapeHtml(instructor.title || "직함 없음")}</span><p>${escapeHtml(instructor.bio || "프로필 소개 없음")}</p></div>`).join("") || `<div class="empty">등록된 강사가 없습니다.</div>`}
     </div>
   `;
 }
@@ -524,6 +581,7 @@ async function saveOrganization(event) {
   const formData = new FormData(form);
   const organizationId = formData.get("organization_id");
   const sortOrder = Number(formData.get("sort_order") || 0);
+  const logoFile = formData.get("logo_file");
   const payload = {
     name: String(formData.get("name") || "").trim(),
     slug: String(formData.get("slug") || "").trim(),
@@ -540,12 +598,23 @@ async function saveOrganization(event) {
     return;
   }
 
+  let uploadedLogoPath = "";
+  if (hasSelectedFile(logoFile)) {
+    showToast("로고 이미지를 업로드하는 중입니다.");
+    const uploaded = await uploadSiteImage(logoFile, "organization-logos", payload.slug || payload.name);
+    payload.logo_url = uploaded.publicUrl;
+    uploadedLogoPath = uploaded.path;
+  }
+
   const request = organizationId
     ? supabase.from("organizations").update(payload).eq("id", organizationId)
     : supabase.from("organizations").insert(payload);
 
   const { error } = await request;
-  if (error) throw error;
+  if (error) {
+    await removeUploadedSiteImage(uploadedLogoPath);
+    throw error;
+  }
 
   showToast("단체 정보를 저장했습니다.");
   await reload();
@@ -559,6 +628,7 @@ async function saveInstructor(event) {
   if (!form) return;
   const formData = new FormData(form);
   const instructorId = formData.get("instructor_id");
+  const photoFile = formData.get("photo_file");
   const payload = {
     name: String(formData.get("name") || "").trim(),
     title: String(formData.get("title") || "").trim() || null,
@@ -572,12 +642,23 @@ async function saveInstructor(event) {
     return;
   }
 
+  let uploadedPhotoPath = "";
+  if (hasSelectedFile(photoFile)) {
+    showToast("프로필 사진을 업로드하는 중입니다.");
+    const uploaded = await uploadSiteImage(photoFile, "instructor-photos", payload.name);
+    payload.photo_url = uploaded.publicUrl;
+    uploadedPhotoPath = uploaded.path;
+  }
+
   const request = instructorId
     ? supabase.from("instructors").update(payload).eq("id", instructorId)
     : supabase.from("instructors").insert(payload);
 
   const { error } = await request;
-  if (error) throw error;
+  if (error) {
+    await removeUploadedSiteImage(uploadedPhotoPath);
+    throw error;
+  }
 
   showToast("강사 정보를 저장했습니다.");
   await reload();
