@@ -10,9 +10,8 @@ import {
   SUPABASE_PUBLISHABLE_KEY,
   SUPABASE_URL,
   statusLabels,
-  supabase,
   URL_RULES,
-} from "./supabaseClient.js";
+} from "./shared.js";
 
 const state = {
   organizations: [],
@@ -62,6 +61,19 @@ const elements = {
   profileBody: document.getElementById("profileBody"),
   toast: document.getElementById("toast"),
 };
+
+const PUBLIC_FETCH_TIMEOUT_MS = 7000;
+const PUBLIC_FETCH_RETRIES = 1;
+const SESSION_TIMEOUT_MS = 2500;
+let supplementaryLoadSequence = 0;
+let supabaseClientPromise = null;
+
+function getSupabaseClient() {
+  if (!supabaseClientPromise) {
+    supabaseClientPromise = import("./supabaseClient.js").then(({ supabase }) => supabase);
+  }
+  return supabaseClientPromise;
+}
 
 function showToast(message) {
   elements.toast.textContent = message;
@@ -178,28 +190,74 @@ function getSubmitForm(event) {
   return event.target instanceof HTMLFormElement ? event.target : null;
 }
 
-async function loadPublicReviews() {
+async function withTimeoutResult(promise, timeoutMs, fallback) {
+  let timeoutId;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((resolve) => {
+        timeoutId = window.setTimeout(() => resolve(fallback), timeoutMs);
+      }),
+    ]);
+  } catch (error) {
+    return { data: { session: null }, error };
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+async function fetchPublicRows(table, { select = "*", order = "" } = {}) {
   const params = new URLSearchParams({
+    select,
+  });
+  if (order) params.set("order", order);
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), PUBLIC_FETCH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, {
+      headers: {
+        apikey: SUPABASE_PUBLISHABLE_KEY,
+        Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
+        Accept: "application/json",
+      },
+      signal: controller.signal,
+    });
+    const body = await response.text();
+    let payload = [];
+    if (body) {
+      try {
+        payload = JSON.parse(body);
+      } catch (error) {
+        return { data: [], error: { message: `응답 형식 확인 필요: ${error.message}` } };
+      }
+    }
+    if (!response.ok) {
+      return { data: [], error: { message: `HTTP ${response.status}: ${body.slice(0, 160)}` } };
+    }
+    return { data: Array.isArray(payload) ? payload : [], error: null };
+  } catch (error) {
+    const message = error.name === "AbortError" ? "응답 대기 시간이 초과되었습니다." : error.message;
+    return { data: [], error: { message } };
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+async function loadPublicRows(table, options) {
+  let lastResult = { data: [], error: null };
+  for (let attempt = 0; attempt <= PUBLIC_FETCH_RETRIES; attempt += 1) {
+    lastResult = await fetchPublicRows(table, options);
+    if (!lastResult.error) return lastResult;
+  }
+  return lastResult;
+}
+
+function loadPublicReviews() {
+  return loadPublicRows("reviews", {
     select: "id,course_id,author_name,body,verification_status,created_at",
     order: "created_at.desc",
   });
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/reviews?${params}`, {
-    headers: {
-      apikey: SUPABASE_PUBLISHABLE_KEY,
-      Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
-      Accept: "application/json",
-    },
-  });
-
-  if (!response.ok) {
-    const message = await response.text();
-    return {
-      data: [],
-      error: { message: `공개 후기 조회 실패 (${response.status}): ${message.slice(0, 160)}` },
-    };
-  }
-
-  return { data: await response.json(), error: null };
 }
 
 function publicOrganizations() {
@@ -292,54 +350,70 @@ function composeCourses() {
   });
 }
 
-async function loadData() {
+async function loadData({ waitForSupplementary = false } = {}) {
   elements.resultSummary.textContent = "교육 정보를 불러오는 중입니다.";
-  const requestMap = [
-    ["organizations", supabase.from("organizations").select("*").order("sort_order", { ascending: true })],
-    ["instructors", supabase.from("instructors").select("*").order("name", { ascending: true })],
-    ["venues", supabase.from("venues").select("*").order("name", { ascending: true })],
-    ["courses", supabase.from("courses").select("*").order("starts_at", { ascending: true })],
-    ["sessions", supabase.from("course_sessions").select("*").order("starts_at", { ascending: true })],
-    ["archives", supabase.from("course_archives").select("*").order("sort_order", { ascending: true })],
-    ["reviews", loadPublicReviews()],
+  state.archives = [];
+  state.reviews = [];
+
+  const coreRequestMap = [
+    ["organizations", loadPublicRows("organizations", { order: "sort_order.asc" })],
+    ["instructors", loadPublicRows("instructors", { order: "name.asc" })],
+    ["venues", loadPublicRows("venues", { order: "name.asc" })],
+    ["courses", loadPublicRows("courses", { order: "starts_at.asc" })],
+    ["sessions", loadPublicRows("course_sessions", { order: "starts_at.asc" })],
   ];
 
-  const requests = await Promise.allSettled(requestMap.map(([, request]) => request));
-  const failed = [];
-  const dataByKey = new Map();
-
-  requests.forEach((result, index) => {
-    const key = requestMap[index][0];
-    if (result.status === "rejected") {
-      failed.push(`${key}: ${result.reason?.message || "요청 실패"}`);
-      console.error(`[모두의 인문학] ${key} 데이터 요청 실패`, result.reason);
-      dataByKey.set(key, []);
-      return;
-    }
-    if (result.value.error) {
-      failed.push(`${key}: ${result.value.error.message}`);
-      console.error(`[모두의 인문학] ${key} 데이터 로딩 실패`, result.value.error);
-      dataByKey.set(key, []);
-      return;
-    }
-    dataByKey.set(key, result.value.data || []);
-  });
+  const dataByKey = await resolveDataRequests(coreRequestMap);
 
   state.organizations = dataByKey.get("organizations") || [];
   state.instructors = dataByKey.get("instructors") || [];
   state.venues = dataByKey.get("venues") || [];
   state.courses = dataByKey.get("courses") || [];
   state.sessions = dataByKey.get("sessions") || [];
-  state.archives = dataByKey.get("archives") || [];
-  state.reviews = dataByKey.get("reviews") || [];
 
   composeCourses();
   populateFilters();
   render();
 
-  if (failed.length) {
-    showToast("일부 정보를 불러오지 못했습니다. 새로고침 후 다시 확인해 주세요.");
-    elements.resultSummary.textContent += " 일부 정보는 일시적으로 표시되지 않을 수 있습니다.";
+  const supplementaryPromise = loadSupplementaryData();
+  if (waitForSupplementary) await supplementaryPromise;
+}
+
+async function resolveDataRequests(requestMap) {
+  const requests = await Promise.allSettled(requestMap.map(([, request]) => request));
+  const dataByKey = new Map();
+  requests.forEach((result, index) => {
+    const key = requestMap[index][0];
+    if (result.status === "rejected") {
+      console.warn(`[모두의 인문학] ${key} 공개 데이터 확인 필요`, result.reason);
+      dataByKey.set(key, []);
+      return;
+    }
+    if (result.value.error) {
+      console.warn(`[모두의 인문학] ${key} 공개 데이터 확인 필요`, result.value.error);
+      dataByKey.set(key, []);
+      return;
+    }
+    dataByKey.set(key, result.value.data || []);
+  });
+  return dataByKey;
+}
+
+async function loadSupplementaryData() {
+  const sequence = ++supplementaryLoadSequence;
+  const supplementaryRequestMap = [
+    ["archives", loadPublicRows("course_archives", { order: "sort_order.asc" })],
+    ["reviews", loadPublicReviews()],
+  ];
+  const dataByKey = await resolveDataRequests(supplementaryRequestMap);
+  if (sequence !== supplementaryLoadSequence) return;
+  state.archives = dataByKey.get("archives") || [];
+  state.reviews = dataByKey.get("reviews") || [];
+
+  composeCourses();
+  render();
+  if (elements.detailModal.classList.contains("open") && state.activeCourseId) {
+    openCourseDetail(state.activeCourseId);
   }
 }
 
@@ -745,6 +819,7 @@ async function handleReviewSubmit(event) {
     return;
   }
 
+  const supabase = await getSupabaseClient();
   const { error } = await supabase.from("reviews").insert({
     course_id: course.id,
     user_id: state.user.id,
@@ -763,21 +838,37 @@ async function handleReviewSubmit(event) {
   }
 
   showToast(participationCode ? "후기가 등록되었습니다. 참여 확인은 확인 후 반영됩니다." : "후기가 등록되었습니다.");
-  await loadData();
+  await loadData({ waitForSupplementary: true });
   openCourseDetail(course.id);
 }
 
-async function refreshSession() {
-  const { data } = await supabase.auth.getSession();
-  state.user = data.session?.user || null;
+function updateSessionUi(user) {
+  state.user = user || null;
   elements.loginButton.textContent = state.user ? `${getDisplayName(state.user)}님` : "후기 쓰기";
   elements.loginStatus.textContent = state.user ? `${state.user.email || getDisplayName(state.user)}로 로그인 중입니다.` : "로그인하지 않았습니다.";
+}
+
+async function refreshSession(supabaseClient = null) {
+  try {
+    const client = supabaseClient || await getSupabaseClient();
+    const { data, error } = await withTimeoutResult(
+      client.auth.getSession(),
+      SESSION_TIMEOUT_MS,
+      { data: { session: null }, error: new Error("session timeout") },
+    );
+    if (error) console.warn("[모두의 인문학] 로그인 상태 확인 지연", error);
+    updateSessionUi(data.session);
+  } catch (error) {
+    console.warn("[모두의 인문학] 로그인 모듈 확인 지연", error);
+    updateSessionUi(null);
+  }
 }
 
 async function handleLogin(event) {
   event.preventDefault();
   const email = elements.loginEmail.value.trim();
   if (!email) return;
+  const supabase = await getSupabaseClient();
   const { error } = await supabase.auth.signInWithOtp({
     email,
     options: { emailRedirectTo: getCurrentUrlWithoutHash() },
@@ -791,9 +882,24 @@ async function handleLogin(event) {
 }
 
 async function handleLogout() {
+  const supabase = await getSupabaseClient();
   await supabase.auth.signOut();
-  await refreshSession();
+  await refreshSession(supabase);
   showToast("로그아웃했습니다.");
+}
+
+function startAuthMonitor() {
+  getSupabaseClient()
+    .then((supabase) => {
+      supabase.auth.onAuthStateChange(() => {
+        refreshSession(supabase);
+      });
+      refreshSession(supabase);
+    })
+    .catch((error) => {
+      console.warn("[모두의 인문학] 로그인 모듈 준비 지연", error);
+      updateSessionUi(null);
+    });
 }
 
 function bindEvents() {
@@ -861,20 +967,17 @@ function bindEvents() {
     applyRouteFromHash();
     render();
   });
-  supabase.auth.onAuthStateChange(async () => {
-    await refreshSession();
-  });
 }
 
 async function initialize() {
   applyRouteFromHash();
   bindEvents();
-  await refreshSession();
   await loadData();
+  startAuthMonitor();
 }
 
 initialize().catch((error) => {
   console.error("Public page initialization failed", error);
-  elements.resultSummary.textContent = "교육을 불러오지 못했습니다.";
-  elements.courseResults.innerHTML = `<div class="empty">일시적으로 교육 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.</div>`;
+  elements.resultSummary.textContent = "현재 표시할 교육이 없습니다.";
+  elements.courseResults.innerHTML = `<div class="empty">등록된 교육이 없습니다.</div>`;
 });
