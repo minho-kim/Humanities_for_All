@@ -50,6 +50,16 @@ const SITE_IMAGE_TYPES = new Map([
   ["image/gif", ".gif"],
 ]);
 const SITE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const ARCHIVE_FILE_TYPES = new Map([
+  ["image/jpeg", { extension: ".jpg", type: "photo" }],
+  ["image/png", { extension: ".png", type: "photo" }],
+  ["image/webp", { extension: ".webp", type: "photo" }],
+  ["image/gif", { extension: ".gif", type: "photo" }],
+  ["image/heic", { extension: ".heic", type: "photo" }],
+  ["image/heif", { extension: ".heif", type: "photo" }],
+  ["application/pdf", { extension: ".pdf", type: "file" }],
+]);
+const ARCHIVE_FILE_MAX_BYTES = 15 * 1024 * 1024;
 
 function showToast(message) {
   elements.toast.textContent = message;
@@ -132,6 +142,35 @@ async function removeUploadedSiteImage(path) {
   if (!path) return;
   const { error } = await supabase.storage.from(SITE_MEDIA_BUCKET).remove([path]);
   if (error) console.warn("[모두의 인문학] 업로드 롤백 파일 삭제 실패", error);
+}
+
+async function uploadArchiveFile(file, courseId, baseName) {
+  if (!hasSelectedFile(file)) return null;
+  const fileRule = ARCHIVE_FILE_TYPES.get(file.type);
+  if (!fileRule) {
+    throw new Error("아카이브 파일은 이미지 또는 PDF만 업로드할 수 있습니다.");
+  }
+  if (file.size > ARCHIVE_FILE_MAX_BYTES) {
+    throw new Error("아카이브 파일은 15MB 이하로 업로드해 주세요.");
+  }
+
+  const originalName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const uniqueId = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const path = `${courseId}/${safeStorageSegment(baseName, "archive")}-${uniqueId}-${originalName}`;
+  const { error } = await supabase.storage.from(ARCHIVE_BUCKET).upload(path, file, {
+    cacheControl: "3600",
+    contentType: file.type,
+    upsert: false,
+  });
+  if (error) throw error;
+  const { data } = supabase.storage.from(ARCHIVE_BUCKET).getPublicUrl(path);
+  return { publicUrl: data.publicUrl, path, archiveType: fileRule.type };
+}
+
+async function removeUploadedArchiveFile(path) {
+  if (!path) return;
+  const { error } = await supabase.storage.from(ARCHIVE_BUCKET).remove([path]);
+  if (error) console.warn("[모두의 인문학] 아카이브 업로드 롤백 파일 삭제 실패", error);
 }
 
 function statusBadge(status) {
@@ -416,6 +455,11 @@ function renderCourseForm(course = {}) {
       <label style="margin-top: 10px;">요약<textarea name="summary">${escapeHtml(course.summary || "")}</textarea></label>
       <label style="margin-top: 10px;">상세 설명<textarea name="description">${escapeHtml(course.description || "")}</textarea></label>
       <label style="margin-top: 10px;">신청 링크<input name="application_url" value="${escapeHtml(course.application_url || "")}"></label>
+      <div class="admin-grid" style="margin-top: 10px;">
+        <label>교육 자료 제목<input name="course_file_title" placeholder="예: 강의계획서, 읽기 자료"></label>
+        <label>교육 자료 PDF 업로드<input name="course_file" type="file" accept="application/pdf,.pdf"></label>
+      </div>
+      <p class="media-upload-note">PDF 15MB 이하. 저장하면 해당 교육의 공개 자료로 함께 등록됩니다.</p>
       <label style="margin-top: 10px;"><span><input name="published" type="checkbox" ${course.published !== false ? "checked" : ""} style="width:auto;min-height:auto;"> 공개</span></label>
       <div class="actions" style="margin-top: 14px;">
         <button class="btn" type="submit">${course.id ? "교육 수정" : "교육 추가"}</button>
@@ -759,7 +803,26 @@ async function saveCourse(event) {
     else await supabase.from("course_sessions").insert(sessionPayload);
   }
 
-  showToast("교육을 저장했습니다.");
+  const courseFile = formData.get("course_file");
+  if (hasSelectedFile(courseFile)) {
+    const courseFileTitle = String(formData.get("course_file_title") || "").trim() || `${payload.title} 교육 자료`;
+    const uploaded = await uploadArchiveFile(courseFile, savedCourse.id, courseFileTitle);
+    const { error: archiveError } = await supabase.from("course_archives").insert({
+      course_id: savedCourse.id,
+      type: uploaded.archiveType,
+      title: courseFileTitle,
+      url: uploaded.publicUrl,
+      caption: "교육 관리에서 업로드한 자료입니다.",
+      is_public: true,
+      created_by: state.user.id,
+    });
+    if (archiveError) {
+      await removeUploadedArchiveFile(uploaded.path);
+      throw archiveError;
+    }
+  }
+
+  showToast(hasSelectedFile(formData.get("course_file")) ? "교육과 자료를 저장했습니다." : "교육을 저장했습니다.");
   await reload();
   state.tab = "courses";
   render();
@@ -773,14 +836,14 @@ async function saveArchive(event) {
   const courseId = formData.get("course_id");
   let url = requireSafeUrl(formData.get("url"), "외부 URL", URL_RULES.archive);
   const file = formData.get("file");
+  let archiveType = String(formData.get("type"));
 
-  if (file && file.size > 0) {
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const path = `${courseId}/${Date.now()}-${safeName}`;
-    const { error: uploadError } = await supabase.storage.from(ARCHIVE_BUCKET).upload(path, file, { upsert: false });
-    if (uploadError) throw uploadError;
-    const { data } = supabase.storage.from(ARCHIVE_BUCKET).getPublicUrl(path);
-    url = data.publicUrl;
+  let uploadedFilePath = "";
+  if (hasSelectedFile(file)) {
+    const uploaded = await uploadArchiveFile(file, courseId, formData.get("title"));
+    uploadedFilePath = uploaded.path;
+    url = uploaded.publicUrl;
+    archiveType = uploaded.archiveType;
   }
 
   if (!url) {
@@ -790,14 +853,17 @@ async function saveArchive(event) {
 
   const { error } = await supabase.from("course_archives").insert({
     course_id: courseId,
-    type: formData.get("type"),
+    type: archiveType,
     title: String(formData.get("title")).trim(),
     url,
     caption: String(formData.get("caption") || "").trim(),
     is_public: formData.get("is_public") === "on",
     created_by: state.user.id,
   });
-  if (error) throw error;
+  if (error) {
+    await removeUploadedArchiveFile(uploadedFilePath);
+    throw error;
+  }
 
   showToast("아카이브를 등록했습니다.");
   await reload();

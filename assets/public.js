@@ -267,7 +267,14 @@ function publicOrganizations() {
 }
 
 function publicArchiveItems() {
-  return state.archives.filter((item) => ["photo", "video"].includes(item.type) && normalizeSafeUrl(item.url, URL_RULES.archive));
+  return state.archives.filter((item) => ["photo", "video", "file", "link"].includes(item.type) && normalizeSafeUrl(item.url, URL_RULES.archive));
+}
+
+function archiveTypeLabel(type) {
+  if (type === "video") return "영상";
+  if (type === "photo") return "사진";
+  if (type === "file") return "자료";
+  return "링크";
 }
 
 function coursesForOrganization(organizationId) {
@@ -690,22 +697,22 @@ function openInstructorProfile(instructorId) {
 function renderArchivePage() {
   const items = publicArchiveItems();
   setPageHeader({
-    title: "사진·영상 기록",
-    description: "교육 현장의 사진과 영상을 모아볼 수 있습니다.",
-    summary: `${items.length.toLocaleString("ko-KR")}개 기록이 있습니다.`,
+    title: "사진·영상·자료",
+    description: "교육 현장의 사진과 영상, PDF 자료를 모아볼 수 있습니다.",
+    summary: `${items.length.toLocaleString("ko-KR")}개 자료가 있습니다.`,
   });
   elements.courseResults.className = "resource-grid";
   elements.courseResults.innerHTML = items.map((item) => {
     const course = courseById(item.course_id);
     return `
       <a class="media resource-card" href="${escapeHtml(normalizeSafeUrl(item.url, URL_RULES.archive))}" target="_blank" rel="noreferrer">
-        <span class="badge">${item.type === "video" ? "영상" : "사진"}</span>
+        <span class="badge">${archiveTypeLabel(item.type)}</span>
         <strong>${escapeHtml(item.title)}</strong>
         <small>${escapeHtml(item.caption || course?.title || "자료 보기")}</small>
         ${course ? `<small>${escapeHtml(course.title)} · ${escapeHtml(course.organization?.name || "")}</small>` : ""}
       </a>
     `;
-  }).join("") || `<div class="empty">등록된 사진·영상 기록이 없습니다.</div>`;
+  }).join("") || `<div class="empty">등록된 사진·영상·자료가 없습니다.</div>`;
 }
 
 function render() {
@@ -793,9 +800,9 @@ function openCourseDetail(courseId) {
         <ul class="review-list">${renderReviews(course)}</ul>
       </div>
       <div class="section">
-        <h3>사진·영상 기록</h3>
+        <h3>사진·영상·자료</h3>
         <div class="media-grid">
-          ${course.archives.filter((item) => normalizeSafeUrl(item.url, URL_RULES.archive)).length ? course.archives.filter((item) => normalizeSafeUrl(item.url, URL_RULES.archive)).map((item) => `<a class="media" href="${escapeHtml(normalizeSafeUrl(item.url, URL_RULES.archive))}" target="_blank" rel="noreferrer"><strong>${escapeHtml(item.type)} · ${escapeHtml(item.title)}</strong><small>${escapeHtml(item.caption || "자료 보기")}</small></a>`).join("") : `<p class="muted">등록된 사진·영상 기록이 없습니다.</p>`}
+          ${course.archives.filter((item) => normalizeSafeUrl(item.url, URL_RULES.archive)).length ? course.archives.filter((item) => normalizeSafeUrl(item.url, URL_RULES.archive)).map((item) => `<a class="media" href="${escapeHtml(normalizeSafeUrl(item.url, URL_RULES.archive))}" target="_blank" rel="noreferrer"><strong>${archiveTypeLabel(item.type)} · ${escapeHtml(item.title)}</strong><small>${escapeHtml(item.caption || "자료 보기")}</small></a>`).join("") : `<p class="muted">등록된 사진·영상·자료가 없습니다.</p>`}
         </div>
       </div>
       <div class="section" style="grid-column: 1 / -1;">
