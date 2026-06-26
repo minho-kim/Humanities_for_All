@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>모두의 인문학 관리자</title>
+  <link rel="stylesheet" href="./assets/styles.css">
+</head>
+<body>
+  <main class="page">
+    <section class="hero-card" style="margin-bottom: 18px;">
+      <span class="eyebrow">관리자 페이지 · Supabase 연동</span>
+      <h1>교육과 후기를 운영하는 곳</h1>
+      <p class="lead">교육 등록·수정, 아카이브 관리, 후기 검수, 관리자 전용 후기 추첨을 처리합니다. 시민 공개 페이지에는 추첨 기능이 노출되지 않습니다.</p>
+      <div class="actions">
+        <a class="btn secondary" href="./index.html">공개 페이지 보기</a>
+        <button class="btn" type="button" id="refreshButton">새로고침</button>
+      </div>
+    </section>
+
+    <section class="admin-layout">
+      <aside class="admin-card">
+        <h2>로그인</h2>
+        <form id="adminLoginForm">
+          <label>관리자 이메일<input id="adminEmail" type="email" placeholder="you@example.com" required></label>
+          <div class="actions" style="margin-top: 12px;">
+            <button class="btn" type="submit">로그인 링크 받기</button>
+            <button class="btn secondary" type="button" id="adminLogoutButton">로그아웃</button>
+          </div>
+        </form>
+        <div id="adminStatus" class="muted" style="margin-top: 14px;">로그인 상태 확인 중</div>
+        <nav class="admin-nav" style="margin-top: 18px;" aria-label="관리 메뉴">
+          <button class="btn secondary active" type="button" data-admin-tab="dashboard">대시보드</button>
+          <button class="btn secondary" type="button" data-admin-tab="courses">교육 관리</button>
+          <button class="btn secondary" type="button" data-admin-tab="archive">아카이브</button>
+          <button class="btn secondary" type="button" data-admin-tab="reviews">후기 검수</button>
+          <button class="btn secondary" type="button" data-admin-tab="draws">관리자 전용 추첨</button>
+        </nav>
+      </aside>
+
+      <section class="admin-card">
+        <div id="permissionNotice" class="section hidden"></div>
+        <div id="adminContent"></div>
+      </section>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="./assets/admin.js"></script>
+</body>
+</html>
+

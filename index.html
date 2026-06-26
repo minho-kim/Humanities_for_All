@@ -1,1 +1,92 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>모두의 인문학</title>
+  <link rel="stylesheet" href="./assets/styles.css">
+</head>
+<body>
+  <main class="page">
+    <section class="hero" aria-labelledby="title">
+      <div class="hero-card">
+        <span class="eyebrow">모두의 인문학 · Supabase 연동</span>
+        <h1 id="title">11개 단체의 인문학 교육을 한눈에</h1>
+        <p class="lead">주제, 강사, 장소, 시간으로 교육을 찾고 교육 종료 후 사진·영상·자료와 후기를 함께 아카이빙합니다.</p>
+        <div class="actions">
+          <a class="btn" href="#courses">교육 둘러보기</a>
+          <button class="btn secondary" type="button" id="loginButton">후기 로그인</button>
+          <a class="btn ghost" href="./admin.html">관리자 페이지</a>
+        </div>
+      </div>
+      <aside class="stats-panel" aria-label="서비스 요약">
+        <div class="stat-grid">
+          <div class="stat"><strong id="orgCount">-</strong><span>참여 단체</span></div>
+          <div class="stat"><strong id="courseCount">-</strong><span>등록 교육</span></div>
+          <div class="stat"><strong id="reviewCount">-</strong><span>후기</span></div>
+          <div class="stat"><strong id="archiveCount">-</strong><span>아카이브 자료</span></div>
+        </div>
+        <div class="info-note">
+          <h2>후기와 아카이브 중심</h2>
+          <p>시민 화면은 교육 탐색, 후기 작성, 사진·영상 자료 열람에 집중합니다.</p>
+        </div>
+      </aside>
+    </section>
+
+    <section class="panel" id="courses" aria-labelledby="searchTitle">
+      <h2 class="sr-only" id="searchTitle">교육 검색</h2>
+      <div class="filter-grid">
+        <label>통합 검색<input id="searchInput" type="search" placeholder="주제, 강사, 장소, 단체명으로 검색"></label>
+        <label>단체<select id="orgFilter"></select></label>
+        <label>주제<select id="topicFilter"></select></label>
+        <label>시간대<select id="timeFilter"><option value="">전체</option><option value="오전">오전</option><option value="오후">오후</option><option value="저녁">저녁</option></select></label>
+        <label>상태<select id="statusFilter"><option value="">전체</option><option value="open">모집 중</option><option value="scheduled">예정</option><option value="finished">종료</option><option value="cancelled">취소</option></select></label>
+      </div>
+      <div class="view-row">
+        <div class="result-summary" id="resultSummary" aria-live="polite">교육을 불러오는 중입니다.</div>
+        <div class="toggle" aria-label="보기 방식">
+          <button type="button" class="active" data-view="cards">카드</button>
+          <button type="button" data-view="calendar">달력형</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="courseResults" class="course-grid" aria-live="polite"></section>
+  </main>
+
+  <div class="modal" id="detailModal" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
+    <article class="modal-card">
+      <div class="modal-header">
+        <div>
+          <div class="badge-row" id="detailBadges"></div>
+          <h2 id="detailTitle">교육 상세</h2>
+        </div>
+        <button class="icon-btn" type="button" data-close-modal aria-label="상세 닫기">×</button>
+      </div>
+      <div id="detailBody"></div>
+    </article>
+  </div>
+
+  <div class="modal" id="loginModal" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+    <article class="modal-card" style="max-width: 560px;">
+      <div class="modal-header">
+        <div><span class="eyebrow">후기 작성 전용</span><h2 id="loginTitle">간편 로그인</h2></div>
+        <button class="icon-btn" type="button" data-close-modal aria-label="로그인 닫기">×</button>
+      </div>
+      <p class="lead">이메일로 로그인 링크를 받아 후기를 작성할 수 있습니다. 카카오 로그인은 Supabase Dashboard에서 Provider 설정 후 연결하면 됩니다.</p>
+      <form id="loginForm">
+        <label>이메일<input id="loginEmail" type="email" placeholder="you@example.com" required></label>
+        <div class="actions" style="margin-top: 12px;">
+          <button class="btn" type="submit">로그인 링크 받기</button>
+          <button class="btn secondary" type="button" id="logoutButton">로그아웃</button>
+        </div>
+      </form>
+      <p class="muted" id="loginStatus" style="margin-top: 14px;">로그인 상태를 확인하는 중입니다.</p>
+    </article>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="./assets/public.js"></script>
+</body>
+</html>
 
