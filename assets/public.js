@@ -93,6 +93,10 @@ function populateSelect(select, label, values) {
   select.innerHTML = `<option value="">${escapeHtml(label)}</option>${values.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}`;
 }
 
+function getSubmitForm(event) {
+  return event.target instanceof HTMLFormElement ? event.target : null;
+}
+
 function publicOrganizations() {
   return state.organizations.filter((organization) => organization.is_active !== false);
 }
@@ -553,7 +557,8 @@ async function handleReviewSubmit(event) {
   const course = state.composedCourses.find((item) => item.id === state.activeCourseId);
   if (!course || !state.user) return;
 
-  const form = event.currentTarget;
+  const form = getSubmitForm(event);
+  if (!form) return;
   const body = form.elements.body.value.trim();
   const participationCode = form.elements.participation_code.value.trim();
   if (body.length < 10) {
@@ -646,7 +651,7 @@ function bindEvents() {
   });
 
   document.body.addEventListener("submit", (event) => {
-    if (event.target.id === "reviewForm") handleReviewSubmit(event);
+    if (event.target.id === "reviewForm") return handleReviewSubmit(event);
   });
 
   document.querySelectorAll(".modal").forEach((modal) => {

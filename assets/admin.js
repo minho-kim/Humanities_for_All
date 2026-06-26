@@ -76,6 +76,10 @@ function statusBadge(status) {
   return `<span class="badge ${className}">${escapeHtml(statusLabels[status] || status)}</span>`;
 }
 
+function getSubmitForm(event) {
+  return event.target instanceof HTMLFormElement ? event.target : null;
+}
+
 async function refreshSession() {
   const { data } = await supabase.auth.getSession();
   state.user = data.session?.user || null;
@@ -374,7 +378,8 @@ async function handleLogout() {
 
 async function saveOrganization(event) {
   event.preventDefault();
-  const form = event.currentTarget;
+  const form = getSubmitForm(event);
+  if (!form) return;
   const formData = new FormData(form);
   const organizationId = formData.get("organization_id");
   const sortOrder = Number(formData.get("sort_order") || 0);
@@ -409,7 +414,8 @@ async function saveOrganization(event) {
 
 async function saveCourse(event) {
   event.preventDefault();
-  const form = event.currentTarget;
+  const form = getSubmitForm(event);
+  if (!form) return;
   const formData = new FormData(form);
   const courseId = formData.get("course_id");
   const payload = {
@@ -461,7 +467,8 @@ async function saveCourse(event) {
 
 async function saveArchive(event) {
   event.preventDefault();
-  const form = event.currentTarget;
+  const form = getSubmitForm(event);
+  if (!form) return;
   const formData = new FormData(form);
   const courseId = formData.get("course_id");
   let url = String(formData.get("url") || "").trim();
@@ -515,7 +522,8 @@ async function updateReview(reviewId, action) {
 
 async function runDraw(event) {
   event.preventDefault();
-  const form = event.currentTarget;
+  const form = getSubmitForm(event);
+  if (!form) return;
   const formData = new FormData(form);
   const targetCourseId = formData.get("target_course_id") || null;
   const eligible = state.reviews.filter((review) => review.verification_status === "verified" && !review.is_hidden && (!targetCourseId || review.course_id === targetCourseId));
@@ -598,10 +606,10 @@ function bindEvents() {
 
   document.body.addEventListener("submit", async (event) => {
     try {
-      if (event.target.id === "organizationForm") await saveOrganization(event);
-      if (event.target.id === "courseForm") await saveCourse(event);
-      if (event.target.id === "archiveForm") await saveArchive(event);
-      if (event.target.id === "drawForm") await runDraw(event);
+      if (event.target.id === "organizationForm") return await saveOrganization(event);
+      if (event.target.id === "courseForm") return await saveCourse(event);
+      if (event.target.id === "archiveForm") return await saveArchive(event);
+      if (event.target.id === "drawForm") return await runDraw(event);
     } catch (error) {
       showToast(`작업 실패: ${error.message}`);
     }
