@@ -14,6 +14,8 @@ const state = {
   tab: "dashboard",
   user: null,
   adminProfile: null,
+  adminProfileError: null,
+  isLoggingIn: false,
   organizations: [],
   instructors: [],
   venues: [],
@@ -42,6 +44,13 @@ function showToast(message) {
   elements.toast.classList.add("show");
   window.clearTimeout(showToast.timer);
   showToast.timer = window.setTimeout(() => elements.toast.classList.remove("show"), 3000);
+}
+
+function setLoginBusy(isBusy) {
+  const button = elements.adminLoginForm.querySelector("button[type='submit']");
+  if (!button) return;
+  button.disabled = isBusy;
+  button.textContent = isBusy ? "로그인 중..." : "로그인";
 }
 
 function isAdmin() {
@@ -84,6 +93,7 @@ async function refreshSession() {
   const { data } = await supabase.auth.getSession();
   state.user = data.session?.user || null;
   state.adminProfile = null;
+  state.adminProfileError = null;
 
   if (state.user) {
     const { data: profile, error } = await supabase
@@ -91,9 +101,20 @@ async function refreshSession() {
       .select("*")
       .eq("user_id", state.user.id)
       .maybeSingle();
-    if (!error) state.adminProfile = profile;
+    if (error) {
+      state.adminProfileError = error;
+      console.error("[모두의 인문학] 관리자 권한 조회 실패", error);
+    } else {
+      state.adminProfile = profile;
+    }
   }
 
+  console.info("[모두의 인문학] 관리자 세션 상태", {
+    signedIn: Boolean(state.user),
+    userId: state.user?.id || null,
+    isAdmin: Boolean(state.adminProfile),
+    adminProfileError: state.adminProfileError?.message || null,
+  });
   renderAuthStatus();
 }
 
@@ -112,7 +133,14 @@ function renderAuthStatus() {
     <div class="code">${escapeHtml(state.user.id)}</div>
   `;
 
-  if (!state.adminProfile) {
+  if (state.adminProfileError) {
+    elements.permissionNotice.classList.remove("hidden");
+    elements.permissionNotice.innerHTML = `
+      <h3>관리자 권한을 확인하지 못했습니다</h3>
+      <p>로그인은 되었지만 권한 정보를 불러오지 못했습니다. 페이지를 새로고침하거나 잠시 후 다시 시도해 주세요.</p>
+      <p class="muted">${escapeHtml(state.adminProfileError.message)}</p>
+    `;
+  } else if (!state.adminProfile) {
     elements.permissionNotice.classList.remove("hidden");
     elements.permissionNotice.innerHTML = `
       <h3>최초 관리자 등록이 필요합니다</h3>
@@ -354,19 +382,34 @@ async function handleLogin(event) {
   const password = elements.adminPassword.value;
   if (!email || !password) return;
 
-  const { error } = await supabase.auth.signInWithPassword({
-    email,
-    password,
-  });
+  state.isLoggingIn = true;
+  setLoginBusy(true);
+  elements.adminContent.innerHTML = `<div class="empty">로그인 정보를 확인하는 중입니다.</div>`;
 
-  if (error) {
-    showToast(`로그인 실패: ${error.message}`);
-    return;
+  try {
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      console.error("[모두의 인문학] 로그인 실패", error);
+      showToast(`로그인 실패: ${error.message}`);
+      elements.adminContent.innerHTML = `<div class="empty">로그인하지 못했습니다. 이메일과 비밀번호를 확인해 주세요.</div>`;
+      return;
+    }
+
+    elements.adminPassword.value = "";
+    await reload();
+    showToast(isAdmin() ? "로그인했습니다." : "로그인은 되었지만 관리자 권한이 없습니다.");
+  } catch (error) {
+    console.error("[모두의 인문학] 로그인 처리 오류", error);
+    showToast(`로그인 처리 실패: ${error.message}`);
+    elements.adminContent.innerHTML = `<div class="empty">로그인 처리 중 문제가 생겼습니다: ${escapeHtml(error.message)}</div>`;
+  } finally {
+    state.isLoggingIn = false;
+    setLoginBusy(false);
   }
-
-  elements.adminPassword.value = "";
-  await reload();
-  showToast("로그인했습니다.");
 }
 
 async function handleLogout() {
@@ -616,6 +659,7 @@ function bindEvents() {
   });
 
   supabase.auth.onAuthStateChange(async () => {
+    if (state.isLoggingIn) return;
     await refreshSession();
     render();
   });

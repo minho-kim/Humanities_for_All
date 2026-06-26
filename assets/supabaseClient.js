@@ -3,6 +3,12 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 export const SUPABASE_URL = "https://wmynvcuedusjnufmhdqv.supabase.co";
 export const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_rXN3xjZ2aJGeb00QMEs1KQ_bChOdSRI";
 export const ARCHIVE_BUCKET = "archive-media";
+export const APP_VERSION = "2026.06.26.1218";
+
+if (!globalThis.__HUMANITIES_FOR_ALL_VERSION_LOGGED__) {
+  globalThis.__HUMANITIES_FOR_ALL_VERSION_LOGGED__ = true;
+  console.info(`[모두의 인문학] version ${APP_VERSION}`);
+}
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: {
@@ -109,4 +115,3 @@ export function randomPick(items, count) {
 
   return picked;
 }
-
