@@ -4,10 +4,13 @@ import {
   escapeHtml,
   formatDateTime,
   getDisplayName,
+  normalizeSafeUrl,
   randomPick,
+  requireSafeUrl,
   shortDate,
   statusLabels,
   supabase,
+  URL_RULES,
   verificationLabels,
 } from "./supabaseClient.js";
 
@@ -269,6 +272,7 @@ function renderDashboard() {
 }
 
 function renderOrganizationForm(organization = {}) {
+  const logoUrl = normalizeSafeUrl(organization.logo_url, URL_RULES.image);
   return `
     <form id="organizationForm" class="section">
       <input type="hidden" name="organization_id" value="${escapeHtml(organization.id || "")}">
@@ -279,7 +283,7 @@ function renderOrganizationForm(organization = {}) {
         <label>홈페이지<input name="website_url" value="${escapeHtml(organization.website_url || "")}" placeholder="https://"></label>
       </div>
       <label style="margin-top: 10px;">단체 소개<textarea name="description" placeholder="공개 페이지에 표시할 단체 소개를 입력하세요.">${escapeHtml(organization.description || "")}</textarea></label>
-      ${organization.logo_url ? `<div class="media-preview"><img src="${escapeHtml(organization.logo_url)}" alt="${escapeHtml(organization.name || "단체")} 로고"><a href="${escapeHtml(organization.logo_url)}" target="_blank" rel="noreferrer">현재 로고 보기</a></div>` : ""}
+      ${logoUrl ? `<div class="media-preview"><img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(organization.name || "단체")} 로고"><a href="${escapeHtml(logoUrl)}" target="_blank" rel="noreferrer">현재 로고 보기</a></div>` : ""}
       <label style="margin-top: 10px;">로고 이미지 업로드<input name="logo_file" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>
       <p class="media-upload-note">JPG, PNG, WEBP, GIF 형식 · 5MB 이하. 파일을 선택하면 저장할 때 Supabase Storage에 업로드됩니다.</p>
       <label style="margin-top: 10px;">로고 이미지 URL<input name="logo_url" value="${escapeHtml(organization.logo_url || "")}" placeholder="https://"></label>
@@ -305,13 +309,15 @@ function renderOrganizations() {
     <div class="table-list">
       ${state.organizations.map((organization) => {
         const courseCount = state.courses.filter((course) => course.organization_id === organization.id).length;
-        return `<div class="table-row">${organization.logo_url ? `<img class="admin-thumb" src="${escapeHtml(organization.logo_url)}" alt="${escapeHtml(organization.name)} 로고">` : ""}<div class="row-top"><strong>${escapeHtml(organization.name)}</strong><span class="badge ${organization.is_active !== false ? "green" : "gray"}">${organization.is_active !== false ? "공개" : "숨김"}</span></div><span class="muted">교육 ${courseCount}개 · ${escapeHtml(organization.slug)}</span><p>${escapeHtml(organization.description || "소개 없음")}</p></div>`;
+        const logoUrl = normalizeSafeUrl(organization.logo_url, URL_RULES.image);
+        return `<div class="table-row">${logoUrl ? `<img class="admin-thumb" src="${escapeHtml(logoUrl)}" alt="${escapeHtml(organization.name)} 로고">` : ""}<div class="row-top"><strong>${escapeHtml(organization.name)}</strong><span class="badge ${organization.is_active !== false ? "green" : "gray"}">${organization.is_active !== false ? "공개" : "숨김"}</span></div><span class="muted">교육 ${courseCount}개 · ${escapeHtml(organization.slug)}</span><p>${escapeHtml(organization.description || "소개 없음")}</p></div>`;
       }).join("") || `<div class="empty">등록된 단체가 없습니다.</div>`}
     </div>
   `;
 }
 
 function renderInstructorForm(instructor = {}) {
+  const photoUrl = normalizeSafeUrl(instructor.photo_url, URL_RULES.image);
   return `
     <form id="instructorForm" class="section">
       <input type="hidden" name="instructor_id" value="${escapeHtml(instructor.id || "")}">
@@ -320,7 +326,7 @@ function renderInstructorForm(instructor = {}) {
         <label>직함/소개 한 줄<input name="title" value="${escapeHtml(instructor.title || "")}" placeholder="예: 인문학 연구자, 작가, 기획자"></label>
       </div>
       <label style="margin-top: 10px;">프로필 소개<textarea name="bio" placeholder="공개 페이지에 표시할 강사 소개를 입력하세요.">${escapeHtml(instructor.bio || "")}</textarea></label>
-      ${instructor.photo_url ? `<div class="media-preview"><img src="${escapeHtml(instructor.photo_url)}" alt="${escapeHtml(instructor.name || "강사")} 사진"><a href="${escapeHtml(instructor.photo_url)}" target="_blank" rel="noreferrer">현재 사진 보기</a></div>` : ""}
+      ${photoUrl ? `<div class="media-preview"><img src="${escapeHtml(photoUrl)}" alt="${escapeHtml(instructor.name || "강사")} 사진"><a href="${escapeHtml(photoUrl)}" target="_blank" rel="noreferrer">현재 사진 보기</a></div>` : ""}
       <label style="margin-top: 10px;">프로필 사진 업로드<input name="photo_file" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>
       <p class="media-upload-note">JPG, PNG, WEBP, GIF 형식 · 5MB 이하. 파일을 선택하면 저장할 때 Supabase Storage에 업로드됩니다.</p>
       <label style="margin-top: 10px;">프로필 사진 URL<input name="photo_url" value="${escapeHtml(instructor.photo_url || "")}" placeholder="https://"></label>
@@ -343,7 +349,10 @@ function renderInstructors() {
     <div style="margin-top: 14px;">${renderInstructorForm(selectedInstructor)}</div>
     <h3>강사 목록</h3>
     <div class="table-list">
-      ${state.instructors.map((instructor) => `<div class="table-row">${instructor.photo_url ? `<img class="admin-thumb round" src="${escapeHtml(instructor.photo_url)}" alt="${escapeHtml(instructor.name)} 사진">` : ""}<div class="row-top"><strong>${escapeHtml(instructor.name)}</strong><span class="badge ${instructor.is_active !== false ? "green" : "gray"}">${instructor.is_active !== false ? "사용" : "숨김"}</span></div><span class="muted">${escapeHtml(instructor.title || "직함 없음")}</span><p>${escapeHtml(instructor.bio || "프로필 소개 없음")}</p></div>`).join("") || `<div class="empty">등록된 강사가 없습니다.</div>`}
+      ${state.instructors.map((instructor) => {
+        const photoUrl = normalizeSafeUrl(instructor.photo_url, URL_RULES.image);
+        return `<div class="table-row">${photoUrl ? `<img class="admin-thumb round" src="${escapeHtml(photoUrl)}" alt="${escapeHtml(instructor.name)} 사진">` : ""}<div class="row-top"><strong>${escapeHtml(instructor.name)}</strong><span class="badge ${instructor.is_active !== false ? "green" : "gray"}">${instructor.is_active !== false ? "사용" : "숨김"}</span></div><span class="muted">${escapeHtml(instructor.title || "직함 없음")}</span><p>${escapeHtml(instructor.bio || "프로필 소개 없음")}</p></div>`;
+      }).join("") || `<div class="empty">등록된 강사가 없습니다.</div>`}
     </div>
   `;
 }
@@ -380,7 +389,11 @@ function renderVenues() {
     <div style="margin-top: 14px;">${renderVenueForm(selectedVenue)}</div>
     <h3>장소 목록</h3>
     <div class="table-list">
-      ${state.venues.map((venue) => `<div class="table-row"><div class="row-top"><strong>${escapeHtml(venue.name)}</strong><span class="badge ${venue.is_online ? "green" : "gray"}">${venue.is_online ? "온라인" : "오프라인"}</span></div><span class="muted">${escapeHtml(venue.address || "주소 없음")} ${venue.detail ? `· ${escapeHtml(venue.detail)}` : ""}</span><div class="actions">${venue.kakao_map_url ? `<a class="btn small secondary" href="${escapeHtml(venue.kakao_map_url)}" target="_blank" rel="noreferrer">카카오맵</a>` : ""}${venue.naver_place_url ? `<a class="btn small secondary" href="${escapeHtml(venue.naver_place_url)}" target="_blank" rel="noreferrer">네이버플레이스</a>` : ""}</div></div>`).join("") || `<div class="empty">등록된 장소가 없습니다.</div>`}
+      ${state.venues.map((venue) => {
+        const kakaoUrl = normalizeSafeUrl(venue.kakao_map_url, URL_RULES.kakaoMap);
+        const naverUrl = normalizeSafeUrl(venue.naver_place_url, URL_RULES.naverPlace);
+        return `<div class="table-row"><div class="row-top"><strong>${escapeHtml(venue.name)}</strong><span class="badge ${venue.is_online ? "green" : "gray"}">${venue.is_online ? "온라인" : "오프라인"}</span></div><span class="muted">${escapeHtml(venue.address || "주소 없음")} ${venue.detail ? `· ${escapeHtml(venue.detail)}` : ""}</span><div class="actions">${kakaoUrl ? `<a class="btn small secondary" href="${escapeHtml(kakaoUrl)}" target="_blank" rel="noreferrer">카카오맵</a>` : ""}${naverUrl ? `<a class="btn small secondary" href="${escapeHtml(naverUrl)}" target="_blank" rel="noreferrer">네이버플레이스</a>` : ""}</div></div>`;
+      }).join("") || `<div class="empty">등록된 장소가 없습니다.</div>`}
     </div>
   `;
 }
@@ -586,9 +599,9 @@ async function saveOrganization(event) {
     name: String(formData.get("name") || "").trim(),
     slug: String(formData.get("slug") || "").trim(),
     description: String(formData.get("description") || "").trim() || null,
-    website_url: String(formData.get("website_url") || "").trim() || null,
+    website_url: requireSafeUrl(formData.get("website_url"), "홈페이지 URL", URL_RULES.external),
     contact_email: String(formData.get("contact_email") || "").trim() || null,
-    logo_url: String(formData.get("logo_url") || "").trim() || null,
+    logo_url: requireSafeUrl(formData.get("logo_url"), "로고 이미지 URL", URL_RULES.image),
     sort_order: Number.isFinite(sortOrder) ? sortOrder : 0,
     is_active: formData.get("is_active") === "on",
   };
@@ -633,7 +646,7 @@ async function saveInstructor(event) {
     name: String(formData.get("name") || "").trim(),
     title: String(formData.get("title") || "").trim() || null,
     bio: String(formData.get("bio") || "").trim() || null,
-    photo_url: String(formData.get("photo_url") || "").trim() || null,
+    photo_url: requireSafeUrl(formData.get("photo_url"), "프로필 사진 URL", URL_RULES.image),
     is_active: formData.get("is_active") === "on",
   };
 
@@ -676,8 +689,8 @@ async function saveVenue(event) {
     name: String(formData.get("name") || "").trim(),
     address: String(formData.get("address") || "").trim() || null,
     detail: String(formData.get("detail") || "").trim() || null,
-    kakao_map_url: String(formData.get("kakao_map_url") || "").trim() || null,
-    naver_place_url: String(formData.get("naver_place_url") || "").trim() || null,
+    kakao_map_url: requireSafeUrl(formData.get("kakao_map_url"), "카카오맵 URL", URL_RULES.kakaoMap),
+    naver_place_url: requireSafeUrl(formData.get("naver_place_url"), "네이버플레이스 URL", URL_RULES.naverPlace),
     is_online: formData.get("is_online") === "on",
   };
 
@@ -716,7 +729,7 @@ async function saveCourse(event) {
     ends_at: toIso(formData.get("ends_at")),
     summary: String(formData.get("summary") || "").trim(),
     description: String(formData.get("description") || "").trim(),
-    application_url: String(formData.get("application_url") || "").trim() || null,
+    application_url: requireSafeUrl(formData.get("application_url"), "신청 링크", URL_RULES.external),
     published: formData.get("published") === "on",
     tags: [String(formData.get("topic")).trim()].filter(Boolean),
   };
@@ -758,7 +771,7 @@ async function saveArchive(event) {
   if (!form) return;
   const formData = new FormData(form);
   const courseId = formData.get("course_id");
-  let url = String(formData.get("url") || "").trim();
+  let url = requireSafeUrl(formData.get("url"), "외부 URL", URL_RULES.archive);
   const file = formData.get("file");
 
   if (file && file.size > 0) {

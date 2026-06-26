@@ -4,7 +4,15 @@ export const SUPABASE_URL = "https://wmynvcuedusjnufmhdqv.supabase.co";
 export const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_rXN3xjZ2aJGeb00QMEs1KQ_bChOdSRI";
 export const ARCHIVE_BUCKET = "archive-media";
 export const SITE_MEDIA_BUCKET = "site-media";
-export const APP_VERSION = "2026.06.26.1355";
+export const APP_VERSION = "2026.06.26.1414";
+
+export const URL_RULES = Object.freeze({
+  external: Object.freeze({ protocols: ["https:"] }),
+  image: Object.freeze({ protocols: ["https:"] }),
+  archive: Object.freeze({ protocols: ["https:"] }),
+  kakaoMap: Object.freeze({ protocols: ["https:"], hostSuffixes: ["kakao.com", "daum.net"] }),
+  naverPlace: Object.freeze({ protocols: ["https:"], hostSuffixes: ["naver.com", "naver.me"] }),
+});
 
 if (!globalThis.__HUMANITIES_FOR_ALL_VERSION_LOGGED__) {
   globalThis.__HUMANITIES_FOR_ALL_VERSION_LOGGED__ = true;
@@ -16,6 +24,14 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
+  },
+});
+
+export const publicSupabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+    detectSessionInUrl: false,
   },
 });
 
@@ -42,6 +58,40 @@ export function escapeHtml(value) {
     "'": "&#039;",
   };
   return String(value ?? "").replace(/[&<>"']/g, (character) => map[character]);
+}
+
+function hostMatches(hostname, suffixes = []) {
+  const normalizedHost = String(hostname || "").toLowerCase();
+  return suffixes.some((suffix) => normalizedHost === suffix || normalizedHost.endsWith(`.${suffix}`));
+}
+
+export function normalizeSafeUrl(value, rule = URL_RULES.external) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/[\u0000-\u001F\u007F\s]/.test(raw)) return "";
+
+  const hasProtocol = /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(raw);
+  const candidate = hasProtocol ? raw : `https://${raw}`;
+  let parsed;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    return "";
+  }
+
+  const allowedProtocols = rule.protocols || ["https:"];
+  if (!allowedProtocols.includes(parsed.protocol)) return "";
+  if (!parsed.hostname) return "";
+  if (rule.hostSuffixes?.length && !hostMatches(parsed.hostname, rule.hostSuffixes)) return "";
+  return parsed.href;
+}
+
+export function requireSafeUrl(value, label, rule = URL_RULES.external) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const normalized = normalizeSafeUrl(raw, rule);
+  if (!normalized) throw new Error(`${label}은 허용된 https 주소만 입력해 주세요.`);
+  return normalized;
 }
 
 export function formatDateTime(value) {

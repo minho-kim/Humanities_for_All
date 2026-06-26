@@ -6,8 +6,11 @@ import {
   getDisplayName,
   groupBy,
   byId,
+  normalizeSafeUrl,
+  publicSupabase,
   statusLabels,
   supabase,
+  URL_RULES,
 } from "./supabaseClient.js";
 
 const state = {
@@ -98,16 +101,18 @@ function mapQuery(venue) {
 
 function kakaoMapUrl(venue) {
   if (!venue || venue.is_online) return "";
-  if (venue.kakao_map_url) return venue.kakao_map_url;
+  const savedUrl = normalizeSafeUrl(venue.kakao_map_url, URL_RULES.kakaoMap);
+  if (savedUrl) return savedUrl;
   const query = mapQuery(venue);
-  return query ? `https://map.kakao.com/?q=${encodeURIComponent(query)}` : "";
+  return query ? normalizeSafeUrl(`https://map.kakao.com/?q=${encodeURIComponent(query)}`, URL_RULES.kakaoMap) : "";
 }
 
 function naverPlaceUrl(venue) {
   if (!venue || venue.is_online) return "";
-  if (venue.naver_place_url) return venue.naver_place_url;
+  const savedUrl = normalizeSafeUrl(venue.naver_place_url, URL_RULES.naverPlace);
+  if (savedUrl) return savedUrl;
   const query = mapQuery(venue);
-  return query ? `https://map.naver.com/p/search/${encodeURIComponent(query)}` : "";
+  return query ? normalizeSafeUrl(`https://map.naver.com/p/search/${encodeURIComponent(query)}`, URL_RULES.naverPlace) : "";
 }
 
 function icsDate(value) {
@@ -156,7 +161,7 @@ function downloadCalendar(course) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `${course.title || "course"}.ics`;
+  link.download = `${String(course.title || "course").replace(/[\\/:*?"<>|]/g, "_")}.ics`;
   document.body.append(link);
   link.click();
   link.remove();
@@ -177,7 +182,7 @@ function publicOrganizations() {
 }
 
 function publicArchiveItems() {
-  return state.archives.filter((item) => ["photo", "video"].includes(item.type));
+  return state.archives.filter((item) => ["photo", "video"].includes(item.type) && normalizeSafeUrl(item.url, URL_RULES.archive));
 }
 
 function coursesForOrganization(organizationId) {
@@ -271,7 +276,7 @@ async function loadData() {
     ["courses", supabase.from("courses").select("*").order("starts_at", { ascending: true })],
     ["sessions", supabase.from("course_sessions").select("*").order("starts_at", { ascending: true })],
     ["archives", supabase.from("course_archives").select("*").order("sort_order", { ascending: true })],
-    ["reviews", supabase.from("reviews").select("id, course_id, author_name, body, verification_status, created_at").order("created_at", { ascending: false })],
+    ["reviews", publicSupabase.from("reviews").select("id, course_id, author_name, body, verification_status, created_at").order("created_at", { ascending: false })],
   ];
 
   const requests = await Promise.allSettled(requestMap.map(([, request]) => request));
@@ -391,9 +396,11 @@ function courseCardHtml(course) {
 
 function organizationCardHtml(organization) {
   const courses = coursesForOrganization(organization.id);
+  const logoUrl = normalizeSafeUrl(organization.logo_url, URL_RULES.image);
+  const websiteUrl = normalizeSafeUrl(organization.website_url, URL_RULES.external);
   return `
       <article class="organization-card">
-        ${organization.logo_url ? `<img class="org-logo" src="${escapeHtml(organization.logo_url)}" alt="${escapeHtml(organization.name)} 로고">` : ""}
+        ${logoUrl ? `<img class="org-logo" src="${escapeHtml(logoUrl)}" alt="${escapeHtml(organization.name)} 로고">` : ""}
         <div>
           <h3>${escapeHtml(organization.name)}</h3>
           <p>${escapeHtml(organization.description || "단체 소개가 곧 업데이트됩니다.")}</p>
@@ -402,7 +409,7 @@ function organizationCardHtml(organization) {
         <div class="footer">
           <span class="review-note">교육 ${courses.length}개</span>
           <div class="actions">
-            ${organization.website_url ? `<a class="btn small secondary" href="${escapeHtml(organization.website_url)}" target="_blank" rel="noreferrer">홈페이지</a>` : ""}
+            ${websiteUrl ? `<a class="btn small secondary" href="${escapeHtml(websiteUrl)}" target="_blank" rel="noreferrer">홈페이지</a>` : ""}
             <button class="btn small" type="button" data-open-organization="${escapeHtml(organization.slug)}">자세히 보기</button>
           </div>
         </div>
@@ -505,6 +512,8 @@ function renderOrganizationPage() {
   }
 
   const courses = coursesForOrganization(organization.id);
+  const logoUrl = normalizeSafeUrl(organization.logo_url, URL_RULES.image);
+  const websiteUrl = normalizeSafeUrl(organization.website_url, URL_RULES.external);
   setPageHeader({
     title: organization.name,
     description: "단체 소개와 이 단체가 운영하는 교육을 함께 볼 수 있습니다.",
@@ -513,14 +522,14 @@ function renderOrganizationPage() {
   elements.courseResults.className = "content-stack";
   elements.courseResults.innerHTML = `
     <article class="organization-detail section">
-      ${organization.logo_url ? `<img class="org-logo large" src="${escapeHtml(organization.logo_url)}" alt="${escapeHtml(organization.name)} 로고">` : ""}
+      ${logoUrl ? `<img class="org-logo large" src="${escapeHtml(logoUrl)}" alt="${escapeHtml(organization.name)} 로고">` : ""}
       <div>
         <h3>${escapeHtml(organization.name)}</h3>
         <p>${escapeHtml(organization.description || "단체 소개가 곧 업데이트됩니다.")}</p>
         ${organization.contact_email ? `<p class="muted">연락처: ${escapeHtml(organization.contact_email)}</p>` : ""}
         <div class="actions">
           <button class="btn small secondary" type="button" data-route="organizations">참여 단체 목록</button>
-          ${organization.website_url ? `<a class="btn small" href="${escapeHtml(organization.website_url)}" target="_blank" rel="noreferrer">단체 홈페이지</a>` : ""}
+          ${websiteUrl ? `<a class="btn small" href="${escapeHtml(websiteUrl)}" target="_blank" rel="noreferrer">단체 홈페이지</a>` : ""}
         </div>
       </div>
     </article>
@@ -562,10 +571,11 @@ function renderReviewsPage() {
 function openInstructorProfile(instructorId) {
   const instructor = state.instructors.find((item) => item.id === instructorId);
   if (!instructor) return;
+  const photoUrl = normalizeSafeUrl(instructor.photo_url, URL_RULES.image);
   elements.profileTitle.textContent = instructor.name;
   elements.profileBody.innerHTML = `
     <div class="profile-card">
-      ${instructor.photo_url ? `<img class="profile-photo" src="${escapeHtml(instructor.photo_url)}" alt="${escapeHtml(instructor.name)} 사진">` : `<div class="profile-photo placeholder">人</div>`}
+      ${photoUrl ? `<img class="profile-photo" src="${escapeHtml(photoUrl)}" alt="${escapeHtml(instructor.name)} 사진">` : `<div class="profile-photo placeholder">人</div>`}
       <div>
         <h3>${escapeHtml(instructor.name)}</h3>
         <p class="muted">${escapeHtml(instructor.title || "강사")}</p>
@@ -587,7 +597,7 @@ function renderArchivePage() {
   elements.courseResults.innerHTML = items.map((item) => {
     const course = courseById(item.course_id);
     return `
-      <a class="media resource-card" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">
+      <a class="media resource-card" href="${escapeHtml(normalizeSafeUrl(item.url, URL_RULES.archive))}" target="_blank" rel="noreferrer">
         <span class="badge">${item.type === "video" ? "영상" : "사진"}</span>
         <strong>${escapeHtml(item.title)}</strong>
         <small>${escapeHtml(item.caption || course?.title || "자료 보기")}</small>
@@ -643,6 +653,7 @@ function openCourseDetail(courseId) {
   const orgName = course.organization?.name || "";
   const kakaoUrl = kakaoMapUrl(course.venue);
   const naverUrl = naverPlaceUrl(course.venue);
+  const applicationUrl = normalizeSafeUrl(course.application_url, URL_RULES.external);
 
   elements.detailBadges.innerHTML = `
     <span class="badge ${getStatusClass(course.status)}">${escapeHtml(statusLabels[course.status] || course.status)}</span>
@@ -659,7 +670,7 @@ function openCourseDetail(courseId) {
           ${course.sessions.map((session) => `<li><strong>${escapeHtml(session.title)} · ${escapeHtml(formatDateTime(session.starts_at))}</strong><br>${escapeHtml(session.room || course.venue?.name || "")}</li>`).join("")}
         </ul>
         <div class="actions" style="margin-top: 14px;">
-          ${course.application_url ? `<a class="btn small" href="${escapeHtml(course.application_url)}" target="_blank" rel="noreferrer">신청하기</a>` : ""}
+          ${applicationUrl ? `<a class="btn small" href="${escapeHtml(applicationUrl)}" target="_blank" rel="noreferrer">신청하기</a>` : ""}
           <button class="btn small secondary" type="button" data-add-calendar="${course.id}">캘린더 등록</button>
           <button class="btn small secondary" type="button" data-login-for-review>후기 쓰기</button>
         </div>
@@ -683,7 +694,7 @@ function openCourseDetail(courseId) {
       <div class="section">
         <h3>사진·영상 기록</h3>
         <div class="media-grid">
-          ${course.archives.length ? course.archives.map((item) => `<a class="media" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer"><strong>${escapeHtml(item.type)} · ${escapeHtml(item.title)}</strong><small>${escapeHtml(item.caption || "자료 보기")}</small></a>`).join("") : `<p class="muted">등록된 사진·영상 기록이 없습니다.</p>`}
+          ${course.archives.filter((item) => normalizeSafeUrl(item.url, URL_RULES.archive)).length ? course.archives.filter((item) => normalizeSafeUrl(item.url, URL_RULES.archive)).map((item) => `<a class="media" href="${escapeHtml(normalizeSafeUrl(item.url, URL_RULES.archive))}" target="_blank" rel="noreferrer"><strong>${escapeHtml(item.type)} · ${escapeHtml(item.title)}</strong><small>${escapeHtml(item.caption || "자료 보기")}</small></a>`).join("") : `<p class="muted">등록된 사진·영상 기록이 없습니다.</p>`}
         </div>
       </div>
       <div class="section" style="grid-column: 1 / -1;">
