@@ -355,6 +355,7 @@ function renderOrganizationsPage() {
         <div>
           <h3>${escapeHtml(organization.name)}</h3>
           <p>${escapeHtml(organization.description || "단체 소개가 곧 업데이트됩니다.")}</p>
+          ${organization.contact_email ? `<p class="muted">연락처: ${escapeHtml(organization.contact_email)}</p>` : ""}
         </div>
         <div class="footer">
           <span class="review-note">교육 ${courses.length}개</span>
@@ -394,6 +395,7 @@ function renderOrganizationPage() {
       <div>
         <h3>${escapeHtml(organization.name)}</h3>
         <p>${escapeHtml(organization.description || "단체 소개가 곧 업데이트됩니다.")}</p>
+        ${organization.contact_email ? `<p class="muted">연락처: ${escapeHtml(organization.contact_email)}</p>` : ""}
         <div class="actions">
           <button class="btn small secondary" type="button" data-route="organizations">참여 단체 목록</button>
           ${organization.website_url ? `<a class="btn small" href="${escapeHtml(organization.website_url)}" target="_blank" rel="noreferrer">단체 홈페이지</a>` : ""}

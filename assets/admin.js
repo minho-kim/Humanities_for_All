@@ -181,7 +181,7 @@ function renderOrganizationForm(organization = {}) {
       </div>
       <label style="margin-top: 10px;">단체 소개<textarea name="description" placeholder="공개 페이지에 표시할 단체 소개를 입력하세요.">${escapeHtml(organization.description || "")}</textarea></label>
       <label style="margin-top: 10px;">로고 이미지 URL<input name="logo_url" value="${escapeHtml(organization.logo_url || "")}" placeholder="https://"></label>
-      <label style="margin-top: 10px;">담당 이메일<input name="contact_email" type="email" value="${escapeHtml(organization.contact_email || "")}"></label>
+      <label style="margin-top: 10px;">연락처<input name="contact_email" value="${escapeHtml(organization.contact_email || "")}" placeholder="이메일, 전화번호, 담당자 연락처 등"></label>
       <label style="margin-top: 10px;"><span><input name="is_active" type="checkbox" ${organization.is_active !== false ? "checked" : ""} style="width:auto;min-height:auto;"> 공개 페이지에 표시</span></label>
       <div class="actions" style="margin-top: 14px;">
         <button class="btn" type="submit">${organization.id ? "단체 수정" : "단체 추가"}</button>
