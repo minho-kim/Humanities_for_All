@@ -14,6 +14,8 @@ export {
   formatDateTime,
   getCurrentUrlWithoutHash,
   getDisplayName,
+  getMaskedEmailName,
+  getReviewAuthorName,
   groupBy,
   normalizeSafeUrl,
   randomPick,

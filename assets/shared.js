@@ -2,7 +2,7 @@ export const SUPABASE_URL = "https://wmynvcuedusjnufmhdqv.supabase.co";
 export const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_rXN3xjZ2aJGeb00QMEs1KQ_bChOdSRI";
 export const ARCHIVE_BUCKET = "archive-media";
 export const SITE_MEDIA_BUCKET = "site-media";
-export const APP_VERSION = "2026.06.26.1458";
+export const APP_VERSION = "2026.06.26.1520";
 
 export const URL_RULES = Object.freeze({
   external: Object.freeze({ protocols: ["https:"] }),
@@ -113,6 +113,20 @@ export function getCurrentUrlWithoutHash() {
 
 export function getDisplayName(user) {
   return user?.user_metadata?.name || user?.email?.split("@")[0] || "참여자";
+}
+
+export function getMaskedEmailName(value) {
+  const raw = String(value || "").trim();
+  const base = raw.replace(/님의 후기$/, "").trim();
+  if (!base) return "참여***";
+  if (base.includes("***")) return base;
+  const localPart = base.includes("@") ? base.split("@")[0] : base;
+  const visible = Array.from(localPart).slice(0, 3).join("") || "참여";
+  return `${visible}***`;
+}
+
+export function getReviewAuthorName(user) {
+  return getMaskedEmailName(user?.email || getDisplayName(user));
 }
 
 export function groupBy(items, key) {

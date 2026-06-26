@@ -4,6 +4,8 @@ import {
   formatDateTime,
   getCurrentUrlWithoutHash,
   getDisplayName,
+  getMaskedEmailName,
+  getReviewAuthorName,
   groupBy,
   byId,
   normalizeSafeUrl,
@@ -652,7 +654,7 @@ function renderReviewsPage() {
         return `
           <article class="review-card">
             <div class="row-top">
-              <strong>${escapeHtml(review.author_name || "참여자")}</strong>
+              <strong>${escapeHtml(getMaskedEmailName(review.author_name))}님의 후기</strong>
               <span class="badge ${review.verification_status === "verified" ? "green" : "gray"}">${review.verification_status === "verified" ? "참여 확인" : "후기"}</span>
             </div>
             <p>${escapeHtml(review.body)}</p>
@@ -719,7 +721,7 @@ function renderReviews(course) {
   if (!course.reviews.length) return `<li class="review-item">아직 등록된 후기가 없습니다. 교육 후 첫 후기를 남겨보세요.</li>`;
   return course.reviews.map((review) => `
     <li class="review-item">
-      <strong>${escapeHtml(review.author_name)} <span class="badge ${review.verification_status === "verified" ? "green" : "gray"}">${review.verification_status === "verified" ? "참여 확인" : "후기"}</span></strong><br>
+      <strong>${escapeHtml(getMaskedEmailName(review.author_name))}님의 후기 <span class="badge ${review.verification_status === "verified" ? "green" : "gray"}">${review.verification_status === "verified" ? "참여 확인" : "후기"}</span></strong><br>
       ${escapeHtml(review.body)}
     </li>
   `).join("");
@@ -727,7 +729,7 @@ function renderReviews(course) {
 
 function renderReviewForm(course) {
   if (!state.user) {
-    return `<p>후기를 남기려면 로그인이 필요합니다. 교육 정보는 로그인 없이 볼 수 있습니다.</p><button class="btn" type="button" data-login-for-review>로그인 후 후기 쓰기</button>`;
+    return `<p>후기를 남기려면 이메일 인증이 필요합니다. 교육 정보는 인증 없이 볼 수 있습니다.</p><button class="btn" type="button" data-login-for-review>이메일 인증 후 후기 쓰기</button>`;
   }
   if (course.status !== "finished") {
     return `<p>후기는 교육 종료 후 작성할 수 있습니다. 현재 상태: <strong>${escapeHtml(statusLabels[course.status] || course.status)}</strong></p>`;
@@ -823,7 +825,7 @@ async function handleReviewSubmit(event) {
   const { error } = await supabase.from("reviews").insert({
     course_id: course.id,
     user_id: state.user.id,
-    author_name: getDisplayName(state.user),
+    author_name: getReviewAuthorName(state.user),
     body,
     participation_code: participationCode || null,
   });
@@ -844,8 +846,8 @@ async function handleReviewSubmit(event) {
 
 function updateSessionUi(user) {
   state.user = user || null;
-  elements.loginButton.textContent = state.user ? `${getDisplayName(state.user)}님` : "후기 쓰기";
-  elements.loginStatus.textContent = state.user ? `${state.user.email || getDisplayName(state.user)}로 로그인 중입니다.` : "로그인하지 않았습니다.";
+  elements.loginButton.textContent = state.user ? `${getReviewAuthorName(state.user)}님` : "후기 쓰기";
+  elements.loginStatus.textContent = state.user ? `${getReviewAuthorName(state.user)}님으로 인증되었습니다.` : "이메일 인증 전입니다.";
 }
 
 async function refreshSession(supabaseClient = null) {
@@ -874,11 +876,11 @@ async function handleLogin(event) {
     options: { emailRedirectTo: getCurrentUrlWithoutHash() },
   });
   if (error) {
-    console.error("Login link request failed", error);
-    showToast("로그인 링크를 보내지 못했습니다. 이메일을 확인한 뒤 다시 시도해 주세요.");
+    console.error("Magic link request failed", error);
+    showToast("인증 링크를 보내지 못했습니다. 이메일을 확인한 뒤 다시 시도해 주세요.");
     return;
   }
-  showToast("이메일로 로그인 링크를 보냈습니다.");
+  showToast("이메일로 인증 링크를 보냈습니다.");
 }
 
 async function handleLogout() {
