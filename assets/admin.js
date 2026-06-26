@@ -89,6 +89,22 @@ function getSubmitForm(event) {
   return event.target instanceof HTMLFormElement ? event.target : null;
 }
 
+function wait(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function withTimeout(promise, ms, label) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = window.setTimeout(() => reject(new Error(`${label} 시간이 초과되었습니다.`)), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
 async function refreshSession() {
   const { data } = await supabase.auth.getSession();
   state.user = data.session?.user || null;
@@ -387,10 +403,19 @@ async function handleLogin(event) {
   elements.adminContent.innerHTML = `<div class="empty">로그인 정보를 확인하는 중입니다.</div>`;
 
   try {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
+    const result = await withTimeout(
+      supabase.auth.signInWithPassword({ email, password }),
+      10000,
+      "로그인"
+    ).catch(async (error) => {
+      console.warn("[모두의 인문학] 로그인 응답 지연, 세션 복구를 시도합니다", error);
+      await wait(500);
+      const sessionResult = await supabase.auth.getSession();
+      if (sessionResult.data.session) return { data: sessionResult.data, error: null };
+      throw error;
     });
+
+    const { error } = result;
 
     if (error) {
       console.error("[모두의 인문학] 로그인 실패", error);
@@ -400,7 +425,7 @@ async function handleLogin(event) {
     }
 
     elements.adminPassword.value = "";
-    await reload();
+    await withTimeout(reload(), 10000, "관리자 데이터 로딩");
     showToast(isAdmin() ? "로그인했습니다." : "로그인은 되었지만 관리자 권한이 없습니다.");
   } catch (error) {
     console.error("[모두의 인문학] 로그인 처리 오류", error);
@@ -658,10 +683,15 @@ function bindEvents() {
     }
   });
 
-  supabase.auth.onAuthStateChange(async () => {
+  supabase.auth.onAuthStateChange((event) => {
+    console.info("[모두의 인문학] 인증 상태 변경", event);
     if (state.isLoggingIn) return;
-    await refreshSession();
-    render();
+    window.setTimeout(() => {
+      reload().catch((error) => {
+        console.error("[모두의 인문학] 인증 상태 갱신 실패", error);
+        showToast(`로그인 상태 갱신 실패: ${error.message}`);
+      });
+    }, 0);
   });
 }
 
