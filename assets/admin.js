@@ -257,6 +257,77 @@ function renderOrganizations() {
   `;
 }
 
+function renderInstructorForm(instructor = {}) {
+  return `
+    <form id="instructorForm" class="section">
+      <input type="hidden" name="instructor_id" value="${escapeHtml(instructor.id || "")}">
+      <div class="admin-grid">
+        <label>강사명<input name="name" value="${escapeHtml(instructor.name || "")}" required></label>
+        <label>직함/소개 한 줄<input name="title" value="${escapeHtml(instructor.title || "")}" placeholder="예: 인문학 연구자, 작가, 기획자"></label>
+      </div>
+      <label style="margin-top: 10px;">프로필 소개<textarea name="bio" placeholder="공개 페이지에 표시할 강사 소개를 입력하세요.">${escapeHtml(instructor.bio || "")}</textarea></label>
+      <label style="margin-top: 10px;">프로필 사진 URL<input name="photo_url" value="${escapeHtml(instructor.photo_url || "")}" placeholder="https://"></label>
+      <label style="margin-top: 10px;"><span><input name="is_active" type="checkbox" ${instructor.is_active !== false ? "checked" : ""} style="width:auto;min-height:auto;"> 공개 페이지에서 사용</span></label>
+      <div class="actions" style="margin-top: 14px;">
+        <button class="btn" type="submit">${instructor.id ? "강사 수정" : "강사 추가"}</button>
+        <button class="btn secondary" type="button" id="newInstructorButton">새 강사 입력</button>
+      </div>
+    </form>
+  `;
+}
+
+function renderInstructors() {
+  const selectedId = document.getElementById("instructorPicker")?.value || "";
+  const selectedInstructor = state.instructors.find((instructor) => instructor.id === selectedId) || {};
+  elements.adminContent.innerHTML = `
+    <h2>강사 관리</h2>
+    <p class="muted">교육 상세 화면에서 강사 프로필로 표시됩니다.</p>
+    <label>수정할 강사 선택<select id="instructorPicker"><option value="">새 강사</option>${state.instructors.map((instructor) => `<option value="${instructor.id}" ${instructor.id === selectedId ? "selected" : ""}>${escapeHtml(instructor.name)}</option>`).join("")}</select></label>
+    <div style="margin-top: 14px;">${renderInstructorForm(selectedInstructor)}</div>
+    <h3>강사 목록</h3>
+    <div class="table-list">
+      ${state.instructors.map((instructor) => `<div class="table-row"><div class="row-top"><strong>${escapeHtml(instructor.name)}</strong><span class="badge ${instructor.is_active !== false ? "green" : "gray"}">${instructor.is_active !== false ? "사용" : "숨김"}</span></div><span class="muted">${escapeHtml(instructor.title || "직함 없음")}</span><p>${escapeHtml(instructor.bio || "프로필 소개 없음")}</p></div>`).join("") || `<div class="empty">등록된 강사가 없습니다.</div>`}
+    </div>
+  `;
+}
+
+function renderVenueForm(venue = {}) {
+  return `
+    <form id="venueForm" class="section">
+      <input type="hidden" name="venue_id" value="${escapeHtml(venue.id || "")}">
+      <div class="admin-grid">
+        <label>장소명<input name="name" value="${escapeHtml(venue.name || "")}" required></label>
+        <label>세부 장소<input name="detail" value="${escapeHtml(venue.detail || "")}" placeholder="예: 2층 세미나실"></label>
+      </div>
+      <label style="margin-top: 10px;">주소<input name="address" value="${escapeHtml(venue.address || "")}" placeholder="지도 검색에 사용할 주소"></label>
+      <div class="admin-grid" style="margin-top: 10px;">
+        <label>카카오맵 URL<input name="kakao_map_url" value="${escapeHtml(venue.kakao_map_url || "")}" placeholder="https://map.kakao.com/..."></label>
+        <label>네이버플레이스 URL<input name="naver_place_url" value="${escapeHtml(venue.naver_place_url || "")}" placeholder="https://map.naver.com/... 또는 place.naver.com/..."></label>
+      </div>
+      <label style="margin-top: 10px;"><span><input name="is_online" type="checkbox" ${venue.is_online ? "checked" : ""} style="width:auto;min-height:auto;"> 온라인 장소</span></label>
+      <div class="actions" style="margin-top: 14px;">
+        <button class="btn" type="submit">${venue.id ? "장소 수정" : "장소 추가"}</button>
+        <button class="btn secondary" type="button" id="newVenueButton">새 장소 입력</button>
+      </div>
+    </form>
+  `;
+}
+
+function renderVenues() {
+  const selectedId = document.getElementById("venuePicker")?.value || "";
+  const selectedVenue = state.venues.find((venue) => venue.id === selectedId) || {};
+  elements.adminContent.innerHTML = `
+    <h2>장소 관리</h2>
+    <p class="muted">교육 상세 화면에서 주소, 카카오맵, 네이버플레이스 링크로 표시됩니다. 정확한 장소 페이지가 있으면 URL을 붙여 넣으세요.</p>
+    <label>수정할 장소 선택<select id="venuePicker"><option value="">새 장소</option>${state.venues.map((venue) => `<option value="${venue.id}" ${venue.id === selectedId ? "selected" : ""}>${escapeHtml(venue.name)}</option>`).join("")}</select></label>
+    <div style="margin-top: 14px;">${renderVenueForm(selectedVenue)}</div>
+    <h3>장소 목록</h3>
+    <div class="table-list">
+      ${state.venues.map((venue) => `<div class="table-row"><div class="row-top"><strong>${escapeHtml(venue.name)}</strong><span class="badge ${venue.is_online ? "green" : "gray"}">${venue.is_online ? "온라인" : "오프라인"}</span></div><span class="muted">${escapeHtml(venue.address || "주소 없음")} ${venue.detail ? `· ${escapeHtml(venue.detail)}` : ""}</span><div class="actions">${venue.kakao_map_url ? `<a class="btn small secondary" href="${escapeHtml(venue.kakao_map_url)}" target="_blank" rel="noreferrer">카카오맵</a>` : ""}${venue.naver_place_url ? `<a class="btn small secondary" href="${escapeHtml(venue.naver_place_url)}" target="_blank" rel="noreferrer">네이버플레이스</a>` : ""}</div></div>`).join("") || `<div class="empty">등록된 장소가 없습니다.</div>`}
+    </div>
+  `;
+}
+
 function renderCourseForm(course = {}) {
   const firstSession = state.sessions.find((session) => session.course_id === course.id) || {};
   return `
@@ -385,6 +456,8 @@ function render() {
   }
 
   if (state.tab === "organizations") renderOrganizations();
+  else if (state.tab === "instructors") renderInstructors();
+  else if (state.tab === "venues") renderVenues();
   else if (state.tab === "courses") renderCourses();
   else if (state.tab === "archive") renderArchive();
   else if (state.tab === "reviews") renderReviews();
@@ -477,6 +550,71 @@ async function saveOrganization(event) {
   showToast("단체 정보를 저장했습니다.");
   await reload();
   state.tab = "organizations";
+  render();
+}
+
+async function saveInstructor(event) {
+  event.preventDefault();
+  const form = getSubmitForm(event);
+  if (!form) return;
+  const formData = new FormData(form);
+  const instructorId = formData.get("instructor_id");
+  const payload = {
+    name: String(formData.get("name") || "").trim(),
+    title: String(formData.get("title") || "").trim() || null,
+    bio: String(formData.get("bio") || "").trim() || null,
+    photo_url: String(formData.get("photo_url") || "").trim() || null,
+    is_active: formData.get("is_active") === "on",
+  };
+
+  if (!payload.name) {
+    showToast("강사명을 입력해 주세요.");
+    return;
+  }
+
+  const request = instructorId
+    ? supabase.from("instructors").update(payload).eq("id", instructorId)
+    : supabase.from("instructors").insert(payload);
+
+  const { error } = await request;
+  if (error) throw error;
+
+  showToast("강사 정보를 저장했습니다.");
+  await reload();
+  state.tab = "instructors";
+  render();
+}
+
+async function saveVenue(event) {
+  event.preventDefault();
+  const form = getSubmitForm(event);
+  if (!form) return;
+  const formData = new FormData(form);
+  const venueId = formData.get("venue_id");
+  const payload = {
+    name: String(formData.get("name") || "").trim(),
+    address: String(formData.get("address") || "").trim() || null,
+    detail: String(formData.get("detail") || "").trim() || null,
+    kakao_map_url: String(formData.get("kakao_map_url") || "").trim() || null,
+    naver_place_url: String(formData.get("naver_place_url") || "").trim() || null,
+    is_online: formData.get("is_online") === "on",
+  };
+
+  if (!payload.name) {
+    showToast("장소명을 입력해 주세요.");
+    return;
+  }
+
+  const request = venueId
+    ? supabase.from("venues").update(payload).eq("id", venueId)
+    : supabase.from("venues").insert(payload);
+
+  const { error } = await request;
+  if (error) throw error;
+
+  showToast("장소 정보를 저장했습니다.");
+  await reload();
+  state.tab = "venues";
   render();
 }
 
@@ -665,16 +803,30 @@ function bindEvents() {
       if (picker) picker.value = "";
       renderOrganizations();
     }
+    if (event.target.id === "newInstructorButton") {
+      const picker = document.getElementById("instructorPicker");
+      if (picker) picker.value = "";
+      renderInstructors();
+    }
+    if (event.target.id === "newVenueButton") {
+      const picker = document.getElementById("venuePicker");
+      if (picker) picker.value = "";
+      renderVenues();
+    }
   });
 
   document.body.addEventListener("change", (event) => {
     if (event.target.id === "organizationPicker") renderOrganizations();
+    if (event.target.id === "instructorPicker") renderInstructors();
+    if (event.target.id === "venuePicker") renderVenues();
     if (event.target.id === "coursePicker") renderCourses();
   });
 
   document.body.addEventListener("submit", async (event) => {
     try {
       if (event.target.id === "organizationForm") return await saveOrganization(event);
+      if (event.target.id === "instructorForm") return await saveInstructor(event);
+      if (event.target.id === "venueForm") return await saveVenue(event);
       if (event.target.id === "courseForm") return await saveCourse(event);
       if (event.target.id === "archiveForm") return await saveArchive(event);
       if (event.target.id === "drawForm") return await runDraw(event);

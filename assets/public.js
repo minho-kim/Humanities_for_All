@@ -53,6 +53,9 @@ const elements = {
   loginEmail: document.getElementById("loginEmail"),
   logoutButton: document.getElementById("logoutButton"),
   loginStatus: document.getElementById("loginStatus"),
+  profileModal: document.getElementById("profileModal"),
+  profileTitle: document.getElementById("profileTitle"),
+  profileBody: document.getElementById("profileBody"),
   toast: document.getElementById("toast"),
 };
 
@@ -87,6 +90,78 @@ function getTimeLabel(course) {
   if (hour < 12) return "오전";
   if (hour < 18) return "오후";
   return "저녁";
+}
+
+function mapQuery(venue) {
+  return [venue?.address, venue?.name].filter(Boolean).join(" ").trim();
+}
+
+function kakaoMapUrl(venue) {
+  if (!venue || venue.is_online) return "";
+  if (venue.kakao_map_url) return venue.kakao_map_url;
+  const query = mapQuery(venue);
+  return query ? `https://map.kakao.com/?q=${encodeURIComponent(query)}` : "";
+}
+
+function naverPlaceUrl(venue) {
+  if (!venue || venue.is_online) return "";
+  if (venue.naver_place_url) return venue.naver_place_url;
+  const query = mapQuery(venue);
+  return query ? `https://map.naver.com/p/search/${encodeURIComponent(query)}` : "";
+}
+
+function icsDate(value) {
+  if (!value) return "";
+  return new Date(value).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+}
+
+function escapeIcs(value) {
+  return String(value || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/\n/g, "\\n")
+    .replace(/,/g, "\\,")
+    .replace(/;/g, "\\;");
+}
+
+function calendarLocation(course) {
+  if (!course.venue) return "";
+  return [course.venue.name, course.venue.address, course.venue.detail].filter(Boolean).join(" · ");
+}
+
+function downloadCalendar(course) {
+  const firstSession = course.sessions[0];
+  const startsAt = firstSession?.starts_at || course.starts_at;
+  const endsAt = firstSession?.ends_at || course.ends_at || startsAt;
+  if (!startsAt) {
+    showToast("캘린더에 등록할 일정이 없습니다.");
+    return;
+  }
+  const description = [course.summary, course.description].filter(Boolean).join("\\n\\n");
+  const ics = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Humanities for All//Courses//KO",
+    "BEGIN:VEVENT",
+    `UID:${course.id}@humanities-for-all`,
+    `DTSTAMP:${icsDate(new Date())}`,
+    `DTSTART:${icsDate(startsAt)}`,
+    `DTEND:${icsDate(endsAt)}`,
+    `SUMMARY:${escapeIcs(course.title)}`,
+    `DESCRIPTION:${escapeIcs(description)}`,
+    `LOCATION:${escapeIcs(calendarLocation(course))}`,
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+  const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${course.title || "course"}.ics`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  showToast("캘린더 파일을 내려받았습니다.");
 }
 
 function populateSelect(select, label, values) {
@@ -290,6 +365,7 @@ function courseCardHtml(course) {
   const firstSession = course.sessions[0];
   const orgSlug = course.organization?.slug || "";
   const orgName = course.organization?.name || "단체 미정";
+  const instructorName = course.instructor?.name || "강사 미정";
   return `
       <article class="course-card">
         <div class="badge-row">
@@ -300,7 +376,7 @@ function courseCardHtml(course) {
         <h3>${escapeHtml(course.title)}</h3>
         <div class="meta">
           <span>🏛️ ${orgSlug ? `<button class="text-link" type="button" data-open-organization="${escapeHtml(orgSlug)}">${escapeHtml(orgName)}</button>` : escapeHtml(orgName)}</span>
-          <span>🎙️ ${escapeHtml(course.instructor?.name || "강사 미정")} 강사</span>
+          <span>🎙️ ${course.instructor?.id ? `<button class="text-link" type="button" data-open-instructor="${course.instructor.id}">${escapeHtml(instructorName)}</button>` : escapeHtml(instructorName)} 강사</span>
           <span>📍 ${escapeHtml(course.venue?.name || "장소 미정")}</span>
           <span>🗓️ ${escapeHtml(formatDate(firstSession?.starts_at || course.starts_at))}</span>
         </div>
@@ -483,6 +559,23 @@ function renderReviewsPage() {
   `;
 }
 
+function openInstructorProfile(instructorId) {
+  const instructor = state.instructors.find((item) => item.id === instructorId);
+  if (!instructor) return;
+  elements.profileTitle.textContent = instructor.name;
+  elements.profileBody.innerHTML = `
+    <div class="profile-card">
+      ${instructor.photo_url ? `<img class="profile-photo" src="${escapeHtml(instructor.photo_url)}" alt="${escapeHtml(instructor.name)} 사진">` : `<div class="profile-photo placeholder">人</div>`}
+      <div>
+        <h3>${escapeHtml(instructor.name)}</h3>
+        <p class="muted">${escapeHtml(instructor.title || "강사")}</p>
+        <p>${escapeHtml(instructor.bio || "프로필 소개가 곧 업데이트됩니다.")}</p>
+      </div>
+    </div>
+  `;
+  openModal(elements.profileModal);
+}
+
 function renderArchivePage() {
   const items = publicArchiveItems();
   setPageHeader({
@@ -548,6 +641,8 @@ function openCourseDetail(courseId) {
   state.activeCourseId = courseId;
   const orgSlug = course.organization?.slug || "";
   const orgName = course.organization?.name || "";
+  const kakaoUrl = kakaoMapUrl(course.venue);
+  const naverUrl = naverPlaceUrl(course.venue);
 
   elements.detailBadges.innerHTML = `
     <span class="badge ${getStatusClass(course.status)}">${escapeHtml(statusLabels[course.status] || course.status)}</span>
@@ -565,14 +660,20 @@ function openCourseDetail(courseId) {
         </ul>
         <div class="actions" style="margin-top: 14px;">
           ${course.application_url ? `<a class="btn small" href="${escapeHtml(course.application_url)}" target="_blank" rel="noreferrer">신청하기</a>` : ""}
+          <button class="btn small secondary" type="button" data-add-calendar="${course.id}">캘린더 등록</button>
           <button class="btn small secondary" type="button" data-login-for-review>후기 쓰기</button>
         </div>
       </div>
       <aside class="section">
         <h3>강사·장소</h3>
-        <p><strong>${escapeHtml(course.instructor?.name || "강사 미정")}</strong> ${escapeHtml(course.instructor?.title || "")}</p>
+        <p><strong>${course.instructor?.id ? `<button class="text-link" type="button" data-open-instructor="${course.instructor.id}">${escapeHtml(course.instructor.name)}</button>` : escapeHtml(course.instructor?.name || "강사 미정")}</strong> ${escapeHtml(course.instructor?.title || "")}</p>
         <p>${escapeHtml(course.instructor?.bio || "")}</p>
-        <p>📍 ${escapeHtml(course.venue?.name || "장소 미정")} ${course.venue?.address ? `· ${escapeHtml(course.venue.address)}` : ""}</p>
+        <p>📍 ${escapeHtml(course.venue?.name || "장소 미정")} ${course.venue?.address ? `· ${escapeHtml(course.venue.address)}` : ""} ${course.venue?.detail ? `· ${escapeHtml(course.venue.detail)}` : ""}</p>
+        <div class="actions" style="margin: 10px 0 14px;">
+          ${course.instructor?.id ? `<button class="btn small secondary" type="button" data-open-instructor="${course.instructor.id}">강사 프로필</button>` : ""}
+          ${kakaoUrl ? `<a class="btn small secondary" href="${escapeHtml(kakaoUrl)}" target="_blank" rel="noreferrer">카카오맵</a>` : ""}
+          ${naverUrl ? `<a class="btn small secondary" href="${escapeHtml(naverUrl)}" target="_blank" rel="noreferrer">네이버플레이스</a>` : ""}
+        </div>
         <p>주관 단체: ${orgSlug ? `<button class="text-link" type="button" data-open-organization="${escapeHtml(orgSlug)}">${escapeHtml(orgName)}</button>` : escapeHtml(orgName)}</p>
       </aside>
       <div class="section">
@@ -676,6 +777,8 @@ function bindEvents() {
     const routeControl = event.target.closest("[data-route]");
     const openButton = event.target.closest("[data-open-course]");
     const organizationButton = event.target.closest("[data-open-organization]");
+    const instructorButton = event.target.closest("[data-open-instructor]");
+    const calendarButton = event.target.closest("[data-add-calendar]");
     const closeButton = event.target.closest("[data-close-modal]");
     const loginForReview = event.target.closest("[data-login-for-review]");
     if (routeControl) {
@@ -685,6 +788,15 @@ function bindEvents() {
     }
     if (organizationButton) {
       navigate("organization", organizationButton.dataset.openOrganization);
+      return;
+    }
+    if (instructorButton) {
+      openInstructorProfile(instructorButton.dataset.openInstructor);
+      return;
+    }
+    if (calendarButton) {
+      const course = state.composedCourses.find((item) => item.id === calendarButton.dataset.addCalendar);
+      if (course) downloadCalendar(course);
       return;
     }
     if (openButton) openCourseDetail(openButton.dataset.openCourse);

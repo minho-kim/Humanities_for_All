@@ -364,6 +364,10 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand-2); box-sh
 .organization-detail h3 { font-size: 1.45rem; }
 .resource-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 22px; }
 .resource-card { min-height: 190px; }
+.profile-card { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 18px; align-items: start; margin-top: 18px; }
+.profile-photo { width: 110px; height: 110px; border-radius: 28px; object-fit: cover; background: #fff; border: 1px solid var(--line); }
+.profile-photo.placeholder { display: grid; place-items: center; color: rgba(124, 63, 33, 0.18); font-size: 4rem; font-weight: 900; }
+.profile-card h3 { margin: 0 0 4px; font-size: 1.35rem; }
 
 .admin-layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 18px; align-items: start; }
 .admin-card { padding: 18px; background: rgba(255, 255, 255, 0.88); }
@@ -395,6 +399,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand-2); box-sh
   .page { width: min(100% - 20px, 1180px); padding-top: 12px; }
   .hero-card, .panel, .modal-card, .admin-card { padding: 18px; border-radius: 20px; }
   .filter-grid, .course-grid, .stat-grid, .media-grid, .admin-grid, .organization-grid, .resource-grid { grid-template-columns: 1fr; }
+  .profile-card { grid-template-columns: 1fr; }
   .calendar-item { grid-template-columns: 1fr; }
   .footer { align-items: stretch; flex-direction: column; }
 }
