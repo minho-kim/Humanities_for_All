@@ -23,8 +23,9 @@
         <h2>로그인</h2>
         <form id="adminLoginForm">
           <label>관리자 이메일<input id="adminEmail" type="email" placeholder="you@example.com" required></label>
+          <label style="margin-top: 10px;">비밀번호<input id="adminPassword" type="password" placeholder="Supabase Auth 비밀번호" required autocomplete="current-password"></label>
           <div class="actions" style="margin-top: 12px;">
-            <button class="btn" type="submit">로그인 링크 받기</button>
+            <button class="btn" type="submit">로그인</button>
             <button class="btn secondary" type="button" id="adminLogoutButton">로그아웃</button>
           </div>
         </form>
@@ -49,4 +50,3 @@
   <script type="module" src="./assets/admin.js"></script>
 </body>
 </html>
-

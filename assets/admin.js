@@ -2,7 +2,6 @@ import {
   ARCHIVE_BUCKET,
   escapeHtml,
   formatDateTime,
-  getCurrentUrlWithoutHash,
   getDisplayName,
   randomPick,
   shortDate,
@@ -29,6 +28,7 @@ const state = {
 const elements = {
   adminLoginForm: document.getElementById("adminLoginForm"),
   adminEmail: document.getElementById("adminEmail"),
+  adminPassword: document.getElementById("adminPassword"),
   adminLogoutButton: document.getElementById("adminLogoutButton"),
   adminStatus: document.getElementById("adminStatus"),
   permissionNotice: document.getElementById("permissionNotice"),
@@ -306,16 +306,22 @@ function render() {
 async function handleLogin(event) {
   event.preventDefault();
   const email = elements.adminEmail.value.trim();
-  if (!email) return;
-  const { error } = await supabase.auth.signInWithOtp({
+  const password = elements.adminPassword.value;
+  if (!email || !password) return;
+
+  const { error } = await supabase.auth.signInWithPassword({
     email,
-    options: { emailRedirectTo: getCurrentUrlWithoutHash() },
+    password,
   });
+
   if (error) {
-    showToast(`로그인 링크 발송 실패: ${error.message}`);
+    showToast(`로그인 실패: ${error.message}`);
     return;
   }
-  showToast("이메일로 로그인 링크를 보냈습니다.");
+
+  elements.adminPassword.value = "";
+  await reload();
+  showToast("로그인했습니다.");
 }
 
 async function handleLogout() {
