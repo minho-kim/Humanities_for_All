@@ -292,9 +292,46 @@ function courseCardHtml(course) {
     `;
 }
 
+function organizationCardHtml(organization) {
+  const courses = coursesForOrganization(organization.id);
+  return `
+      <article class="organization-card">
+        ${organization.logo_url ? `<img class="org-logo" src="${escapeHtml(organization.logo_url)}" alt="${escapeHtml(organization.name)} 로고">` : ""}
+        <div>
+          <h3>${escapeHtml(organization.name)}</h3>
+          <p>${escapeHtml(organization.description || "단체 소개가 곧 업데이트됩니다.")}</p>
+          ${organization.contact_email ? `<p class="muted">연락처: ${escapeHtml(organization.contact_email)}</p>` : ""}
+        </div>
+        <div class="footer">
+          <span class="review-note">교육 ${courses.length}개</span>
+          <div class="actions">
+            ${organization.website_url ? `<a class="btn small secondary" href="${escapeHtml(organization.website_url)}" target="_blank" rel="noreferrer">홈페이지</a>` : ""}
+            <button class="btn small" type="button" data-open-organization="${escapeHtml(organization.slug)}">자세히 보기</button>
+          </div>
+        </div>
+      </article>
+    `;
+}
+
 function renderCards(courses) {
   elements.courseResults.className = "course-grid";
   if (!courses.length) {
+    const organizations = publicOrganizations();
+    if (!state.courses.length && organizations.length) {
+      elements.courseResults.className = "content-stack";
+      elements.courseResults.innerHTML = `
+        <div class="empty">
+          아직 등록된 교육이 없습니다. 먼저 참여 단체를 확인해 보세요.
+          <div class="actions" style="justify-content:center;margin-top:14px;">
+            <button class="btn small" type="button" data-route="organizations">참여 단체 전체 보기</button>
+          </div>
+        </div>
+        <div class="organization-grid">
+          ${organizations.map(organizationCardHtml).join("")}
+        </div>
+      `;
+      return;
+    }
     elements.courseResults.innerHTML = `<div class="empty">조건에 맞는 교육이 없습니다. 검색어나 필터를 다시 확인해 주세요.</div>`;
     return;
   }
@@ -333,11 +370,14 @@ function renderCalendar(courses) {
 
 function renderCoursesPage() {
   const courses = filteredCourses();
+  const organizations = publicOrganizations();
   setPageHeader({
     title: "교육 검색",
     description: "관심 있는 교육을 주제, 강사, 장소, 단체명으로 찾아보세요.",
     showCourseTools: true,
-    summary: `${courses.length.toLocaleString("ko-KR")}개 교육이 표시됩니다.`,
+    summary: state.courses.length
+      ? `${courses.length.toLocaleString("ko-KR")}개 교육이 표시됩니다.`
+      : `등록된 교육은 아직 없고, ${organizations.length.toLocaleString("ko-KR")}개 단체가 등록되어 있습니다.`,
   });
   if (state.activeView === "calendar") renderCalendar(courses);
   else renderCards(courses);
@@ -351,26 +391,7 @@ function renderOrganizationsPage() {
     summary: `${organizations.length.toLocaleString("ko-KR")}개 단체가 함께합니다.`,
   });
   elements.courseResults.className = "organization-grid";
-  elements.courseResults.innerHTML = organizations.map((organization) => {
-    const courses = coursesForOrganization(organization.id);
-    return `
-      <article class="organization-card">
-        ${organization.logo_url ? `<img class="org-logo" src="${escapeHtml(organization.logo_url)}" alt="${escapeHtml(organization.name)} 로고">` : ""}
-        <div>
-          <h3>${escapeHtml(organization.name)}</h3>
-          <p>${escapeHtml(organization.description || "단체 소개가 곧 업데이트됩니다.")}</p>
-          ${organization.contact_email ? `<p class="muted">연락처: ${escapeHtml(organization.contact_email)}</p>` : ""}
-        </div>
-        <div class="footer">
-          <span class="review-note">교육 ${courses.length}개</span>
-          <div class="actions">
-            ${organization.website_url ? `<a class="btn small secondary" href="${escapeHtml(organization.website_url)}" target="_blank" rel="noreferrer">홈페이지</a>` : ""}
-            <button class="btn small" type="button" data-open-organization="${escapeHtml(organization.slug)}">교육 보기</button>
-          </div>
-        </div>
-      </article>
-    `;
-  }).join("") || `<div class="empty">등록된 참여 단체가 없습니다.</div>`;
+  elements.courseResults.innerHTML = organizations.map(organizationCardHtml).join("") || `<div class="empty">등록된 참여 단체가 없습니다.</div>`;
 }
 
 function renderOrganizationPage() {
