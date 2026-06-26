@@ -169,6 +169,46 @@ function renderDashboard() {
   `;
 }
 
+function renderOrganizationForm(organization = {}) {
+  return `
+    <form id="organizationForm" class="section">
+      <input type="hidden" name="organization_id" value="${escapeHtml(organization.id || "")}">
+      <div class="admin-grid">
+        <label>단체명<input name="name" value="${escapeHtml(organization.name || "")}" required></label>
+        <label>주소 이름(영문)<input name="slug" value="${escapeHtml(organization.slug || "")}" placeholder="example-organization" required></label>
+        <label>정렬 순서<input name="sort_order" type="number" value="${escapeHtml(organization.sort_order ?? 0)}"></label>
+        <label>홈페이지<input name="website_url" value="${escapeHtml(organization.website_url || "")}" placeholder="https://"></label>
+      </div>
+      <label style="margin-top: 10px;">단체 소개<textarea name="description" placeholder="공개 페이지에 표시할 단체 소개를 입력하세요.">${escapeHtml(organization.description || "")}</textarea></label>
+      <label style="margin-top: 10px;">로고 이미지 URL<input name="logo_url" value="${escapeHtml(organization.logo_url || "")}" placeholder="https://"></label>
+      <label style="margin-top: 10px;">담당 이메일<input name="contact_email" type="email" value="${escapeHtml(organization.contact_email || "")}"></label>
+      <label style="margin-top: 10px;"><span><input name="is_active" type="checkbox" ${organization.is_active !== false ? "checked" : ""} style="width:auto;min-height:auto;"> 공개 페이지에 표시</span></label>
+      <div class="actions" style="margin-top: 14px;">
+        <button class="btn" type="submit">${organization.id ? "단체 수정" : "단체 추가"}</button>
+        <button class="btn secondary" type="button" id="newOrganizationButton">새 단체 입력</button>
+      </div>
+    </form>
+  `;
+}
+
+function renderOrganizations() {
+  const selectedId = document.getElementById("organizationPicker")?.value || "";
+  const selectedOrganization = state.organizations.find((organization) => organization.id === selectedId) || {};
+  elements.adminContent.innerHTML = `
+    <h2>단체 관리</h2>
+    <p class="muted">공개 페이지의 참여 단체 소개와 단체별 교육 모아보기에 사용됩니다.</p>
+    <label>수정할 단체 선택<select id="organizationPicker"><option value="">새 단체</option>${state.organizations.map((organization) => `<option value="${organization.id}" ${organization.id === selectedId ? "selected" : ""}>${escapeHtml(organization.name)}</option>`).join("")}</select></label>
+    <div style="margin-top: 14px;">${renderOrganizationForm(selectedOrganization)}</div>
+    <h3>참여 단체</h3>
+    <div class="table-list">
+      ${state.organizations.map((organization) => {
+        const courseCount = state.courses.filter((course) => course.organization_id === organization.id).length;
+        return `<div class="table-row"><div class="row-top"><strong>${escapeHtml(organization.name)}</strong><span class="badge ${organization.is_active !== false ? "green" : "gray"}">${organization.is_active !== false ? "공개" : "숨김"}</span></div><span class="muted">교육 ${courseCount}개 · ${escapeHtml(organization.slug)}</span><p>${escapeHtml(organization.description || "소개 없음")}</p></div>`;
+      }).join("") || `<div class="empty">등록된 단체가 없습니다.</div>`}
+    </div>
+  `;
+}
+
 function renderCourseForm(course = {}) {
   const firstSession = state.sessions.find((session) => session.course_id === course.id) || {};
   return `
@@ -296,7 +336,8 @@ function render() {
     return;
   }
 
-  if (state.tab === "courses") renderCourses();
+  if (state.tab === "organizations") renderOrganizations();
+  else if (state.tab === "courses") renderCourses();
   else if (state.tab === "archive") renderArchive();
   else if (state.tab === "reviews") renderReviews();
   else if (state.tab === "draws") renderDraws();
@@ -329,6 +370,41 @@ async function handleLogout() {
   await refreshSession();
   render();
   showToast("로그아웃했습니다.");
+}
+
+async function saveOrganization(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const formData = new FormData(form);
+  const organizationId = formData.get("organization_id");
+  const sortOrder = Number(formData.get("sort_order") || 0);
+  const payload = {
+    name: String(formData.get("name") || "").trim(),
+    slug: String(formData.get("slug") || "").trim(),
+    description: String(formData.get("description") || "").trim() || null,
+    website_url: String(formData.get("website_url") || "").trim() || null,
+    contact_email: String(formData.get("contact_email") || "").trim() || null,
+    logo_url: String(formData.get("logo_url") || "").trim() || null,
+    sort_order: Number.isFinite(sortOrder) ? sortOrder : 0,
+    is_active: formData.get("is_active") === "on",
+  };
+
+  if (!payload.name || !payload.slug) {
+    showToast("단체명과 주소 이름을 입력해 주세요.");
+    return;
+  }
+
+  const request = organizationId
+    ? supabase.from("organizations").update(payload).eq("id", organizationId)
+    : supabase.from("organizations").insert(payload);
+
+  const { error } = await request;
+  if (error) throw error;
+
+  showToast("단체 정보를 저장했습니다.");
+  await reload();
+  state.tab = "organizations";
+  render();
 }
 
 async function saveCourse(event) {
@@ -508,14 +584,21 @@ function bindEvents() {
       if (picker) picker.value = "";
       renderCourses();
     }
+    if (event.target.id === "newOrganizationButton") {
+      const picker = document.getElementById("organizationPicker");
+      if (picker) picker.value = "";
+      renderOrganizations();
+    }
   });
 
   document.body.addEventListener("change", (event) => {
+    if (event.target.id === "organizationPicker") renderOrganizations();
     if (event.target.id === "coursePicker") renderCourses();
   });
 
   document.body.addEventListener("submit", async (event) => {
     try {
+      if (event.target.id === "organizationForm") await saveOrganization(event);
       if (event.target.id === "courseForm") await saveCourse(event);
       if (event.target.id === "archiveForm") await saveArchive(event);
       if (event.target.id === "drawForm") await runDraw(event);

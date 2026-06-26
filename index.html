@@ -14,16 +14,16 @@
         <h1 id="title">가까운 인문학 교육을 한곳에서 찾아보세요</h1>
         <p class="lead">관심 있는 주제와 일정, 장소를 확인하고 교육이 끝난 뒤 사진·영상·후기도 다시 만날 수 있습니다.</p>
         <div class="actions">
-          <a class="btn" href="#courses">교육 찾아보기</a>
+          <a class="btn" href="#courses" data-route="courses">교육 찾아보기</a>
           <button class="btn secondary" type="button" id="loginButton">후기 쓰기</button>
         </div>
       </div>
       <aside class="stats-panel" aria-label="서비스 요약">
         <div class="stat-grid">
-          <div class="stat"><strong id="orgCount">-</strong><span>참여 기관</span></div>
-          <div class="stat"><strong id="courseCount">-</strong><span>등록 교육</span></div>
-          <div class="stat"><strong id="reviewCount">-</strong><span>후기</span></div>
-          <div class="stat"><strong id="archiveCount">-</strong><span>사진·영상 자료</span></div>
+          <button class="stat stat-link" type="button" data-route="organizations" aria-label="참여 단체 보기"><strong id="orgCount">-</strong><span>참여 단체</span></button>
+          <button class="stat stat-link" type="button" data-route="courses" aria-label="등록 교육 보기"><strong id="courseCount">-</strong><span>등록 교육</span></button>
+          <button class="stat stat-link" type="button" data-route="reviews" aria-label="후기 모아보기"><strong id="reviewCount">-</strong><span>후기</span></button>
+          <button class="stat stat-link" type="button" data-route="archive" aria-label="사진과 영상 자료 보기"><strong id="archiveCount">-</strong><span>사진·영상 자료</span></button>
         </div>
         <div class="info-note">
           <h2>배움의 기록을 함께 남깁니다</h2>
@@ -33,15 +33,26 @@
     </section>
 
     <section class="panel" id="courses" aria-labelledby="searchTitle">
-      <h2 class="sr-only" id="searchTitle">교육 검색</h2>
-      <div class="filter-grid">
-        <label>통합 검색<input id="searchInput" type="search" placeholder="주제, 강사, 장소, 기관명으로 검색"></label>
-        <label>기관<select id="orgFilter"></select></label>
+      <div class="section-heading">
+        <div>
+          <h2 id="searchTitle">교육 검색</h2>
+          <p class="muted" id="viewDescription">관심 있는 교육을 주제, 강사, 장소, 단체명으로 찾아보세요.</p>
+        </div>
+        <nav class="page-tabs" aria-label="콘텐츠 보기">
+          <a href="#courses" data-route="courses" class="active">교육</a>
+          <a href="#organizations" data-route="organizations">참여 단체</a>
+          <a href="#reviews" data-route="reviews">후기</a>
+          <a href="#archive" data-route="archive">사진·영상</a>
+        </nav>
+      </div>
+      <div class="filter-grid" id="courseFilters">
+        <label>통합 검색<input id="searchInput" type="search" placeholder="주제, 강사, 장소, 단체명으로 검색"></label>
+        <label>단체<select id="orgFilter"></select></label>
         <label>주제<select id="topicFilter"></select></label>
         <label>시간대<select id="timeFilter"><option value="">전체</option><option value="오전">오전</option><option value="오후">오후</option><option value="저녁">저녁</option></select></label>
         <label>상태<select id="statusFilter"><option value="">전체</option><option value="open">모집 중</option><option value="scheduled">예정</option><option value="finished">종료</option><option value="cancelled">취소</option></select></label>
       </div>
-      <div class="view-row">
+      <div class="view-row" id="courseViewOptions">
         <div class="result-summary" id="resultSummary" aria-live="polite">교육을 불러오는 중입니다.</div>
         <div class="toggle" aria-label="보기 방식">
           <button type="button" class="active" data-view="cards">카드</button>

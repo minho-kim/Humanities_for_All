@@ -159,6 +159,19 @@ h1 {
   border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
+.stat-link {
+  width: 100%;
+  color: inherit;
+  text-align: left;
+  transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+}
+
+.stat-link:hover, .stat-link:focus-visible {
+  transform: translateY(-2px);
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
 .stat strong { display: block; font-size: 2rem; line-height: 1; }
 .stat span { display: block; margin-top: 6px; color: rgba(255, 255, 255, 0.72); font-size: 0.9rem; }
 
@@ -176,6 +189,41 @@ h1 {
   padding: 18px;
   margin-bottom: 20px;
   background: rgba(255, 255, 255, 0.72);
+}
+
+.section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.section-heading h2 { margin: 0 0 4px; }
+.section-heading p { margin: 0; }
+
+.page-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.page-tabs a {
+  min-height: 36px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--muted);
+  font-weight: 850;
+  text-decoration: none;
+}
+
+.page-tabs a.active {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
 }
 
 .filter-grid {
@@ -251,6 +299,19 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand-2); box-sh
 .footer { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-top: auto; padding-top: 14px; border-top: 1px solid var(--line); }
 .review-note { color: var(--green); font-weight: 900; font-size: 0.92rem; }
 
+.text-link, .badge-link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-weight: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.badge-link { text-decoration: none; }
+
 .calendar-list { display: grid; gap: 12px; margin-bottom: 22px; }
 .calendar-item { display: grid; grid-template-columns: 110px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 16px; border-radius: 22px; background: rgba(255, 255, 255, 0.9); border: 1px solid var(--line); }
 .date-box { padding: 10px; border-radius: 18px; background: #fff4dc; color: var(--brand); text-align: center; font-weight: 900; }
@@ -283,6 +344,27 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand-2); box-sh
 .media:nth-child(2n) { background: linear-gradient(135deg, rgba(44, 36, 27, 0.58), rgba(44, 36, 27, 0.2)), linear-gradient(135deg, #614c90, #d87c48); }
 .media small { color: rgba(255, 255, 255, 0.78); }
 
+.content-stack { display: grid; gap: 16px; margin-bottom: 22px; }
+.organization-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 22px; }
+.organization-card, .review-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 22px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 12px 30px rgba(74, 45, 18, 0.08);
+}
+
+.organization-card h3, .review-card p { margin: 0; }
+.organization-card p { margin: 6px 0 0; color: var(--muted); }
+.org-logo { width: 68px; height: 68px; object-fit: contain; border-radius: 18px; background: #fff; border: 1px solid var(--line); padding: 8px; }
+.org-logo.large { width: 96px; height: 96px; float: left; margin: 0 16px 10px 0; }
+.organization-detail { display: block; }
+.organization-detail h3 { font-size: 1.45rem; }
+.resource-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 22px; }
+.resource-card { min-height: 190px; }
+
 .admin-layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 18px; align-items: start; }
 .admin-card { padding: 18px; background: rgba(255, 255, 255, 0.88); }
 .admin-nav { display: grid; gap: 8px; }
@@ -303,15 +385,16 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand-2); box-sh
 
 @media (max-width: 980px) {
   .hero, .detail-grid, .admin-layout { grid-template-columns: 1fr; }
+  .section-heading { display: grid; }
+  .page-tabs { justify-content: flex-start; }
   .filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .course-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .course-grid, .resource-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 640px) {
   .page { width: min(100% - 20px, 1180px); padding-top: 12px; }
   .hero-card, .panel, .modal-card, .admin-card { padding: 18px; border-radius: 20px; }
-  .filter-grid, .course-grid, .stat-grid, .media-grid, .admin-grid { grid-template-columns: 1fr; }
+  .filter-grid, .course-grid, .stat-grid, .media-grid, .admin-grid, .organization-grid, .resource-grid { grid-template-columns: 1fr; }
   .calendar-item { grid-template-columns: 1fr; }
   .footer { align-items: stretch; flex-direction: column; }
 }
-
