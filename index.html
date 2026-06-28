@@ -15,7 +15,7 @@
         <p class="lead">관심 있는 주제와 일정, 장소를 확인하고 교육이 끝난 뒤 사진·영상·후기도 다시 만날 수 있습니다.</p>
         <div class="actions">
           <a class="btn" href="#courses" data-route="courses">교육 찾아보기</a>
-          <button class="btn secondary" type="button" id="loginButton">후기 쓰기</button>
+          <button class="btn secondary" type="button" id="loginButton">로그인</button>
         </div>
       </div>
       <aside class="stats-panel" aria-label="서비스 요약">
@@ -80,10 +80,10 @@
   <div class="modal" id="loginModal" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
     <article class="modal-card" style="max-width: 560px;">
       <div class="modal-header">
-        <div><span class="eyebrow">후기 작성</span><h2 id="loginTitle">이메일 인증</h2></div>
+        <div><span class="eyebrow">이메일 인증</span><h2 id="loginTitle">로그인</h2></div>
         <button class="icon-btn" type="button" data-close-modal aria-label="이메일 인증 닫기">×</button>
       </div>
-      <p class="lead">후기를 남기려면 이메일 인증이 필요합니다. 입력한 이메일로 받은 인증 링크를 눌러 주세요.</p>
+      <p class="lead">교육 신청과 후기 작성을 위해 이메일 인증을 사용합니다. 입력한 이메일로 받은 인증 링크를 눌러 주세요.</p>
       <form id="loginForm">
         <label>이메일<input id="loginEmail" type="email" placeholder="you@example.com" required></label>
         <div class="actions" style="margin-top: 12px;">
@@ -98,8 +98,8 @@
   <div class="modal" id="profileModal" role="dialog" aria-modal="true" aria-labelledby="profileTitle">
     <article class="modal-card" style="max-width: 680px;">
       <div class="modal-header">
-        <div><span class="eyebrow">강사 프로필</span><h2 id="profileTitle">강사 프로필</h2></div>
-        <button class="icon-btn" type="button" data-close-modal aria-label="프로필 닫기">×</button>
+        <div><span class="eyebrow" id="profileEyebrow">정보</span><h2 id="profileTitle">정보</h2></div>
+        <button class="icon-btn" type="button" data-close-modal aria-label="정보 닫기">×</button>
       </div>
       <div id="profileBody"></div>
     </article>

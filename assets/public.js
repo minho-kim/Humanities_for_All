@@ -9,10 +9,12 @@ import {
   groupBy,
   byId,
   normalizeSafeUrl,
+  shortDate,
   SUPABASE_PUBLISHABLE_KEY,
   SUPABASE_URL,
   statusLabels,
   URL_RULES,
+  verificationLabels,
 } from "./shared.js";
 
 const state = {
@@ -23,6 +25,7 @@ const state = {
   sessions: [],
   archives: [],
   reviews: [],
+  myReviews: [],
   applications: [],
   composedCourses: [],
   activePage: "courses",
@@ -61,6 +64,7 @@ const elements = {
   logoutButton: document.getElementById("logoutButton"),
   loginStatus: document.getElementById("loginStatus"),
   profileModal: document.getElementById("profileModal"),
+  profileEyebrow: document.getElementById("profileEyebrow"),
   profileTitle: document.getElementById("profileTitle"),
   profileBody: document.getElementById("profileBody"),
   toast: document.getElementById("toast"),
@@ -69,7 +73,7 @@ const elements = {
 const PUBLIC_FETCH_TIMEOUT_MS = 7000;
 const PUBLIC_FETCH_RETRIES = 1;
 const SESSION_TIMEOUT_MS = 2500;
-const APPLICATION_TERMS_VERSION = "2026-06-28";
+const APPLICATION_TERMS_VERSION = "2026-06-29";
 let supplementaryLoadSequence = 0;
 let supabaseClientPromise = null;
 
@@ -297,6 +301,18 @@ function applicationStatusClass(status) {
   return "";
 }
 
+function reviewStatusLabel(review) {
+  if (review.is_hidden) return "비공개";
+  return verificationLabels[review.verification_status] || "후기";
+}
+
+function reviewStatusClass(review) {
+  if (review.is_hidden) return "red";
+  if (review.verification_status === "verified") return "green";
+  if (review.verification_status === "rejected") return "red";
+  return "gray";
+}
+
 function canApplyToCourse(course) {
   return ["scheduled", "open"].includes(course.status);
 }
@@ -471,6 +487,7 @@ async function loadSupplementaryData() {
 function clearApplicationState() {
   state.applicantProfile = null;
   state.applications = [];
+  state.myReviews = [];
 }
 
 async function loadApplicationState(supabase) {
@@ -479,7 +496,7 @@ async function loadApplicationState(supabase) {
     return;
   }
 
-  const [profileResult, applicationsResult] = await Promise.allSettled([
+  const [profileResult, applicationsResult, myReviewsResult] = await Promise.allSettled([
     supabase
       .from("applicant_profiles")
       .select("user_id,applicant_name,phone,privacy_agreed_at,sms_notice_agreed_at,terms_version,updated_at")
@@ -489,6 +506,7 @@ async function loadApplicationState(supabase) {
       .from("course_applications")
       .select("*")
       .order("created_at", { ascending: false }),
+    supabase.rpc("get_my_reviews"),
   ]);
 
   if (profileResult.status === "fulfilled" && !profileResult.value.error) {
@@ -503,6 +521,13 @@ async function loadApplicationState(supabase) {
   } else {
     console.warn("[모두의 인문학] 교육 신청 내역 확인 지연", applicationsResult.reason || applicationsResult.value?.error);
     state.applications = [];
+  }
+
+  if (myReviewsResult.status === "fulfilled" && !myReviewsResult.value.error) {
+    state.myReviews = myReviewsResult.value.data || [];
+  } else {
+    console.warn("[모두의 인문학] 내 후기 내역 확인 지연", myReviewsResult.reason || myReviewsResult.value?.error);
+    state.myReviews = [];
   }
 }
 
@@ -760,6 +785,7 @@ function openInstructorProfile(instructorId) {
   const instructor = state.instructors.find((item) => item.id === instructorId);
   if (!instructor) return;
   const photoUrl = normalizeSafeUrl(instructor.photo_url, URL_RULES.image);
+  elements.profileEyebrow.textContent = "강사 프로필";
   elements.profileTitle.textContent = instructor.name;
   elements.profileBody.innerHTML = `
     <div class="profile-card">
@@ -770,6 +796,89 @@ function openInstructorProfile(instructorId) {
         <p>${escapeHtml(instructor.bio || "프로필 소개가 곧 업데이트됩니다.")}</p>
       </div>
     </div>
+  `;
+  openModal(elements.profileModal);
+}
+
+function renderApplicationHistory() {
+  if (!state.applications.length) return `<div class="empty">아직 신청한 교육이 없습니다.</div>`;
+  return `
+    <div class="table-list">
+      ${state.applications.map((application) => {
+        const course = courseById(application.course_id);
+        return `
+          <div class="table-row">
+            <div class="row-top">
+              <strong>${escapeHtml(course?.title || "교육 정보")}</strong>
+              <span class="badge ${applicationStatusClass(application.status)}">${escapeHtml(applicationStatusLabel(application.status))}</span>
+            </div>
+            <p class="muted">신청일 ${escapeHtml(shortDate(application.created_at))} · 신청자 ${escapeHtml(application.applicant_name || "")}</p>
+            ${application.note ? `<p>${escapeHtml(application.note)}</p>` : ""}
+            ${course ? `<button class="btn small secondary" type="button" data-open-course="${course.id}">교육 보기</button>` : ""}
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderMyReviewHistory() {
+  if (!state.myReviews.length) return `<div class="empty">아직 작성한 후기가 없습니다.</div>`;
+  return `
+    <div class="table-list">
+      ${state.myReviews.map((review) => {
+        const course = courseById(review.course_id);
+        return `
+          <div class="table-row">
+            <div class="row-top">
+              <strong>${escapeHtml(course?.title || "교육 정보")}</strong>
+              <span class="badge ${reviewStatusClass(review)}">${escapeHtml(reviewStatusLabel(review))}</span>
+            </div>
+            <p>${escapeHtml(review.body)}</p>
+            <p class="muted">작성일 ${escapeHtml(shortDate(review.created_at))}</p>
+            ${course ? `<button class="btn small secondary" type="button" data-open-course="${course.id}">교육 보기</button>` : ""}
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function openMyInfo() {
+  if (!state.user) {
+    openModal(elements.loginModal);
+    return;
+  }
+
+  elements.profileEyebrow.textContent = "나의 정보";
+  elements.profileTitle.textContent = "나의 활동";
+  elements.profileBody.innerHTML = `
+    <div class="my-info-grid">
+      <section class="section">
+        <h3>인증 정보</h3>
+        <p class="muted">인증 이메일</p>
+        <p><strong>${escapeHtml(state.user.email || getReviewAuthorName(state.user))}</strong></p>
+        <div class="actions">
+          <button class="btn small secondary" type="button" data-logout-account>로그아웃</button>
+        </div>
+      </section>
+      <section class="section">
+        <h3>신청자 정보</h3>
+        ${state.applicantProfile ? `
+          <p>이름: <strong>${escapeHtml(state.applicantProfile.applicant_name)}</strong></p>
+          <p>전화번호: <strong>${escapeHtml(state.applicantProfile.phone)}</strong></p>
+          <p class="muted">마지막 확인: ${escapeHtml(shortDate(state.applicantProfile.updated_at))}</p>
+        ` : `<p class="muted">아직 저장된 신청자 정보가 없습니다. 교육을 신청하면 다음 신청 때 자동 입력됩니다.</p>`}
+      </section>
+    </div>
+    <section class="section" style="margin-top: 14px;">
+      <h3>교육 신청 현황</h3>
+      ${renderApplicationHistory()}
+    </section>
+    <section class="section" style="margin-top: 14px;">
+      <h3>후기 작성 현황</h3>
+      ${renderMyReviewHistory()}
+    </section>
   `;
   openModal(elements.profileModal);
 }
@@ -871,10 +980,20 @@ function renderApplicationForm(course) {
       </div>
       <label style="margin-top: 10px;">이메일<input value="${escapeHtml(state.user.email || "")}" readonly></label>
       <label style="margin-top: 10px;">요청사항(선택)<textarea name="note" placeholder="접근성 지원, 문의사항 등이 있으면 적어주세요."></textarea></label>
-      <div class="section" style="margin-top: 12px;">
-        <p class="muted">수집 항목: 신청자명, 이메일, 휴대전화번호, 요청사항</p>
-        <p class="muted">이용 목적: 교육 신청 접수, 신청 확인, 일정·장소·변경·취소 안내</p>
-        <p class="muted">보유 기간: 교육 종료 후 6개월 또는 사업 정산 종료 시까지</p>
+      <div class="section privacy-consent" style="margin-top: 12px;">
+        <h3>개인정보 수집·이용 동의</h3>
+        <p class="muted">교육 신청 접수와 운영 안내를 위해 필요한 최소한의 개인정보를 수집합니다.</p>
+        <details>
+          <summary>개인정보 수집·이용 안내 자세히 보기</summary>
+          <ul class="plain-list">
+            <li><strong>관련 근거</strong><br>개인정보 보호법 제15조 제1항 제1호에 따른 정보주체의 동의</li>
+            <li><strong>수집·이용 목적</strong><br>교육 신청 접수, 신청자 본인 확인, 일정·장소·변경·취소 안내, 신청 이력 확인, 운영 문의 응대</li>
+            <li><strong>수집 항목</strong><br>필수: 신청자명, 이메일, 휴대전화번호 · 선택: 요청사항</li>
+            <li><strong>보유·이용 기간</strong><br>교육 종료 후 6개월 또는 사업 정산·민원 응대 종료 시까지 보관한 뒤 파기합니다. 관련 법령에 따라 더 보관해야 하는 경우에는 해당 법령에서 정한 기간 동안 보관할 수 있습니다.</li>
+            <li><strong>동의 거부권과 불이익</strong><br>개인정보 수집·이용에 동의하지 않을 권리가 있습니다. 다만 필수 항목 동의를 거부하면 교육 신청 접수와 운영 안내가 어려워 신청이 제한될 수 있습니다.</li>
+            <li><strong>전화번호 안내</strong><br>휴대전화번호는 유료 본인 인증 없이 신청자가 입력한 값을 저장하며, 교육 운영 안내 연락에만 사용합니다.</li>
+          </ul>
+        </details>
         <label><span><input name="privacy_agreement" type="checkbox" required style="width:auto;min-height:auto;"> 개인정보 수집 및 이용에 동의합니다.</span></label>
         <label style="margin-top: 8px;"><span><input name="sms_notice_agreement" type="checkbox" required style="width:auto;min-height:auto;"> 교육 운영 안내를 문자로 받을 수 있음에 동의합니다.</span></label>
       </div>
@@ -1077,7 +1196,8 @@ async function handleReviewSubmit(event) {
 
 function updateSessionUi(user) {
   state.user = user || null;
-  elements.loginButton.textContent = state.user ? `${getReviewAuthorName(state.user)}님` : "후기 쓰기";
+  elements.loginButton.textContent = state.user ? `${getReviewAuthorName(state.user)}님` : "로그인";
+  elements.loginButton.setAttribute("aria-label", state.user ? "나의 정보 보기" : "이메일 인증 로그인");
   elements.loginStatus.textContent = state.user ? `${getReviewAuthorName(state.user)}님으로 인증되었습니다.` : "이메일 인증 전입니다.";
 }
 
@@ -1120,6 +1240,7 @@ async function handleLogout() {
   const supabase = await getSupabaseClient();
   await supabase.auth.signOut();
   await refreshSession(supabase);
+  closeModal(elements.profileModal);
   showToast("로그아웃했습니다.");
 }
 
@@ -1131,6 +1252,9 @@ function startAuthMonitor() {
     render();
     if (elements.detailModal.classList.contains("open") && state.activeCourseId) {
       openCourseDetail(state.activeCourseId);
+    }
+    if (elements.profileModal.classList.contains("open") && elements.profileEyebrow.textContent === "나의 정보") {
+      openMyInfo();
     }
   }
 
@@ -1194,10 +1318,25 @@ function bindEvents() {
       else document.getElementById("applicationSection")?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-    if (openButton) openCourseDetail(openButton.dataset.openCourse);
+    if (openButton) {
+      closeModal(elements.profileModal);
+      openCourseDetail(openButton.dataset.openCourse);
+      return;
+    }
     if (closeButton) closeModal(closeButton.closest(".modal"));
-    if (loginForReview) openModal(elements.loginModal);
-    if (loginForApplication) openModal(elements.loginModal);
+    if (loginForReview) {
+      if (state.user) document.getElementById("reviewForm")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      else openModal(elements.loginModal);
+      return;
+    }
+    if (loginForApplication) {
+      if (state.user) document.getElementById("applicationSection")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      else openModal(elements.loginModal);
+      return;
+    }
+    if (event.target.closest("[data-logout-account]")) {
+      handleLogout().catch((error) => showToast(`로그아웃 실패: ${error.message}`));
+    }
   });
 
   document.body.addEventListener("submit", (event) => {
@@ -1215,7 +1354,10 @@ function bindEvents() {
     if (event.key === "Escape") document.querySelectorAll(".modal.open").forEach(closeModal);
   });
 
-  elements.loginButton.addEventListener("click", () => openModal(elements.loginModal));
+  elements.loginButton.addEventListener("click", () => {
+    if (state.user) openMyInfo();
+    else openModal(elements.loginModal);
+  });
   elements.loginForm.addEventListener("submit", handleLogin);
   elements.logoutButton.addEventListener("click", handleLogout);
   window.addEventListener("hashchange", () => {
