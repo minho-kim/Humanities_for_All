@@ -20,6 +20,10 @@ const state = {
   adminProfile: null,
   adminProfileError: null,
   isLoggingIn: false,
+  applicationFilters: {
+    courseId: "",
+    status: "",
+  },
   organizations: [],
   instructors: [],
   venues: [],
@@ -102,6 +106,85 @@ function courseById(courseId) {
 function applicationStatusBadge(status) {
   const className = status === "confirmed" ? "green" : status === "cancelled" ? "red" : "gray";
   return `<span class="badge ${className}">${escapeHtml(applicationStatusLabels[status] || status || "신청 완료")}</span>`;
+}
+
+function applicationStatusOptions(selectedStatus = "") {
+  return Object.entries(applicationStatusLabels)
+    .map(([value, label]) => `<option value="${value}" ${value === selectedStatus ? "selected" : ""}>${escapeHtml(label)}</option>`)
+    .join("");
+}
+
+function applicationCounts(applications) {
+  return applications.reduce(
+    (counts, application) => {
+      counts.total += 1;
+      counts[application.status] = (counts[application.status] || 0) + 1;
+      return counts;
+    },
+    { total: 0, submitted: 0, confirmed: 0, waitlisted: 0, cancelled: 0 },
+  );
+}
+
+function applicationCountBadges(applications) {
+  const counts = applicationCounts(applications);
+  return `
+    <span class="badge">전체 ${counts.total}</span>
+    <span class="badge gray">신청 완료 ${counts.submitted}</span>
+    <span class="badge green">확정 ${counts.confirmed}</span>
+    <span class="badge gray">대기 ${counts.waitlisted}</span>
+    <span class="badge red">취소 ${counts.cancelled}</span>
+  `;
+}
+
+function filteredApplications() {
+  return state.applications.filter((application) => {
+    if (state.applicationFilters.courseId && application.course_id !== state.applicationFilters.courseId) return false;
+    if (state.applicationFilters.status && application.status !== state.applicationFilters.status) return false;
+    return true;
+  });
+}
+
+function applicationGroups(applications) {
+  const groupsByCourse = new Map();
+  applications.forEach((application) => {
+    const key = application.course_id || "unknown";
+    if (!groupsByCourse.has(key)) groupsByCourse.set(key, []);
+    groupsByCourse.get(key).push(application);
+  });
+
+  return [...groupsByCourse.entries()]
+    .map(([courseId, groupApplications]) => ({
+      courseId,
+      course: courseById(courseId),
+      applications: groupApplications.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at)),
+    }))
+    .sort((a, b) => {
+      const aTime = a.course?.starts_at ? new Date(a.course.starts_at).getTime() : Number.MAX_SAFE_INTEGER;
+      const bTime = b.course?.starts_at ? new Date(b.course.starts_at).getTime() : Number.MAX_SAFE_INTEGER;
+      if (aTime !== bTime) return aTime - bTime;
+      return courseName(a.courseId).localeCompare(courseName(b.courseId), "ko");
+    });
+}
+
+function renderApplicationRow(application) {
+  return `
+    <div class="table-row">
+      <div class="row-top">
+        <strong>${escapeHtml(application.applicant_name || "신청자")}</strong>
+        ${applicationStatusBadge(application.status)}
+      </div>
+      <div class="muted">신청일 ${escapeHtml(shortDate(application.created_at))}</div>
+      <p class="muted">이메일: ${escapeHtml(application.email || "없음")} · 전화: ${escapeHtml(application.phone || "없음")}</p>
+      ${application.note ? `<p>${escapeHtml(application.note)}</p>` : ""}
+      <p class="muted">개인정보 동의: ${escapeHtml(shortDate(application.privacy_agreed_at))} · 문자 안내 동의: ${escapeHtml(shortDate(application.sms_notice_agreed_at))}</p>
+      <div class="actions">
+        <button class="btn small" type="button" data-application-action="confirmed" data-application-id="${application.id}">확정</button>
+        <button class="btn small secondary" type="button" data-application-action="waitlisted" data-application-id="${application.id}">대기</button>
+        <button class="btn small secondary" type="button" data-application-action="submitted" data-application-id="${application.id}">신청 완료</button>
+        <button class="btn small danger" type="button" data-application-action="cancelled" data-application-id="${application.id}">취소</button>
+      </div>
+    </div>
+  `;
 }
 
 function localDateTimeValue(value) {
@@ -551,28 +634,47 @@ function renderReviews() {
 }
 
 function renderApplications() {
+  const applications = filteredApplications();
+  const groups = applicationGroups(applications);
   elements.adminContent.innerHTML = `
     <h2>교육 신청 관리</h2>
     <p class="muted">신청자 이름, 이메일, 전화번호는 교육 접수와 안내 목적으로만 사용하세요. 전화번호는 별도 인증 없이 신청자가 입력한 값입니다.</p>
+    <div class="section" style="margin: 12px 0 14px;">
+      <div class="admin-grid">
+        <label>교육별 보기
+          <select id="applicationCourseFilter">
+            <option value="">전체 교육</option>
+            ${optionList(state.courses, state.applicationFilters.courseId)}
+          </select>
+        </label>
+        <label>상태
+          <select id="applicationStatusFilter">
+            <option value="">전체 상태</option>
+            ${applicationStatusOptions(state.applicationFilters.status)}
+          </select>
+        </label>
+      </div>
+      <div class="actions" style="margin-top: 12px;">
+        ${applicationCountBadges(applications)}
+      </div>
+    </div>
     <div class="table-list">
-      ${state.applications.map((application) => `
-        <div class="table-row">
-          <div class="row-top">
-            <strong>${escapeHtml(application.applicant_name || "신청자")}</strong>
-            ${applicationStatusBadge(application.status)}
+      ${groups.map((group) => `
+        <details class="table-row" open>
+          <summary>
+            <div class="row-top" style="display:inline-flex;width:100%;align-items:flex-start;">
+              <span>
+                <strong>${escapeHtml(courseName(group.courseId))}</strong>
+                <br><span class="muted">${escapeHtml(group.course?.starts_at ? shortDate(group.course.starts_at) : "일정 미정")} · ${escapeHtml(group.course?.status ? (statusLabels[group.course.status] || group.course.status) : "교육 정보 확인 필요")}</span>
+              </span>
+              <span class="actions">${applicationCountBadges(group.applications)}</span>
+            </div>
+          </summary>
+          <div class="table-list" style="margin-top: 12px;">
+            ${group.applications.map(renderApplicationRow).join("")}
           </div>
-          <div class="muted">${escapeHtml(courseName(application.course_id))} · 신청일 ${escapeHtml(shortDate(application.created_at))}</div>
-          <p class="muted">이메일: ${escapeHtml(application.email || "없음")} · 전화: ${escapeHtml(application.phone || "없음")}</p>
-          ${application.note ? `<p>${escapeHtml(application.note)}</p>` : ""}
-          <p class="muted">개인정보 동의: ${escapeHtml(shortDate(application.privacy_agreed_at))} · 문자 안내 동의: ${escapeHtml(shortDate(application.sms_notice_agreed_at))}</p>
-          <div class="actions">
-            <button class="btn small" type="button" data-application-action="confirmed" data-application-id="${application.id}">확정</button>
-            <button class="btn small secondary" type="button" data-application-action="waitlisted" data-application-id="${application.id}">대기</button>
-            <button class="btn small secondary" type="button" data-application-action="submitted" data-application-id="${application.id}">신청 완료</button>
-            <button class="btn small danger" type="button" data-application-action="cancelled" data-application-id="${application.id}">취소</button>
-          </div>
-        </div>
-      `).join("") || `<div class="empty">아직 교육 신청이 없습니다.</div>`}
+        </details>
+      `).join("") || `<div class="empty">${state.applications.length ? "선택한 조건에 맞는 신청이 없습니다." : "아직 교육 신청이 없습니다."}</div>`}
     </div>
   `;
 }
@@ -1051,6 +1153,14 @@ function bindEvents() {
     if (event.target.id === "instructorPicker") renderInstructors();
     if (event.target.id === "venuePicker") renderVenues();
     if (event.target.id === "coursePicker") renderCourses();
+    if (event.target.id === "applicationCourseFilter") {
+      state.applicationFilters.courseId = event.target.value;
+      renderApplications();
+    }
+    if (event.target.id === "applicationStatusFilter") {
+      state.applicationFilters.status = event.target.value;
+      renderApplications();
+    }
   });
 
   document.body.addEventListener("submit", async (event) => {

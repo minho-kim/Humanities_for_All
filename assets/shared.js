@@ -2,7 +2,7 @@ export const SUPABASE_URL = "https://wmynvcuedusjnufmhdqv.supabase.co";
 export const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_rXN3xjZ2aJGeb00QMEs1KQ_bChOdSRI";
 export const ARCHIVE_BUCKET = "archive-media";
 export const SITE_MEDIA_BUCKET = "site-media";
-export const APP_VERSION = "2026.06.29.0833";
+export const APP_VERSION = "2026.06.29.0849";
 
 export const URL_RULES = Object.freeze({
   external: Object.freeze({ protocols: ["https:"] }),
