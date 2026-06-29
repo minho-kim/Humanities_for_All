@@ -64,6 +64,10 @@ const ARCHIVE_FILE_TYPES = new Map([
   ["application/pdf", { extension: ".pdf", type: "file" }],
 ]);
 const ARCHIVE_FILE_MAX_BYTES = 15 * 1024 * 1024;
+const rosterNameSorter = new Intl.Collator("ko-KR", {
+  numeric: true,
+  sensitivity: "base",
+});
 
 function showToast(message) {
   elements.toast.textContent = message;
@@ -170,12 +174,22 @@ function phoneLastFour(phone) {
   return digits.slice(-4);
 }
 
+function compareRosterApplications(a, b) {
+  const nameCompare = rosterNameSorter.compare(a.applicant_name || "", b.applicant_name || "");
+  if (nameCompare !== 0) return nameCompare;
+
+  const emailCompare = rosterNameSorter.compare(a.email || "", b.email || "");
+  if (emailCompare !== 0) return emailCompare;
+
+  return new Date(a.created_at || 0) - new Date(b.created_at || 0);
+}
+
 function printApplicationRoster(courseId) {
   const course = courseById(courseId);
   const applications = activeApplications()
     .filter((application) => application.course_id === courseId)
     .slice()
-    .sort((a, b) => String(a.applicant_name || "").localeCompare(String(b.applicant_name || ""), "ko"));
+    .sort(compareRosterApplications);
   if (!applications.length) {
     showToast("출력할 신청자가 없습니다.");
     return;
@@ -219,7 +233,7 @@ function printApplicationRoster(courseId) {
       <h1>${escapeHtml(title)} 신청자 명단</h1>
       <p>${escapeHtml(course?.starts_at ? shortDate(course.starts_at) : "일정 미정")} · 총 ${applications.length}명</p>
       <table>
-        <thead><tr><th>번호</th><th>교육제목</th><th>성명</th><th>전화번호 끝 4자리</th><th>서명</th></tr></thead>
+        <thead><tr><th>번호</th><th>교육제목</th><th>성명</th><th>본인확인</th><th>서명</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
       <script>window.addEventListener("load", () => window.print());</script>
