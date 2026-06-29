@@ -474,7 +474,7 @@ async function refreshSession() {
 
   console.info("[모두의 인문학] 관리자 세션 상태", {
     signedIn: Boolean(state.user),
-    userId: state.user?.id || null,
+    email: state.user?.email || null,
     isAdmin: Boolean(state.adminProfile),
     adminProfileError: state.adminProfileError?.message || null,
   });
@@ -493,8 +493,6 @@ function renderAuthStatus() {
   elements.adminStatus.innerHTML = `
     <p><strong>${escapeHtml(state.user.email || getDisplayName(state.user))}</strong></p>
     <p class="muted">${escapeHtml(role)}</p>
-    <p class="muted">사용자 UUID</p>
-    <div class="code">${escapeHtml(state.user.id)}</div>
   `;
 
   if (state.adminProfileError) {
@@ -508,8 +506,8 @@ function renderAuthStatus() {
     elements.permissionNotice.classList.remove("hidden");
     elements.permissionNotice.innerHTML = `
       <h3>최초 관리자 등록이 필요합니다</h3>
-      <p>Supabase SQL Editor에서 아래 SQL의 UUID를 현재 사용자 UUID로 바꿔 실행하세요.</p>
-      <div class="code">insert into public.admin_profiles (user_id, display_name, role)<br>values ('${escapeHtml(state.user.id)}', '${escapeHtml(getDisplayName(state.user))}', 'owner');</div>
+      <p>Supabase 콘솔의 Authentication > Users에서 현재 로그인한 이메일 계정을 확인한 뒤, 해당 계정을 관리자 프로필에 등록해 주세요.</p>
+      <p class="muted">관리자 등록 전까지 이 계정은 관리자 데이터를 열람하거나 수정할 수 없습니다.</p>
     `;
   } else {
     elements.permissionNotice.classList.add("hidden");
