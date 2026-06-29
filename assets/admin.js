@@ -120,6 +120,10 @@ function courseById(courseId) {
   return state.courses.find((course) => course.id === courseId);
 }
 
+function organizationById(organizationId) {
+  return state.organizations.find((organization) => organization.id === organizationId);
+}
+
 function seoulDateKey(value) {
   if (!value) return "";
   const parts = new Intl.DateTimeFormat("en", {
@@ -314,6 +318,28 @@ function safeStorageSegment(value, fallback) {
     .toLowerCase()
     .slice(0, 48);
   return segment || fallback;
+}
+
+function makeSlugSegment(value) {
+  return String(value || "")
+    .normalize("NFKD")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase()
+    .slice(0, 48);
+}
+
+function makeUniqueOrganizationSlug(proposedSlug, organizationName, organizationId = "") {
+  const generatedFallback = `org-${Date.now().toString(36)}`;
+  const base = makeSlugSegment(proposedSlug) || makeSlugSegment(organizationName) || generatedFallback;
+  let candidate = base;
+  let suffix = 2;
+  while (state.organizations.some((organization) => organization.slug === candidate && organization.id !== organizationId)) {
+    const suffixText = `-${suffix}`;
+    candidate = `${base.slice(0, Math.max(1, 48 - suffixText.length))}${suffixText}`;
+    suffix += 1;
+  }
+  return candidate;
 }
 
 async function uploadSiteImage(file, folder, baseName) {
@@ -553,7 +579,7 @@ function renderOrganizationForm(organization = {}) {
       <input type="hidden" name="organization_id" value="${escapeHtml(organization.id || "")}">
       <div class="admin-grid">
         <label>단체명<input name="name" value="${escapeHtml(organization.name || "")}" required></label>
-        <label>주소 이름(영문)<input name="slug" value="${escapeHtml(organization.slug || "")}" placeholder="example-organization" required></label>
+        <label>주소 이름(선택)<input name="slug" value="${escapeHtml(organization.slug || "")}" placeholder="비워두면 자동 생성"></label>
         <label>정렬 순서<input name="sort_order" type="number" value="${escapeHtml(organization.sort_order ?? 0)}"></label>
         <label>홈페이지<input name="website_url" value="${escapeHtml(organization.website_url || "")}" placeholder="https://"></label>
       </div>
@@ -957,9 +983,12 @@ async function saveOrganization(event) {
   const organizationId = formData.get("organization_id");
   const sortOrder = Number(formData.get("sort_order") || 0);
   const logoFile = formData.get("logo_file");
+  const organizationName = String(formData.get("name") || "").trim();
+  const requestedSlug = String(formData.get("slug") || "").trim();
+  const existingOrganization = organizationById(organizationId);
   const payload = {
-    name: String(formData.get("name") || "").trim(),
-    slug: String(formData.get("slug") || "").trim(),
+    name: organizationName,
+    slug: makeUniqueOrganizationSlug(requestedSlug || existingOrganization?.slug || "", organizationName, organizationId),
     description: String(formData.get("description") || "").trim() || null,
     website_url: requireSafeUrl(formData.get("website_url"), "홈페이지 URL", URL_RULES.external),
     contact_email: String(formData.get("contact_email") || "").trim() || null,
@@ -968,8 +997,8 @@ async function saveOrganization(event) {
     is_active: formData.get("is_active") === "on",
   };
 
-  if (!payload.name || !payload.slug) {
-    showToast("단체명과 주소 이름을 입력해 주세요.");
+  if (!payload.name) {
+    showToast("단체명을 입력해 주세요.");
     return;
   }
 

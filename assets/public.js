@@ -48,7 +48,7 @@ const elements = {
   archiveCount: document.getElementById("archiveCount"),
   searchInput: document.getElementById("searchInput"),
   orgFilter: document.getElementById("orgFilter"),
-  topicFilter: document.getElementById("topicFilter"),
+  instructorFilter: document.getElementById("instructorFilter"),
   timeFilter: document.getElementById("timeFilter"),
   statusFilter: document.getElementById("statusFilter"),
   resultSummary: document.getElementById("resultSummary"),
@@ -560,16 +560,20 @@ async function loadApplicationState(supabase) {
 
 function populateFilters() {
   const orgNames = state.organizations.map((org) => org.name);
-  const topics = [...new Set(state.courses.map((course) => course.topic))].sort((a, b) => a.localeCompare(b, "ko"));
+  const instructorsById = new Map();
+  state.composedCourses.forEach((course) => {
+    if (course.instructor?.id && course.instructor?.name) instructorsById.set(course.instructor.id, course.instructor);
+  });
+  const instructors = [...instructorsById.values()].sort((a, b) => a.name.localeCompare(b.name, "ko"));
   populateSelect(elements.orgFilter, "전체 단체", orgNames);
-  populateSelect(elements.topicFilter, "전체 주제", topics);
+  elements.instructorFilter.innerHTML = `<option value="">전체 강사</option>${instructors.map((instructor) => `<option value="${escapeHtml(instructor.id)}">${escapeHtml(instructor.name)}</option>`).join("")}`;
 }
 
 function getFilters() {
   return {
     q: elements.searchInput.value.trim().toLowerCase(),
     org: elements.orgFilter.value,
-    topic: elements.topicFilter.value,
+    instructor: elements.instructorFilter.value,
     time: elements.timeFilter.value,
     status: elements.statusFilter.value,
   };
@@ -582,18 +586,16 @@ function filteredCourses() {
       course.title,
       course.summary,
       course.description,
-      course.topic,
       course.organization?.name,
       course.instructor?.name,
       course.venue?.name,
       course.venue?.address,
       course.timeLabel,
-      ...(course.tags || []),
     ].join(" ").toLowerCase();
 
     return (!filters.q || haystack.includes(filters.q))
       && (!filters.org || course.organization?.name === filters.org)
-      && (!filters.topic || course.topic === filters.topic)
+      && (!filters.instructor || course.instructor?.id === filters.instructor)
       && (!filters.time || course.timeLabel === filters.time)
       && (!filters.status || course.status === filters.status);
   });
@@ -717,7 +719,7 @@ function renderCoursesPage() {
   const organizations = publicOrganizations();
   setPageHeader({
     title: "교육 검색",
-    description: "관심 있는 교육을 주제, 강사, 장소, 단체명으로 찾아보세요.",
+    description: "관심 있는 교육을 교육명, 강사, 장소, 단체명으로 찾아보세요.",
     showCourseTools: true,
     summary: state.courses.length
       ? `${courses.length.toLocaleString("ko-KR")}개 교육이 표시됩니다.`
@@ -1379,7 +1381,7 @@ function startAuthMonitor() {
 }
 
 function bindEvents() {
-  [elements.searchInput, elements.orgFilter, elements.topicFilter, elements.timeFilter, elements.statusFilter].forEach((element) => {
+  [elements.searchInput, elements.orgFilter, elements.instructorFilter, elements.timeFilter, elements.statusFilter].forEach((element) => {
     element.addEventListener("input", render);
   });
 
