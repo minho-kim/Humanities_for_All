@@ -284,23 +284,6 @@ function archiveTypeLabel(type) {
   return "링크";
 }
 
-function applicationStatusLabel(status) {
-  const labels = {
-    submitted: "신청 완료",
-    confirmed: "확정",
-    waitlisted: "대기",
-    cancelled: "취소",
-  };
-  return labels[status] || "신청 완료";
-}
-
-function applicationStatusClass(status) {
-  if (status === "confirmed") return "green";
-  if (status === "cancelled") return "red";
-  if (status === "waitlisted") return "gray";
-  return "";
-}
-
 function reviewStatusLabel(review) {
   if (review.is_hidden) return "비공개";
   return verificationLabels[review.verification_status] || "후기";
@@ -810,7 +793,7 @@ function renderApplicationHistory() {
           <div class="table-row">
             <div class="row-top">
               <strong>${escapeHtml(course?.title || "교육 정보")}</strong>
-              <span class="badge ${applicationStatusClass(application.status)}">${escapeHtml(applicationStatusLabel(application.status))}</span>
+              <span class="badge green">신청</span>
             </div>
             <p class="muted">신청일 ${escapeHtml(shortDate(application.created_at))} · 신청자 ${escapeHtml(application.applicant_name || "")}</p>
             ${application.note ? `<p>${escapeHtml(application.note)}</p>` : ""}
@@ -960,11 +943,11 @@ function renderApplicationForm(course) {
       <div class="table-row">
         <div class="row-top">
           <strong>이미 신청한 교육입니다.</strong>
-          <span class="badge ${applicationStatusClass(existingApplication.status)}">${escapeHtml(applicationStatusLabel(existingApplication.status))}</span>
+          <span class="badge green">신청</span>
         </div>
         <p class="muted">신청자: ${escapeHtml(existingApplication.applicant_name)} · 연락처: ${escapeHtml(existingApplication.phone)}</p>
         ${existingApplication.note ? `<p>${escapeHtml(existingApplication.note)}</p>` : ""}
-        <p class="muted">수정이나 취소가 필요하면 운영자에게 문의해 주세요.</p>
+        <p class="muted">신청 내용 확인이나 수정이 필요하면 운영자에게 문의해 주세요.</p>
       </div>
     `;
   }

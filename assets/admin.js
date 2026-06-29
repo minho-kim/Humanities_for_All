@@ -22,7 +22,6 @@ const state = {
   isLoggingIn: false,
   applicationFilters: {
     courseId: "",
-    status: "",
   },
   organizations: [],
   instructors: [],
@@ -66,13 +65,6 @@ const ARCHIVE_FILE_TYPES = new Map([
 ]);
 const ARCHIVE_FILE_MAX_BYTES = 15 * 1024 * 1024;
 
-const applicationStatusLabels = {
-  submitted: "신청 완료",
-  confirmed: "확정",
-  waitlisted: "대기",
-  cancelled: "취소",
-};
-
 function showToast(message) {
   elements.toast.textContent = message;
   elements.toast.classList.add("show");
@@ -103,43 +95,13 @@ function courseById(courseId) {
   return state.courses.find((course) => course.id === courseId);
 }
 
-function applicationStatusBadge(status) {
-  const className = status === "confirmed" ? "green" : status === "cancelled" ? "red" : "gray";
-  return `<span class="badge ${className}">${escapeHtml(applicationStatusLabels[status] || status || "신청 완료")}</span>`;
-}
-
-function applicationStatusOptions(selectedStatus = "") {
-  return Object.entries(applicationStatusLabels)
-    .map(([value, label]) => `<option value="${value}" ${value === selectedStatus ? "selected" : ""}>${escapeHtml(label)}</option>`)
-    .join("");
-}
-
-function applicationCounts(applications) {
-  return applications.reduce(
-    (counts, application) => {
-      counts.total += 1;
-      counts[application.status] = (counts[application.status] || 0) + 1;
-      return counts;
-    },
-    { total: 0, submitted: 0, confirmed: 0, waitlisted: 0, cancelled: 0 },
-  );
-}
-
 function applicationCountBadges(applications) {
-  const counts = applicationCounts(applications);
-  return `
-    <span class="badge">전체 ${counts.total}</span>
-    <span class="badge gray">신청 완료 ${counts.submitted}</span>
-    <span class="badge green">확정 ${counts.confirmed}</span>
-    <span class="badge gray">대기 ${counts.waitlisted}</span>
-    <span class="badge red">취소 ${counts.cancelled}</span>
-  `;
+  return `<span class="badge green">신청 ${applications.length}</span>`;
 }
 
 function filteredApplications() {
   return state.applications.filter((application) => {
     if (state.applicationFilters.courseId && application.course_id !== state.applicationFilters.courseId) return false;
-    if (state.applicationFilters.status && application.status !== state.applicationFilters.status) return false;
     return true;
   });
 }
@@ -171,18 +133,12 @@ function renderApplicationRow(application) {
     <div class="table-row">
       <div class="row-top">
         <strong>${escapeHtml(application.applicant_name || "신청자")}</strong>
-        ${applicationStatusBadge(application.status)}
+        <span class="badge green">신청</span>
       </div>
       <div class="muted">신청일 ${escapeHtml(shortDate(application.created_at))}</div>
       <p class="muted">이메일: ${escapeHtml(application.email || "없음")} · 전화: ${escapeHtml(application.phone || "없음")}</p>
       ${application.note ? `<p>${escapeHtml(application.note)}</p>` : ""}
       <p class="muted">개인정보 동의: ${escapeHtml(shortDate(application.privacy_agreed_at))} · 문자 안내 동의: ${escapeHtml(shortDate(application.sms_notice_agreed_at))}</p>
-      <div class="actions">
-        <button class="btn small" type="button" data-application-action="confirmed" data-application-id="${application.id}">확정</button>
-        <button class="btn small secondary" type="button" data-application-action="waitlisted" data-application-id="${application.id}">대기</button>
-        <button class="btn small secondary" type="button" data-application-action="submitted" data-application-id="${application.id}">신청 완료</button>
-        <button class="btn small danger" type="button" data-application-action="cancelled" data-application-id="${application.id}">취소</button>
-      </div>
     </div>
   `;
 }
@@ -393,7 +349,6 @@ async function loadAdminData() {
 function renderDashboard() {
   const verified = state.reviews.filter((review) => review.verification_status === "verified").length;
   const pending = state.reviews.filter((review) => review.verification_status === "pending").length;
-  const submittedApplications = state.applications.filter((application) => application.status === "submitted").length;
   elements.adminContent.innerHTML = `
     <h2>운영 현황</h2>
     <div class="stat-grid" style="margin-bottom: 16px;">
@@ -404,7 +359,7 @@ function renderDashboard() {
       <div class="stat" style="background:#fff;color:var(--ink);"><strong>${state.reviews.length}</strong><span>후기</span></div>
     </div>
     <div class="admin-grid">
-      <div class="section"><h3>교육 신청</h3><p>전체 ${state.applications.length}건 · 신규 ${submittedApplications}건</p></div>
+      <div class="section"><h3>교육 신청</h3><p>전체 ${state.applications.length}건</p></div>
       <div class="section"><h3>후기 검수</h3><p>참여 확인 ${verified}개 · 확인 대기 ${pending}개</p></div>
       <div class="section"><h3>관리자 전용 추첨</h3><p>추첨 기록 ${state.draws.length}건 · 당첨 이력 ${state.winners.length}건</p></div>
     </div>
@@ -645,12 +600,6 @@ function renderApplications() {
           <select id="applicationCourseFilter">
             <option value="">전체 교육</option>
             ${optionList(state.courses, state.applicationFilters.courseId)}
-          </select>
-        </label>
-        <label>상태
-          <select id="applicationStatusFilter">
-            <option value="">전체 상태</option>
-            ${applicationStatusOptions(state.applicationFilters.status)}
           </select>
         </label>
       </div>
@@ -1034,23 +983,6 @@ async function updateReview(reviewId, action) {
   render();
 }
 
-async function updateApplication(applicationId, status) {
-  if (!applicationStatusLabels[status]) {
-    throw new Error("알 수 없는 신청 상태입니다.");
-  }
-
-  const { error } = await supabase
-    .from("course_applications")
-    .update({ status })
-    .eq("id", applicationId);
-  if (error) throw error;
-
-  showToast("신청 상태를 변경했습니다.");
-  await reload();
-  state.tab = "applications";
-  render();
-}
-
 async function runDraw(event) {
   event.preventDefault();
   const form = getSubmitForm(event);
@@ -1106,18 +1038,10 @@ function bindEvents() {
 
   document.body.addEventListener("click", async (event) => {
     const tabButton = event.target.closest("[data-admin-tab]");
-    const applicationButton = event.target.closest("[data-application-action]");
     const reviewButton = event.target.closest("[data-review-action]");
     if (tabButton) {
       state.tab = tabButton.dataset.adminTab;
       render();
-    }
-    if (applicationButton) {
-      try {
-        await updateApplication(applicationButton.dataset.applicationId, applicationButton.dataset.applicationAction);
-      } catch (error) {
-        showToast(`신청 변경 실패: ${error.message}`);
-      }
     }
     if (reviewButton) {
       try {
@@ -1155,10 +1079,6 @@ function bindEvents() {
     if (event.target.id === "coursePicker") renderCourses();
     if (event.target.id === "applicationCourseFilter") {
       state.applicationFilters.courseId = event.target.value;
-      renderApplications();
-    }
-    if (event.target.id === "applicationStatusFilter") {
-      state.applicationFilters.status = event.target.value;
       renderApplications();
     }
   });
