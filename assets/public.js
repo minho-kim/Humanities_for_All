@@ -296,26 +296,70 @@ function reviewStatusClass(review) {
   return "gray";
 }
 
+function applicationStatusLabel(application) {
+  if (isCancelledApplication(application)) return "취소";
+  if (isAttendanceConfirmed(application)) return "참석 확인";
+  return "신청";
+}
+
+function applicationStatusClass(application) {
+  if (isCancelledApplication(application)) return "red";
+  if (isAttendanceConfirmed(application)) return "green";
+  return "gray";
+}
+
 function canApplyToCourse(course) {
   return ["scheduled", "open"].includes(course.status);
 }
 
+function isCancelledApplication(application) {
+  return application?.status === "cancelled";
+}
+
+function isAttendanceConfirmed(application) {
+  return Boolean(application?.attendance_confirmed_at);
+}
+
+function activeApplicationForCourse(courseId) {
+  return state.applications.find((application) => application.course_id === courseId && !isCancelledApplication(application));
+}
+
+function cancelledApplicationForCourse(courseId) {
+  return state.applications.find((application) => application.course_id === courseId && isCancelledApplication(application));
+}
+
 function userApplicationForCourse(courseId) {
-  return state.applications.find((application) => application.course_id === courseId);
+  return activeApplicationForCourse(courseId);
+}
+
+function formatPhoneNumber(value) {
+  const digits = String(value || "").replace(/\D/g, "").slice(0, 11);
+  if (!digits) return "";
+
+  if (digits.startsWith("02")) {
+    if (digits.length <= 2) return digits;
+    if (digits.length <= 5) return `${digits.slice(0, 2)}-${digits.slice(2)}`;
+    if (digits.length <= 9) return `${digits.slice(0, 2)}-${digits.slice(2, 5)}-${digits.slice(5)}`;
+    return `${digits.slice(0, 2)}-${digits.slice(2, 6)}-${digits.slice(6, 10)}`;
+  }
+
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+  const middleEnd = digits.length === 10 ? 6 : 7;
+  return `${digits.slice(0, 3)}-${digits.slice(3, middleEnd)}-${digits.slice(middleEnd)}`;
 }
 
 function normalizePhone(value) {
-  return String(value || "").trim().replace(/\s+/g, " ");
+  return formatPhoneNumber(value);
 }
 
 function phoneDigits(value) {
-  return normalizePhone(value).replace(/\D/g, "");
+  return String(value || "").replace(/\D/g, "");
 }
 
 function isValidPhone(value) {
-  const raw = normalizePhone(value);
-  const digits = phoneDigits(raw);
-  return /^[0-9+(). -]{8,24}$/.test(raw) && digits.length >= 9 && digits.length <= 12;
+  const digits = phoneDigits(value);
+  return /^0\d+$/.test(digits) && digits.length >= 9 && digits.length <= 11;
 }
 
 function coursesForOrganization(organizationId) {
@@ -793,9 +837,10 @@ function renderApplicationHistory() {
           <div class="table-row">
             <div class="row-top">
               <strong>${escapeHtml(course?.title || "교육 정보")}</strong>
-              <span class="badge green">신청</span>
+              <span class="badge ${applicationStatusClass(application)}">${escapeHtml(applicationStatusLabel(application))}</span>
             </div>
             <p class="muted">신청일 ${escapeHtml(shortDate(application.created_at))} · 신청자 ${escapeHtml(application.applicant_name || "")}</p>
+            ${isAttendanceConfirmed(application) ? `<p class="muted">참석 확인: ${escapeHtml(shortDate(application.attendance_confirmed_at))}</p>` : ""}
             ${application.note ? `<p>${escapeHtml(application.note)}</p>` : ""}
             ${course ? `<button class="btn small secondary" type="button" data-open-course="${course.id}">교육 보기</button>` : ""}
           </div>
@@ -910,16 +955,22 @@ function renderReviewForm(course) {
   if (!state.user) {
     return `<p>후기를 남기려면 이메일 인증이 필요합니다. 교육 정보는 인증 없이 볼 수 있습니다.</p><button class="btn" type="button" data-login-for-review>이메일 인증 후 후기 쓰기</button>`;
   }
-  if (course.status !== "finished") {
-    return `<p>후기는 교육 종료 후 작성할 수 있습니다. 현재 상태: <strong>${escapeHtml(statusLabels[course.status] || course.status)}</strong></p>`;
+
+  const application = activeApplicationForCourse(course.id);
+  const cancelledApplication = cancelledApplicationForCourse(course.id);
+  if (!application) {
+    if (cancelledApplication) return `<p>취소한 신청은 후기를 작성할 수 없습니다. 문의가 필요하면 운영자에게 연락해 주세요.</p>`;
+    return `<p>후기는 교육 신청 후 관리자의 참석 확인이 완료된 참여자만 작성할 수 있습니다.</p>`;
+  }
+  if (!isAttendanceConfirmed(application)) {
+    return `<p>교육 참석 후 관리자가 참석 확인을 마치면 후기를 작성할 수 있습니다.</p>`;
   }
   return `
     <form id="reviewForm">
-      <label>참여 코드(선택)<input name="participation_code" placeholder="교육 현장에서 안내받은 코드가 있으면 입력해 주세요"></label>
-      <label style="margin-top: 10px;">후기<textarea name="body" placeholder="교육에서 좋았던 점, 기억에 남은 질문, 다음 참여자에게 전하고 싶은 말을 적어주세요." required minlength="10"></textarea></label>
+      <label>후기<textarea name="body" placeholder="교육에서 좋았던 점, 기억에 남은 질문, 다음 참여자에게 전하고 싶은 말을 적어주세요." required minlength="10"></textarea></label>
       <div class="actions" style="margin-top: 12px;">
         <button class="btn" type="submit">후기 등록</button>
-        <span class="badge green">참여 코드는 확인 후 반영됩니다</span>
+        <span class="badge green">참석 확인 완료</span>
       </div>
     </form>
   `;
@@ -927,11 +978,10 @@ function renderReviewForm(course) {
 
 function renderApplicationForm(course) {
   const existingApplication = userApplicationForCourse(course.id);
-  if (!canApplyToCourse(course)) {
-    return `<p>현재 이 교육은 신청을 받지 않습니다. 상태: <strong>${escapeHtml(statusLabels[course.status] || course.status)}</strong></p>`;
-  }
-
   if (!state.user) {
+    if (!canApplyToCourse(course)) {
+      return `<p>현재 이 교육은 신청을 받지 않습니다. 상태: <strong>${escapeHtml(statusLabels[course.status] || course.status)}</strong></p>`;
+    }
     return `
       <p>교육 신청에는 이메일 인증이 필요합니다. 인증 후 이름과 전화번호를 입력해 주세요.</p>
       <button class="btn" type="button" data-login-for-application>이메일 인증 후 신청하기</button>
@@ -939,27 +989,48 @@ function renderApplicationForm(course) {
   }
 
   if (existingApplication) {
+    const attendanceConfirmed = isAttendanceConfirmed(existingApplication);
     return `
       <div class="table-row">
         <div class="row-top">
           <strong>이미 신청한 교육입니다.</strong>
-          <span class="badge green">신청</span>
+          <span class="badge ${attendanceConfirmed ? "green" : "gray"}">${attendanceConfirmed ? "참석 확인" : "신청"}</span>
         </div>
         <p class="muted">신청자: ${escapeHtml(existingApplication.applicant_name)} · 연락처: ${escapeHtml(existingApplication.phone)}</p>
         ${existingApplication.note ? `<p>${escapeHtml(existingApplication.note)}</p>` : ""}
-        <p class="muted">신청 내용 확인이나 수정이 필요하면 운영자에게 문의해 주세요.</p>
+        ${attendanceConfirmed
+          ? `<p class="muted">참석 확인이 완료되어 후기를 작성할 수 있습니다.</p>`
+          : `<p class="muted">신청 취소는 아래 버튼으로 처리할 수 있습니다. 신청 내용 수정이 필요하면 운영자에게 문의해 주세요.</p>
+             <button class="btn small secondary" type="button" data-cancel-application="${escapeHtml(existingApplication.id)}">신청 취소</button>`}
       </div>
     `;
   }
 
+  const cancelledApplication = cancelledApplicationForCourse(course.id);
+  if (cancelledApplication) {
+    return `
+      <div class="table-row">
+        <div class="row-top">
+          <strong>신청을 취소한 교육입니다.</strong>
+          <span class="badge red">취소</span>
+        </div>
+        <p class="muted">취소된 신청은 현재 신청 명단에서 제외됩니다. 다시 신청해야 한다면 운영자에게 문의해 주세요.</p>
+      </div>
+    `;
+  }
+
+  if (!canApplyToCourse(course)) {
+    return `<p>현재 이 교육은 신청을 받지 않습니다. 상태: <strong>${escapeHtml(statusLabels[course.status] || course.status)}</strong></p>`;
+  }
+
   const defaultName = state.applicantProfile?.applicant_name || "";
-  const defaultPhone = state.applicantProfile?.phone || "";
+  const defaultPhone = formatPhoneNumber(state.applicantProfile?.phone || "");
   return `
     <form id="applicationForm">
       <input type="hidden" name="course_id" value="${escapeHtml(course.id)}">
       <div class="admin-grid">
         <label>신청자명<input name="applicant_name" value="${escapeHtml(defaultName)}" required maxlength="80" autocomplete="name"></label>
-        <label>휴대전화번호<input name="phone" value="${escapeHtml(defaultPhone)}" required inputmode="tel" autocomplete="tel" placeholder="010-0000-0000"></label>
+        <label>휴대전화번호<input name="phone" value="${escapeHtml(defaultPhone)}" required inputmode="tel" autocomplete="tel" placeholder="010-0000-0000" maxlength="13"></label>
       </div>
       <label style="margin-top: 10px;">이메일<input value="${escapeHtml(state.user.email || "")}" readonly></label>
       <label style="margin-top: 10px;">요청사항(선택)<textarea name="note" placeholder="접근성 지원, 문의사항 등이 있으면 적어주세요."></textarea></label>
@@ -1074,6 +1145,10 @@ async function handleApplicationSubmit(event) {
     showToast("이미 이 교육을 신청했습니다.");
     return;
   }
+  if (cancelledApplicationForCourse(courseId)) {
+    showToast("취소한 신청을 다시 열려면 운영자에게 문의해 주세요.");
+    return;
+  }
 
   const applicantName = String(formData.get("applicant_name") || "").trim();
   const phone = normalizePhone(formData.get("phone"));
@@ -1140,15 +1215,64 @@ async function handleApplicationSubmit(event) {
   openCourseDetail(course.id);
 }
 
+async function handleCancelApplication(button) {
+  if (!state.user) {
+    openModal(elements.loginModal);
+    return;
+  }
+
+  const applicationId = button.dataset.cancelApplication;
+  if (!applicationId) return;
+
+  if (button.dataset.confirmCancel !== "true") {
+    button.dataset.confirmCancel = "true";
+    button.textContent = "한 번 더 누르면 취소됩니다";
+    window.setTimeout(() => {
+      if (button.dataset.confirmCancel === "true") {
+        button.dataset.confirmCancel = "false";
+        button.textContent = "신청 취소";
+      }
+    }, 3000);
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = "취소 중...";
+  const supabase = await getSupabaseClient();
+  const { data, error } = await supabase.rpc("cancel_my_course_application", {
+    p_application_id: applicationId,
+  });
+
+  if (error || data !== true) {
+    console.error("Course application cancel failed", error);
+    showToast("신청을 취소하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    button.disabled = false;
+    button.textContent = "신청 취소";
+    return;
+  }
+
+  await loadApplicationState(supabase);
+  showToast("교육 신청을 취소했습니다.");
+  if (state.activeCourseId) openCourseDetail(state.activeCourseId);
+  if (elements.profileModal.classList.contains("open") && elements.profileEyebrow.textContent === "나의 정보") {
+    openMyInfo();
+  }
+}
+
 async function handleReviewSubmit(event) {
   event.preventDefault();
   const course = state.composedCourses.find((item) => item.id === state.activeCourseId);
   if (!course || !state.user) return;
 
+  const application = activeApplicationForCourse(course.id);
+  if (!application || !isAttendanceConfirmed(application)) {
+    showToast("참석 확인이 완료된 뒤 후기를 작성할 수 있습니다.");
+    return;
+  }
+
   const form = getSubmitForm(event);
   if (!form) return;
   const body = form.elements.body.value.trim();
-  const participationCode = form.elements.participation_code.value.trim();
   if (body.length < 10) {
     showToast("후기는 10자 이상 입력해주세요.");
     return;
@@ -1160,7 +1284,6 @@ async function handleReviewSubmit(event) {
     user_id: state.user.id,
     author_name: getReviewAuthorName(state.user),
     body,
-    participation_code: participationCode || null,
   });
 
   if (error) {
@@ -1172,7 +1295,7 @@ async function handleReviewSubmit(event) {
     return;
   }
 
-  showToast(participationCode ? "후기가 등록되었습니다. 참여 확인은 확인 후 반영됩니다." : "후기가 등록되었습니다.");
+  showToast("후기가 등록되었습니다.");
   await loadData({ waitForSupplementary: true });
   openCourseDetail(course.id);
 }
@@ -1278,6 +1401,7 @@ function bindEvents() {
     const loginForReview = event.target.closest("[data-login-for-review]");
     const loginForApplication = event.target.closest("[data-login-for-application]");
     const applyButton = event.target.closest("[data-apply-course]");
+    const cancelApplicationButton = event.target.closest("[data-cancel-application]");
     if (routeControl) {
       event.preventDefault();
       navigate(routeControl.dataset.route);
@@ -1301,6 +1425,10 @@ function bindEvents() {
       else document.getElementById("applicationSection")?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
+    if (cancelApplicationButton) {
+      handleCancelApplication(cancelApplicationButton).catch((error) => showToast(`신청 취소 실패: ${error.message}`));
+      return;
+    }
     if (openButton) {
       closeModal(elements.profileModal);
       openCourseDetail(openButton.dataset.openCourse);
@@ -1320,6 +1448,30 @@ function bindEvents() {
     if (event.target.closest("[data-logout-account]")) {
       handleLogout().catch((error) => showToast(`로그아웃 실패: ${error.message}`));
     }
+  });
+
+  document.body.addEventListener("input", (event) => {
+    const phoneInput = event.target.closest("#applicationForm input[name='phone']");
+    if (!phoneInput) return;
+
+    const originalValue = phoneInput.value;
+    const selectionStart = phoneInput.selectionStart ?? originalValue.length;
+    const digitsBeforeCursor = originalValue.slice(0, selectionStart).replace(/\D/g, "").length;
+    const formattedValue = formatPhoneNumber(originalValue);
+    phoneInput.value = formattedValue;
+
+    let cursor = digitsBeforeCursor === 0 ? 0 : formattedValue.length;
+    let seenDigits = 0;
+    if (digitsBeforeCursor > 0) {
+      for (let index = 0; index < formattedValue.length; index += 1) {
+        if (/\d/.test(formattedValue[index])) seenDigits += 1;
+        if (seenDigits >= digitsBeforeCursor) {
+          cursor = index + 1;
+          break;
+        }
+      }
+    }
+    phoneInput.setSelectionRange(cursor, cursor);
   });
 
   document.body.addEventListener("submit", (event) => {

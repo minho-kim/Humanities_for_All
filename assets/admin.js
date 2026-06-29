@@ -79,6 +79,14 @@ function setLoginBusy(isBusy) {
   button.textContent = isBusy ? "로그인 중..." : "로그인";
 }
 
+function updateAdminLoginFormVisibility() {
+  const isSignedIn = Boolean(state.user);
+  elements.adminLoginForm.querySelectorAll("label, button[type='submit']").forEach((element) => {
+    element.classList.toggle("hidden", isSignedIn);
+  });
+  elements.adminLogoutButton.classList.toggle("hidden", !isSignedIn);
+}
+
 function isAdmin() {
   return Boolean(state.user && state.adminProfile);
 }
@@ -99,8 +107,16 @@ function applicationCountBadges(applications) {
   return `<span class="badge green">신청 ${applications.length}</span>`;
 }
 
+function isActiveApplication(application) {
+  return application.status !== "cancelled";
+}
+
+function activeApplications() {
+  return state.applications.filter(isActiveApplication);
+}
+
 function filteredApplications() {
-  return state.applications.filter((application) => {
+  return activeApplications().filter((application) => {
     if (state.applicationFilters.courseId && application.course_id !== state.applicationFilters.courseId) return false;
     return true;
   });
@@ -129,18 +145,87 @@ function applicationGroups(applications) {
 }
 
 function renderApplicationRow(application) {
+  const attendanceConfirmed = Boolean(application.attendance_confirmed_at);
   return `
     <div class="table-row">
       <div class="row-top">
         <strong>${escapeHtml(application.applicant_name || "신청자")}</strong>
-        <span class="badge green">신청</span>
+        <span class="badge ${attendanceConfirmed ? "green" : "gray"}">${attendanceConfirmed ? "참석 확인" : "신청"}</span>
       </div>
       <div class="muted">신청일 ${escapeHtml(shortDate(application.created_at))}</div>
       <p class="muted">이메일: ${escapeHtml(application.email || "없음")} · 전화: ${escapeHtml(application.phone || "없음")}</p>
       ${application.note ? `<p>${escapeHtml(application.note)}</p>` : ""}
-      <p class="muted">개인정보 동의: ${escapeHtml(shortDate(application.privacy_agreed_at))} · 문자 안내 동의: ${escapeHtml(shortDate(application.sms_notice_agreed_at))}</p>
+      <p class="muted">개인정보·문자 안내 동의 완료</p>
+      <div class="actions">
+        ${attendanceConfirmed
+          ? `<span class="badge green">참석 확인 ${escapeHtml(shortDate(application.attendance_confirmed_at))}</span>`
+          : `<button class="btn small" type="button" data-confirm-attendance="${escapeHtml(application.id)}">참석 확인</button>`}
+      </div>
     </div>
   `;
+}
+
+function phoneLastFour(phone) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  return digits.slice(-4);
+}
+
+function printApplicationRoster(courseId) {
+  const course = courseById(courseId);
+  const applications = activeApplications()
+    .filter((application) => application.course_id === courseId)
+    .slice()
+    .sort((a, b) => String(a.applicant_name || "").localeCompare(String(b.applicant_name || ""), "ko"));
+  if (!applications.length) {
+    showToast("출력할 신청자가 없습니다.");
+    return;
+  }
+
+  const title = courseName(courseId);
+  const rows = applications.map((application, index) => `
+    <tr>
+      <td>${index + 1}</td>
+      <td>${escapeHtml(title)}</td>
+      <td>${escapeHtml(application.applicant_name || "")}</td>
+      <td>${escapeHtml(phoneLastFour(application.phone))}</td>
+      <td class="signature"></td>
+    </tr>
+  `).join("");
+  const printWindow = window.open("", "_blank", "width=980,height=720");
+  if (!printWindow) {
+    showToast("팝업 차단을 해제한 뒤 다시 시도해 주세요.");
+    return;
+  }
+
+  printWindow.document.write(`<!doctype html>
+    <html lang="ko">
+    <head>
+      <meta charset="utf-8">
+      <title>${escapeHtml(title)} 신청자 명단</title>
+      <style>
+        body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 24px; color: #111; }
+        h1 { margin: 0 0 6px; font-size: 24px; }
+        p { margin: 0 0 18px; color: #555; }
+        table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+        th, td { border: 1px solid #222; padding: 10px 8px; text-align: center; min-height: 42px; }
+        th:nth-child(1), td:nth-child(1) { width: 52px; }
+        th:nth-child(2), td:nth-child(2) { width: 36%; text-align: left; }
+        th:nth-child(5), td:nth-child(5) { width: 22%; }
+        .signature { height: 46px; }
+        @media print { button { display: none; } body { margin: 12mm; } }
+      </style>
+    </head>
+    <body>
+      <h1>${escapeHtml(title)} 신청자 명단</h1>
+      <p>${escapeHtml(course?.starts_at ? shortDate(course.starts_at) : "일정 미정")} · 총 ${applications.length}명</p>
+      <table>
+        <thead><tr><th>번호</th><th>교육제목</th><th>성명</th><th>전화번호 끝 4자리</th><th>서명</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <script>window.addEventListener("load", () => window.print());</script>
+    </body>
+    </html>`);
+  printWindow.document.close();
 }
 
 function localDateTimeValue(value) {
@@ -280,6 +365,7 @@ async function refreshSession() {
 }
 
 function renderAuthStatus() {
+  updateAdminLoginFormVisibility();
   if (!state.user) {
     elements.adminStatus.innerHTML = `<p>로그인하지 않았습니다.</p>`;
     elements.permissionNotice.classList.add("hidden");
@@ -349,17 +435,18 @@ async function loadAdminData() {
 function renderDashboard() {
   const verified = state.reviews.filter((review) => review.verification_status === "verified").length;
   const pending = state.reviews.filter((review) => review.verification_status === "pending").length;
+  const applications = activeApplications();
   elements.adminContent.innerHTML = `
     <h2>운영 현황</h2>
     <div class="stat-grid" style="margin-bottom: 16px;">
       <div class="stat" style="background:#fff;color:var(--ink);"><strong>${state.organizations.length}</strong><span>단체</span></div>
       <div class="stat" style="background:#fff;color:var(--ink);"><strong>${state.courses.length}</strong><span>교육</span></div>
-      <div class="stat" style="background:#fff;color:var(--ink);"><strong>${state.applications.length}</strong><span>신청</span></div>
+      <div class="stat" style="background:#fff;color:var(--ink);"><strong>${applications.length}</strong><span>신청</span></div>
       <div class="stat" style="background:#fff;color:var(--ink);"><strong>${state.archives.length}</strong><span>아카이브</span></div>
       <div class="stat" style="background:#fff;color:var(--ink);"><strong>${state.reviews.length}</strong><span>후기</span></div>
     </div>
     <div class="admin-grid">
-      <div class="section"><h3>교육 신청</h3><p>전체 ${state.applications.length}건</p></div>
+      <div class="section"><h3>교육 신청</h3><p>현재 신청 ${applications.length}건</p></div>
       <div class="section"><h3>후기 검수</h3><p>참여 확인 ${verified}개 · 확인 대기 ${pending}개</p></div>
       <div class="section"><h3>관리자 전용 추첨</h3><p>추첨 기록 ${state.draws.length}건 · 당첨 이력 ${state.winners.length}건</p></div>
     </div>
@@ -566,7 +653,7 @@ function renderArchive() {
 function renderReviews() {
   elements.adminContent.innerHTML = `
     <h2>후기 검수</h2>
-    <p class="muted">참여 확인 코드는 관리자 화면에서만 보입니다. 공개 페이지에는 노출되지 않습니다.</p>
+    <p class="muted">후기 작성은 신청 관리에서 참석 확인이 완료된 참여자에게만 열립니다.</p>
     <div class="table-list">
       ${state.reviews.map((review) => `
         <div class="table-row">
@@ -576,7 +663,7 @@ function renderReviews() {
           </div>
           <div class="muted">${escapeHtml(courseName(review.course_id))} · ${escapeHtml(shortDate(review.created_at))}</div>
           <p>${escapeHtml(review.body)}</p>
-          <p class="muted">참여 코드: ${escapeHtml(review.participation_code || "없음")} · 공개 상태: ${review.is_hidden ? "숨김" : "공개"}</p>
+          <p class="muted">공개 상태: ${review.is_hidden ? "숨김" : "공개"}</p>
           <div class="actions">
             <button class="btn small" type="button" data-review-action="verify" data-review-id="${review.id}">참여 확인</button>
             <button class="btn small secondary" type="button" data-review-action="reject" data-review-id="${review.id}">반려</button>
@@ -616,7 +703,10 @@ function renderApplications() {
                 <strong>${escapeHtml(courseName(group.courseId))}</strong>
                 <br><span class="muted">${escapeHtml(group.course?.starts_at ? shortDate(group.course.starts_at) : "일정 미정")} · ${escapeHtml(group.course?.status ? (statusLabels[group.course.status] || group.course.status) : "교육 정보 확인 필요")}</span>
               </span>
-              <span class="actions">${applicationCountBadges(group.applications)}</span>
+              <span class="actions">
+                ${applicationCountBadges(group.applications)}
+                <button class="btn small secondary" type="button" data-print-roster="${escapeHtml(group.courseId)}">신청자 명단 출력</button>
+              </span>
             </div>
           </summary>
           <div class="table-list" style="margin-top: 12px;">
@@ -983,6 +1073,19 @@ async function updateReview(reviewId, action) {
   render();
 }
 
+async function confirmApplicationAttendance(applicationId) {
+  const { data, error } = await supabase.rpc("confirm_course_application_attendance", {
+    p_application_id: applicationId,
+  });
+  if (error) throw error;
+  if (data !== true) throw new Error("참석 확인할 신청을 찾지 못했습니다.");
+
+  showToast("참석 확인을 저장했습니다.");
+  await reload();
+  state.tab = "applications";
+  render();
+}
+
 async function runDraw(event) {
   event.preventDefault();
   const form = getSubmitForm(event);
@@ -1039,9 +1142,12 @@ function bindEvents() {
   document.body.addEventListener("click", async (event) => {
     const tabButton = event.target.closest("[data-admin-tab]");
     const reviewButton = event.target.closest("[data-review-action]");
+    const attendanceButton = event.target.closest("[data-confirm-attendance]");
+    const rosterButton = event.target.closest("[data-print-roster]");
     if (tabButton) {
       state.tab = tabButton.dataset.adminTab;
       render();
+      return;
     }
     if (reviewButton) {
       try {
@@ -1049,6 +1155,24 @@ function bindEvents() {
       } catch (error) {
         showToast(`후기 변경 실패: ${error.message}`);
       }
+      return;
+    }
+    if (attendanceButton) {
+      try {
+        attendanceButton.disabled = true;
+        attendanceButton.textContent = "저장 중...";
+        await confirmApplicationAttendance(attendanceButton.dataset.confirmAttendance);
+      } catch (error) {
+        showToast(`참석 확인 실패: ${error.message}`);
+        attendanceButton.disabled = false;
+        attendanceButton.textContent = "참석 확인";
+      }
+      return;
+    }
+    if (rosterButton) {
+      event.preventDefault();
+      printApplicationRoster(rosterButton.dataset.printRoster);
+      return;
     }
     if (event.target.id === "newCourseButton") {
       const picker = document.getElementById("coursePicker");
