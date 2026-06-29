@@ -346,6 +346,12 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 .media { min-height: 118px; display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; padding: 12px; border-radius: 18px; color: #fff; background: linear-gradient(135deg, rgba(44, 36, 27, 0.58), rgba(44, 36, 27, 0.2)), linear-gradient(135deg, #1f7a6b, #bf6b35); text-decoration: none; }
 .media:nth-child(2n) { background: linear-gradient(135deg, rgba(44, 36, 27, 0.58), rgba(44, 36, 27, 0.2)), linear-gradient(135deg, #614c90, #d87c48); }
 .media small { color: rgba(255, 255, 255, 0.78); }
+.media-button { width: 100%; border: 0; text-align: left; cursor: pointer; }
+.media-photo { background-size: cover; background-position: center; }
+.photo-viewer { margin: 18px 0 0; display: grid; gap: 12px; }
+.photo-viewer img { width: 100%; max-height: min(70vh, 760px); object-fit: contain; border-radius: 18px; background: #111; }
+.photo-viewer figcaption { color: var(--ink); }
+.photo-viewer figcaption p { margin: 0 0 6px; }
 
 .content-stack { display: grid; gap: 16px; margin-bottom: 22px; }
 .organization-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 22px; }

@@ -24,6 +24,7 @@ const state = {
   applicationFilters: {
     courseId: "",
   },
+  selectedArchiveId: "",
   organizations: [],
   instructors: [],
   venues: [],
@@ -124,6 +125,10 @@ function organizationById(organizationId) {
   return state.organizations.find((organization) => organization.id === organizationId);
 }
 
+function archiveById(archiveId) {
+  return state.archives.find((archive) => archive.id === archiveId);
+}
+
 function seoulDateKey(value) {
   if (!value) return "";
   const parts = new Intl.DateTimeFormat("en", {
@@ -142,6 +147,25 @@ function hasCourseDateArrived(course) {
   const courseDate = seoulDateKey(course?.starts_at);
   if (!courseDate) return false;
   return courseDate <= seoulDateKey(new Date());
+}
+
+function hasCourseStarted(course) {
+  if (!course?.starts_at) return false;
+  return new Date(course.starts_at).getTime() <= Date.now();
+}
+
+function effectiveCourseStatus(course) {
+  if (!course) return "";
+  if (course.status === "cancelled") return "cancelled";
+  if (hasCourseStarted(course)) return "finished";
+  return course.status || "scheduled";
+}
+
+function archiveTypeLabel(type) {
+  if (type === "photo") return "사진";
+  if (type === "video") return "영상";
+  if (type === "file") return "자료";
+  return "링크";
 }
 
 function attendanceDocumentsForCourse(courseId) {
@@ -302,8 +326,62 @@ function localDateTimeValue(value) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-function toIso(value) {
-  return value ? new Date(value).toISOString() : null;
+function currentMinuteDate() {
+  const date = new Date();
+  date.setSeconds(0, 0);
+  return date;
+}
+
+function currentMinuteLocalDateTimeValue() {
+  return localDateTimeValue(currentMinuteDate());
+}
+
+function isBeforeCurrentMinute(date) {
+  return date.getTime() < currentMinuteDate().getTime();
+}
+
+function validateCourseTiming(courseId, formData) {
+  const existingCourse = courseById(courseId);
+  const firstSession = state.sessions.find((session) => session.course_id === courseId && session.session_order === 1);
+  const existingStartValue = localDateTimeValue(existingCourse?.starts_at || firstSession?.starts_at);
+  const rawStart = String(formData.get("starts_at") || "").trim();
+  const rawEnd = String(formData.get("ends_at") || "").trim();
+
+  if (!rawStart) {
+    showToast("교육 시작 일시는 반드시 입력해 주세요.");
+    return null;
+  }
+
+  const startDate = new Date(rawStart);
+  if (Number.isNaN(startDate.getTime())) {
+    showToast("교육 시작 일시를 확인해 주세요.");
+    return null;
+  }
+
+  const keepsExistingPastStart = Boolean(courseId && existingStartValue && rawStart === existingStartValue && isBeforeCurrentMinute(startDate));
+  if (isBeforeCurrentMinute(startDate) && !keepsExistingPastStart) {
+    showToast("교육 시작 일시는 현재 이후로 선택해 주세요.");
+    return null;
+  }
+
+  let endDate = null;
+  if (rawEnd) {
+    endDate = new Date(rawEnd);
+    if (Number.isNaN(endDate.getTime())) {
+      showToast("교육 종료 일시를 확인해 주세요.");
+      return null;
+    }
+    if (endDate.getTime() < startDate.getTime()) {
+      showToast("교육 종료 일시는 시작 일시보다 빠를 수 없습니다.");
+      return null;
+    }
+  }
+
+  return {
+    startsAt: startDate.toISOString(),
+    endsAt: endDate ? endDate.toISOString() : null,
+    hasStarted: startDate.getTime() <= Date.now(),
+  };
 }
 
 function hasSelectedFile(file) {
@@ -393,10 +471,26 @@ async function uploadArchiveFile(file, courseId, baseName) {
   return { publicUrl: data.publicUrl, path, archiveType: fileRule.type };
 }
 
-async function removeUploadedArchiveFile(path) {
+async function removeUploadedArchiveFile(path, { strict = false } = {}) {
   if (!path) return;
   const { error } = await supabase.storage.from(ARCHIVE_BUCKET).remove([path]);
-  if (error) console.warn("[모두의 인문학] 아카이브 업로드 롤백 파일 삭제 실패", error);
+  if (error) {
+    console.warn("[모두의 인문학] 아카이브 파일 삭제 실패", error);
+    if (strict) throw error;
+  }
+}
+
+function archiveStoragePathFromUrl(url) {
+  const safeUrl = normalizeSafeUrl(url, URL_RULES.archive);
+  if (!safeUrl) return "";
+  try {
+    const parsed = new URL(safeUrl);
+    const prefix = `/storage/v1/object/public/${ARCHIVE_BUCKET}/`;
+    if (!parsed.pathname.startsWith(prefix)) return "";
+    return decodeURIComponent(parsed.pathname.slice(prefix.length));
+  } catch {
+    return "";
+  }
 }
 
 async function uploadAttendanceDocument(file, courseId, baseName) {
@@ -699,6 +793,15 @@ function renderVenues() {
 
 function renderCourseForm(course = {}) {
   const firstSession = state.sessions.find((session) => session.course_id === course.id) || {};
+  const startValue = localDateTimeValue(course.starts_at || firstSession.starts_at);
+  const endValue = localDateTimeValue(course.ends_at || firstSession.ends_at);
+  const nowValue = currentMinuteLocalDateTimeValue();
+  const startMinValue = startValue && isBeforeCurrentMinute(new Date(startValue)) ? "" : nowValue;
+  const endMinValue = startValue || nowValue;
+  const selectedStatus = effectiveCourseStatus(course);
+  const autoFinishedNote = course.id && course.status !== "finished" && selectedStatus === "finished"
+    ? `<p class="muted" style="margin-top: 8px;">시작 시간이 지나 공개 화면에서는 자동으로 종료 상태로 표시되고 신청이 닫힙니다. 이 교육을 저장하면 상태도 종료로 정리됩니다.</p>`
+    : "";
   return `
     <form id="courseForm" class="section">
       <input type="hidden" name="course_id" value="${escapeHtml(course.id || "")}">
@@ -708,10 +811,11 @@ function renderCourseForm(course = {}) {
         <label>단체<select name="organization_id" required><option value="">선택</option>${optionList(state.organizations, course.organization_id)}</select></label>
         <label>강사<select name="instructor_id"><option value="">선택</option>${optionList(state.instructors, course.instructor_id)}</select></label>
         <label>장소<select name="venue_id"><option value="">선택</option>${optionList(state.venues, course.venue_id)}</select></label>
-        <label>상태<select name="status"><option value="scheduled" ${course.status === "scheduled" ? "selected" : ""}>예정</option><option value="open" ${course.status === "open" ? "selected" : ""}>모집 중</option><option value="finished" ${course.status === "finished" ? "selected" : ""}>종료</option><option value="cancelled" ${course.status === "cancelled" ? "selected" : ""}>취소</option></select></label>
-        <label>시작 일시<input name="starts_at" type="datetime-local" value="${escapeHtml(localDateTimeValue(course.starts_at || firstSession.starts_at))}"></label>
-        <label>종료 일시<input name="ends_at" type="datetime-local" value="${escapeHtml(localDateTimeValue(course.ends_at || firstSession.ends_at))}"></label>
+        <label>상태<select name="status"><option value="scheduled" ${selectedStatus === "scheduled" ? "selected" : ""}>예정</option><option value="open" ${selectedStatus === "open" ? "selected" : ""}>모집 중</option><option value="finished" ${selectedStatus === "finished" ? "selected" : ""}>종료</option><option value="cancelled" ${selectedStatus === "cancelled" ? "selected" : ""}>취소</option></select></label>
+        <label>시작 일시<input name="starts_at" type="datetime-local" value="${escapeHtml(startValue)}" min="${escapeHtml(startMinValue)}" required></label>
+        <label>종료 일시(선택)<input name="ends_at" type="datetime-local" value="${escapeHtml(endValue)}" min="${escapeHtml(endMinValue)}"></label>
       </div>
+      ${autoFinishedNote}
       <label style="margin-top: 10px;">요약<textarea name="summary">${escapeHtml(course.summary || "")}</textarea></label>
       <label style="margin-top: 10px;">상세 설명<textarea name="description">${escapeHtml(course.description || "")}</textarea></label>
       <label style="margin-top: 10px;">신청 링크<input name="application_url" value="${escapeHtml(course.application_url || "")}"></label>
@@ -739,30 +843,53 @@ function renderCourses() {
     <div style="margin-top: 14px;">${renderCourseForm(selectedCourse)}</div>
     <h3>최근 교육</h3>
     <div class="table-list">
-      ${state.courses.slice(0, 12).map((course) => `<div class="table-row"><div class="row-top"><strong>${escapeHtml(course.title)}</strong>${statusBadge(course.status)}</div><span class="muted">${escapeHtml(course.topic)} · ${escapeHtml(shortDate(course.starts_at))}</span></div>`).join("")}
+      ${state.courses.slice(0, 12).map((course) => `<div class="table-row"><div class="row-top"><strong>${escapeHtml(course.title)}</strong>${statusBadge(effectiveCourseStatus(course))}</div><span class="muted">${escapeHtml(course.topic)} · ${escapeHtml(shortDate(course.starts_at))}</span></div>`).join("")}
     </div>
   `;
 }
 
 function renderArchive() {
+  const selectedId = state.selectedArchiveId || document.getElementById("archivePicker")?.value || "";
+  const selectedArchive = archiveById(selectedId) || {};
+  state.selectedArchiveId = selectedArchive.id || "";
+  const isEditing = Boolean(selectedArchive.id);
   elements.adminContent.innerHTML = `
     <h2>아카이브 등록</h2>
-    <p class="muted">영상은 YouTube/Vimeo 등 외부 링크를 권장합니다. 사진이나 PDF는 Supabase Storage에 업로드할 수 있습니다.</p>
+    <p class="muted">영상은 YouTube/Vimeo 등 외부 링크를 권장합니다. 사진이나 PDF는 Supabase Storage에 업로드할 수 있습니다. 사진은 여러 장을 한 번에 선택할 수 있습니다.</p>
+    <label>수정할 아카이브 선택<select id="archivePicker"><option value="">새 아카이브</option>${state.archives.map((item) => `<option value="${item.id}" ${item.id === selectedArchive.id ? "selected" : ""}>${escapeHtml(item.title)} · ${escapeHtml(courseName(item.course_id))}</option>`).join("")}</select></label>
     <form id="archiveForm" class="section">
-      <label>교육<select name="course_id" required><option value="">선택</option>${optionList(state.courses)}</select></label>
+      <input type="hidden" name="archive_id" value="${escapeHtml(selectedArchive.id || "")}">
+      <label>교육<select name="course_id" required><option value="">선택</option>${optionList(state.courses, selectedArchive.course_id)}</select></label>
       <div class="admin-grid" style="margin-top: 10px;">
-        <label>자료 유형<select name="type"><option value="photo">사진</option><option value="video">영상</option><option value="file">파일</option><option value="link">링크</option></select></label>
-        <label>제목<input name="title" required></label>
+        <label>자료 유형<select name="type"><option value="photo" ${selectedArchive.type === "photo" ? "selected" : ""}>사진</option><option value="video" ${selectedArchive.type === "video" ? "selected" : ""}>영상</option><option value="file" ${selectedArchive.type === "file" ? "selected" : ""}>파일</option><option value="link" ${selectedArchive.type === "link" ? "selected" : ""}>링크</option></select></label>
+        <label>제목<input name="title" value="${escapeHtml(selectedArchive.title || "")}" required></label>
       </div>
-      <label style="margin-top: 10px;">외부 URL<input name="url" placeholder="업로드 파일이 없으면 링크 입력"></label>
-      <label style="margin-top: 10px;">파일 업로드<input name="file" type="file" accept="image/*,.pdf"></label>
-      <label style="margin-top: 10px;">설명<textarea name="caption"></textarea></label>
-      <label style="margin-top: 10px;"><span><input name="is_public" type="checkbox" checked style="width:auto;min-height:auto;"> 공개</span></label>
-      <div class="actions" style="margin-top: 14px;"><button class="btn" type="submit">아카이브 등록</button></div>
+      <label style="margin-top: 10px;">외부 URL<input name="url" value="${escapeHtml(selectedArchive.url || "")}" placeholder="영상 링크 또는 업로드 파일이 없을 때 입력"></label>
+      <label style="margin-top: 10px;">파일 업로드<input name="files" type="file" accept="image/*,.pdf" multiple></label>
+      <p class="media-upload-note">사진은 여러 장을 선택할 수 있습니다. 기존 아카이브 수정 중 여러 장을 선택하면 첫 파일은 현재 항목을 대체하고 나머지는 새 항목으로 추가됩니다.</p>
+      <label style="margin-top: 10px;">설명(선택)<textarea name="caption">${escapeHtml(selectedArchive.caption || "")}</textarea></label>
+      <label style="margin-top: 10px;"><span><input name="is_public" type="checkbox" ${selectedArchive.is_public === false ? "" : "checked"} style="width:auto;min-height:auto;"> 공개</span></label>
+      <div class="actions" style="margin-top: 14px;">
+        <button class="btn" type="submit">${isEditing ? "아카이브 수정" : "아카이브 등록"}</button>
+        <button class="btn secondary" type="button" id="newArchiveButton">새 아카이브 입력</button>
+        ${isEditing ? `<button class="btn danger" type="button" data-delete-archive="${escapeHtml(selectedArchive.id)}">삭제</button>` : ""}
+      </div>
     </form>
     <h3>최근 아카이브</h3>
     <div class="table-list">
-      ${state.archives.slice(0, 15).map((item) => `<div class="table-row"><div class="row-top"><strong>${escapeHtml(item.title)}</strong><span class="badge">${escapeHtml(item.type)}</span></div><span class="muted">${escapeHtml(courseName(item.course_id))}</span></div>`).join("") || `<div class="empty">등록된 자료가 없습니다.</div>`}
+      ${state.archives.slice(0, 15).map((item) => `
+        <div class="table-row">
+          <div class="row-top">
+            <strong>${escapeHtml(item.title)}</strong>
+            <span class="badge">${escapeHtml(archiveTypeLabel(item.type))}</span>
+          </div>
+          <span class="muted">${escapeHtml(courseName(item.course_id))}${item.caption ? ` · ${escapeHtml(item.caption)}` : ""}</span>
+          <div class="actions" style="margin-top: 10px;">
+            <button class="btn small secondary" type="button" data-edit-archive="${escapeHtml(item.id)}">수정</button>
+            <button class="btn small danger" type="button" data-delete-archive="${escapeHtml(item.id)}">삭제</button>
+          </div>
+        </div>
+      `).join("") || `<div class="empty">등록된 자료가 없습니다.</div>`}
     </div>
   `;
 }
@@ -855,7 +982,7 @@ function renderApplications() {
             <div class="row-top" style="display:inline-flex;width:100%;align-items:flex-start;">
               <span>
                 <strong>${escapeHtml(courseName(group.courseId))}</strong>
-                <br><span class="muted">${escapeHtml(group.course?.starts_at ? shortDate(group.course.starts_at) : "일정 미정")} · ${escapeHtml(group.course?.status ? (statusLabels[group.course.status] || group.course.status) : "교육 정보 확인 필요")}</span>
+                <br><span class="muted">${escapeHtml(group.course?.starts_at ? shortDate(group.course.starts_at) : "일정 미정")} · ${escapeHtml(group.course ? (statusLabels[effectiveCourseStatus(group.course)] || effectiveCourseStatus(group.course)) : "교육 정보 확인 필요")}</span>
               </span>
               <span class="actions">
                 ${applicationCountBadges(group.applications)}
@@ -1107,15 +1234,18 @@ async function saveCourse(event) {
   if (!form) return;
   const formData = new FormData(form);
   const courseId = formData.get("course_id");
+  const timing = validateCourseTiming(courseId, formData);
+  if (!timing) return;
+  const selectedStatus = String(formData.get("status") || "scheduled");
   const payload = {
     title: String(formData.get("title")).trim(),
     topic: String(formData.get("topic")).trim(),
     organization_id: formData.get("organization_id"),
     instructor_id: formData.get("instructor_id") || null,
     venue_id: formData.get("venue_id") || null,
-    status: formData.get("status"),
-    starts_at: toIso(formData.get("starts_at")),
-    ends_at: toIso(formData.get("ends_at")),
+    status: timing.hasStarted && selectedStatus !== "cancelled" ? "finished" : selectedStatus,
+    starts_at: timing.startsAt,
+    ends_at: timing.endsAt,
     summary: String(formData.get("summary") || "").trim(),
     description: String(formData.get("description") || "").trim(),
     application_url: requireSafeUrl(formData.get("application_url"), "신청 링크", URL_RULES.external),
@@ -1178,41 +1308,110 @@ async function saveArchive(event) {
   const form = getSubmitForm(event);
   if (!form) return;
   const formData = new FormData(form);
-  const courseId = formData.get("course_id");
+  const archiveId = String(formData.get("archive_id") || "");
+  const existingArchive = archiveById(archiveId);
+  const courseId = String(formData.get("course_id") || "");
+  const title = String(formData.get("title") || "").trim();
   let url = requireSafeUrl(formData.get("url"), "외부 URL", URL_RULES.archive);
-  const file = formData.get("file");
+  const files = Array.from(form.querySelector("input[name='files']")?.files || []).filter(hasSelectedFile);
   let archiveType = String(formData.get("type"));
+  const caption = String(formData.get("caption") || "").trim();
+  const isPublic = formData.get("is_public") === "on";
 
-  let uploadedFilePath = "";
-  if (hasSelectedFile(file)) {
-    const uploaded = await uploadArchiveFile(file, courseId, formData.get("title"));
-    uploadedFilePath = uploaded.path;
-    url = uploaded.publicUrl;
-    archiveType = uploaded.archiveType;
+  if (!courseId) {
+    showToast("교육을 선택해 주세요.");
+    return;
   }
-
-  if (!url) {
-    showToast("외부 URL 또는 업로드 파일이 필요합니다.");
+  if (!title) {
+    showToast("아카이브 제목을 입력해 주세요.");
     return;
   }
 
-  const { error } = await supabase.from("course_archives").insert({
-    course_id: courseId,
-    type: archiveType,
-    title: String(formData.get("title")).trim(),
-    url,
-    caption: String(formData.get("caption") || "").trim(),
-    is_public: formData.get("is_public") === "on",
-    created_by: state.user.id,
-  });
-  if (error) {
-    await removeUploadedArchiveFile(uploadedFilePath);
+  const uploadedFiles = [];
+  let primarySaved = false;
+  try {
+    for (const file of files) {
+      uploadedFiles.push(await uploadArchiveFile(file, courseId, title));
+    }
+
+    const primaryUpload = uploadedFiles[0] || null;
+    if (primaryUpload) {
+      url = primaryUpload.publicUrl;
+      archiveType = primaryUpload.archiveType;
+    }
+
+    if (!url) {
+      showToast("외부 URL 또는 업로드 파일이 필요합니다.");
+      return;
+    }
+
+    const primaryPayload = {
+      course_id: courseId,
+      type: archiveType,
+      title,
+      url,
+      caption,
+      is_public: isPublic,
+      created_by: state.user.id,
+    };
+
+    if (existingArchive) {
+      const oldStoragePath = primaryUpload ? archiveStoragePathFromUrl(existingArchive.url) : "";
+      const { error } = await supabase.from("course_archives").update(primaryPayload).eq("id", existingArchive.id);
+      if (error) throw error;
+      primarySaved = true;
+      if (primaryUpload && oldStoragePath && oldStoragePath !== primaryUpload.path) await removeUploadedArchiveFile(oldStoragePath);
+    } else {
+      const { error } = await supabase.from("course_archives").insert(primaryPayload);
+      if (error) throw error;
+      primarySaved = true;
+    }
+
+    const extraUploads = uploadedFiles.slice(1);
+    if (extraUploads.length) {
+      const rows = extraUploads.map((uploaded, index) => ({
+        course_id: courseId,
+        type: uploaded.archiveType,
+        title: uploadedFiles.length > 1 ? `${title} ${index + 2}` : title,
+        url: uploaded.publicUrl,
+        caption,
+        is_public: isPublic,
+        created_by: state.user.id,
+      }));
+      const { error } = await supabase.from("course_archives").insert(rows);
+      if (error) {
+        await Promise.all(extraUploads.map((uploaded) => removeUploadedArchiveFile(uploaded.path)));
+        throw error;
+      }
+    }
+  } catch (error) {
+    if (!primarySaved) await Promise.all(uploadedFiles.map((uploaded) => removeUploadedArchiveFile(uploaded.path)));
     throw error;
   }
 
-  showToast("아카이브를 등록했습니다.");
+  showToast(existingArchive ? "아카이브를 수정했습니다." : "아카이브를 등록했습니다.");
   await reload();
   state.tab = "archive";
+  state.selectedArchiveId = existingArchive ? existingArchive.id : "";
+  render();
+}
+
+async function deleteArchive(archiveId) {
+  const archive = archiveById(archiveId);
+  if (!archive) {
+    showToast("삭제할 아카이브를 찾지 못했습니다.");
+    return;
+  }
+
+  const storagePath = archiveStoragePathFromUrl(archive.url);
+  if (storagePath) await removeUploadedArchiveFile(storagePath, { strict: true });
+  const { error } = await supabase.from("course_archives").delete().eq("id", archive.id);
+  if (error) throw error;
+
+  showToast("아카이브를 삭제했습니다.");
+  await reload();
+  state.tab = "archive";
+  state.selectedArchiveId = "";
   render();
 }
 
@@ -1398,6 +1597,8 @@ function bindEvents() {
     const unconfirmAttendanceButton = event.target.closest("[data-unconfirm-attendance]");
     const rosterButton = event.target.closest("[data-print-roster]");
     const attendanceDocumentButton = event.target.closest("[data-open-attendance-document]");
+    const editArchiveButton = event.target.closest("[data-edit-archive]");
+    const deleteArchiveButton = event.target.closest("[data-delete-archive]");
     if (tabButton) {
       state.tab = tabButton.dataset.adminTab;
       render();
@@ -1448,10 +1649,45 @@ function bindEvents() {
       }
       return;
     }
+    if (editArchiveButton) {
+      state.selectedArchiveId = editArchiveButton.dataset.editArchive;
+      state.tab = "archive";
+      renderArchive();
+      return;
+    }
+    if (deleteArchiveButton) {
+      if (deleteArchiveButton.dataset.confirmDelete !== "true") {
+        deleteArchiveButton.dataset.confirmDelete = "true";
+        deleteArchiveButton.textContent = "한 번 더 누르면 삭제";
+        window.setTimeout(() => {
+          if (deleteArchiveButton.dataset.confirmDelete === "true") {
+            deleteArchiveButton.dataset.confirmDelete = "false";
+            deleteArchiveButton.textContent = "삭제";
+          }
+        }, 3000);
+        return;
+      }
+      try {
+        deleteArchiveButton.disabled = true;
+        deleteArchiveButton.textContent = "삭제 중...";
+        await deleteArchive(deleteArchiveButton.dataset.deleteArchive);
+      } catch (error) {
+        showToast(`아카이브 삭제 실패: ${error.message}`);
+        deleteArchiveButton.disabled = false;
+        deleteArchiveButton.textContent = "삭제";
+      }
+      return;
+    }
     if (event.target.id === "newCourseButton") {
       const picker = document.getElementById("coursePicker");
       if (picker) picker.value = "";
       renderCourses();
+    }
+    if (event.target.id === "newArchiveButton") {
+      const picker = document.getElementById("archivePicker");
+      if (picker) picker.value = "";
+      state.selectedArchiveId = "";
+      renderArchive();
     }
     if (event.target.id === "newOrganizationButton") {
       const picker = document.getElementById("organizationPicker");
@@ -1475,9 +1711,20 @@ function bindEvents() {
     if (event.target.id === "instructorPicker") renderInstructors();
     if (event.target.id === "venuePicker") renderVenues();
     if (event.target.id === "coursePicker") renderCourses();
+    if (event.target.id === "archivePicker") {
+      state.selectedArchiveId = event.target.value;
+      renderArchive();
+    }
     if (event.target.id === "applicationCourseFilter") {
       state.applicationFilters.courseId = event.target.value;
       renderApplications();
+    }
+  });
+
+  document.body.addEventListener("input", (event) => {
+    if (event.target.matches("#courseForm input[name='starts_at']")) {
+      const endInput = document.querySelector("#courseForm input[name='ends_at']");
+      if (endInput) endInput.min = event.target.value || currentMinuteLocalDateTimeValue();
     }
   });
 

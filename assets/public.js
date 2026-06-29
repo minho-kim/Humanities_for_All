@@ -108,6 +108,22 @@ function getStatusClass(status) {
   return "";
 }
 
+function courseStartAt(course) {
+  return course?.sessions?.[0]?.starts_at || course?.starts_at || "";
+}
+
+function hasCourseStarted(course) {
+  const startsAt = courseStartAt(course);
+  return startsAt ? new Date(startsAt).getTime() <= Date.now() : false;
+}
+
+function effectiveCourseStatus(course) {
+  if (!course) return "";
+  if (course.status === "cancelled") return "cancelled";
+  if (hasCourseStarted(course)) return "finished";
+  return course.status || "scheduled";
+}
+
 function getTimeLabel(course) {
   const first = course.sessions[0];
   if (!first?.starts_at) return "";
@@ -274,7 +290,7 @@ function publicOrganizations() {
 }
 
 function publicArchiveItems() {
-  return state.archives.filter((item) => ["photo", "video", "file", "link"].includes(item.type) && normalizeSafeUrl(item.url, URL_RULES.archive));
+  return state.archives.filter((item) => item.is_public !== false && ["photo", "video", "file", "link"].includes(item.type) && normalizeSafeUrl(item.url, URL_RULES.archive));
 }
 
 function archiveTypeLabel(type) {
@@ -282,6 +298,29 @@ function archiveTypeLabel(type) {
   if (type === "photo") return "사진";
   if (type === "file") return "자료";
   return "링크";
+}
+
+function archiveMediaHtml(item, className = "media") {
+  const url = normalizeSafeUrl(item.url, URL_RULES.archive);
+  const label = archiveTypeLabel(item.type);
+  const caption = item.caption || "자료 보기";
+  if (item.type === "photo") {
+    return `
+      <button class="${escapeHtml(className)} media-button media-photo" type="button" data-open-archive-photo="${escapeHtml(item.id)}" style="background-image: linear-gradient(135deg, rgba(24, 32, 41, 0.58), rgba(24, 32, 41, 0.18)), url('${escapeHtml(url)}');">
+        <span class="badge">${escapeHtml(label)}</span>
+        <strong>${escapeHtml(item.title)}</strong>
+        <small>${escapeHtml(caption)}</small>
+      </button>
+    `;
+  }
+
+  return `
+    <a class="${escapeHtml(className)}" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">
+      <span class="badge">${escapeHtml(label)}</span>
+      <strong>${escapeHtml(item.title)}</strong>
+      <small>${escapeHtml(caption)}</small>
+    </a>
+  `;
 }
 
 function reviewStatusLabel(review) {
@@ -309,7 +348,7 @@ function applicationStatusClass(application) {
 }
 
 function canApplyToCourse(course) {
-  return ["scheduled", "open"].includes(course.status);
+  return ["scheduled", "open"].includes(course.status) && !hasCourseStarted(course);
 }
 
 function isCancelledApplication(application) {
@@ -429,10 +468,19 @@ function composeCourses() {
 
   state.composedCourses = state.courses.map((course) => {
     const sessions = (sessionsByCourse.get(course.id) || []).slice().sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
-    const archives = (archivesByCourse.get(course.id) || []).slice().sort((a, b) => a.sort_order - b.sort_order);
+    const archives = (archivesByCourse.get(course.id) || [])
+      .filter((item) => item.is_public !== false && normalizeSafeUrl(item.url, URL_RULES.archive))
+      .slice()
+      .sort((a, b) => a.sort_order - b.sort_order);
     const reviews = (reviewsByCourse.get(course.id) || []).slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const composedCourse = {
+      ...course,
+      sessions,
+    };
     return {
       ...course,
+      originalStatus: course.status,
+      status: effectiveCourseStatus(composedCourse),
       organization: organizations.get(course.organization_id),
       instructor: instructors.get(course.instructor_id),
       venue: venues.get(course.venue_id),
@@ -829,6 +877,29 @@ function openInstructorProfile(instructorId) {
   openModal(elements.profileModal);
 }
 
+function openArchivePhoto(archiveId) {
+  const item = state.archives.find((archive) => archive.id === archiveId);
+  const url = normalizeSafeUrl(item?.url, URL_RULES.archive);
+  if (!item || item.type !== "photo" || !url) {
+    showToast("사진 정보를 찾지 못했습니다.");
+    return;
+  }
+
+  const course = courseById(item.course_id);
+  elements.profileEyebrow.textContent = "사진";
+  elements.profileTitle.textContent = item.title || "사진 보기";
+  elements.profileBody.innerHTML = `
+    <figure class="photo-viewer">
+      <img src="${escapeHtml(url)}" alt="${escapeHtml(item.title || "교육 사진")}">
+      <figcaption>
+        ${item.caption ? `<p>${escapeHtml(item.caption)}</p>` : ""}
+        ${course ? `<p class="muted">${escapeHtml(course.title)} · ${escapeHtml(course.organization?.name || "")}</p>` : ""}
+      </figcaption>
+    </figure>
+  `;
+  openModal(elements.profileModal);
+}
+
 function renderApplicationHistory() {
   if (!state.applications.length) return `<div class="empty">아직 신청한 교육이 없습니다.</div>`;
   return `
@@ -923,14 +994,7 @@ function renderArchivePage() {
   elements.courseResults.className = "resource-grid";
   elements.courseResults.innerHTML = items.map((item) => {
     const course = courseById(item.course_id);
-    return `
-      <a class="media resource-card" href="${escapeHtml(normalizeSafeUrl(item.url, URL_RULES.archive))}" target="_blank" rel="noreferrer">
-        <span class="badge">${archiveTypeLabel(item.type)}</span>
-        <strong>${escapeHtml(item.title)}</strong>
-        <small>${escapeHtml(item.caption || course?.title || "자료 보기")}</small>
-        ${course ? `<small>${escapeHtml(course.title)} · ${escapeHtml(course.organization?.name || "")}</small>` : ""}
-      </a>
-    `;
+    return archiveMediaHtml({ ...item, caption: item.caption || course?.title || "자료 보기" }, "media resource-card");
   }).join("") || `<div class="empty">등록된 사진·영상·자료가 없습니다.</div>`;
 }
 
@@ -1070,6 +1134,7 @@ function openCourseDetail(courseId) {
   const kakaoUrl = kakaoMapUrl(course.venue);
   const naverUrl = naverPlaceUrl(course.venue);
   const applicationUrl = normalizeSafeUrl(course.application_url, URL_RULES.external);
+  const canApply = canApplyToCourse(course);
 
   elements.detailBadges.innerHTML = `
     <span class="badge ${getStatusClass(course.status)}">${escapeHtml(statusLabels[course.status] || course.status)}</span>
@@ -1086,8 +1151,8 @@ function openCourseDetail(courseId) {
           ${course.sessions.map((session) => `<li><strong>${escapeHtml(session.title)} · ${escapeHtml(formatDateTime(session.starts_at))}</strong><br>${escapeHtml(session.room || course.venue?.name || "")}</li>`).join("")}
         </ul>
         <div class="actions" style="margin-top: 14px;">
-          <button class="btn small" type="button" data-apply-course="${course.id}">신청하기</button>
-          ${applicationUrl ? `<a class="btn small secondary" href="${escapeHtml(applicationUrl)}" target="_blank" rel="noreferrer">외부 신청 링크</a>` : ""}
+          ${canApply ? `<button class="btn small" type="button" data-apply-course="${course.id}">신청하기</button>` : `<button class="btn small secondary" type="button" disabled>신청 마감</button>`}
+          ${canApply && applicationUrl ? `<a class="btn small secondary" href="${escapeHtml(applicationUrl)}" target="_blank" rel="noreferrer">외부 신청 링크</a>` : ""}
           <button class="btn small secondary" type="button" data-add-calendar="${course.id}">캘린더 등록</button>
           <button class="btn small secondary" type="button" data-login-for-review>후기 쓰기</button>
         </div>
@@ -1115,7 +1180,7 @@ function openCourseDetail(courseId) {
       <div class="section">
         <h3>사진·영상·자료</h3>
         <div class="media-grid">
-          ${course.archives.filter((item) => normalizeSafeUrl(item.url, URL_RULES.archive)).length ? course.archives.filter((item) => normalizeSafeUrl(item.url, URL_RULES.archive)).map((item) => `<a class="media" href="${escapeHtml(normalizeSafeUrl(item.url, URL_RULES.archive))}" target="_blank" rel="noreferrer"><strong>${archiveTypeLabel(item.type)} · ${escapeHtml(item.title)}</strong><small>${escapeHtml(item.caption || "자료 보기")}</small></a>`).join("") : `<p class="muted">등록된 사진·영상·자료가 없습니다.</p>`}
+          ${course.archives.length ? course.archives.map((item) => archiveMediaHtml(item)).join("") : `<p class="muted">등록된 사진·영상·자료가 없습니다.</p>`}
         </div>
       </div>
       <div class="section" style="grid-column: 1 / -1;">
@@ -1404,6 +1469,7 @@ function bindEvents() {
     const loginForApplication = event.target.closest("[data-login-for-application]");
     const applyButton = event.target.closest("[data-apply-course]");
     const cancelApplicationButton = event.target.closest("[data-cancel-application]");
+    const archivePhotoButton = event.target.closest("[data-open-archive-photo]");
     if (routeControl) {
       event.preventDefault();
       navigate(routeControl.dataset.route);
@@ -1429,6 +1495,10 @@ function bindEvents() {
     }
     if (cancelApplicationButton) {
       handleCancelApplication(cancelApplicationButton).catch((error) => showToast(`신청 취소 실패: ${error.message}`));
+      return;
+    }
+    if (archivePhotoButton) {
+      openArchivePhoto(archivePhotoButton.dataset.openArchivePhoto);
       return;
     }
     if (openButton) {
