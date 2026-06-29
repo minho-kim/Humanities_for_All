@@ -1,5 +1,6 @@
 import {
   ARCHIVE_BUCKET,
+  ATTENDANCE_DOCUMENT_BUCKET,
   SITE_MEDIA_BUCKET,
   escapeHtml,
   formatDateTime,
@@ -30,6 +31,7 @@ const state = {
   sessions: [],
   archives: [],
   applications: [],
+  attendanceDocuments: [],
   reviews: [],
   draws: [],
   winners: [],
@@ -64,6 +66,17 @@ const ARCHIVE_FILE_TYPES = new Map([
   ["application/pdf", { extension: ".pdf", type: "file" }],
 ]);
 const ARCHIVE_FILE_MAX_BYTES = 15 * 1024 * 1024;
+const ATTENDANCE_DOCUMENT_TYPES = new Map([
+  ["application/pdf", ".pdf"],
+  ["image/jpeg", ".jpg"],
+  ["image/png", ".png"],
+  ["image/webp", ".webp"],
+  ["image/gif", ".gif"],
+  ["image/heic", ".heic"],
+  ["image/heif", ".heif"],
+  ["image/tiff", ".tiff"],
+]);
+const ATTENDANCE_DOCUMENT_MAX_BYTES = 15 * 1024 * 1024;
 const rosterNameSorter = new Intl.Collator("ko-KR", {
   numeric: true,
   sensitivity: "base",
@@ -105,6 +118,30 @@ function courseName(courseId) {
 
 function courseById(courseId) {
   return state.courses.find((course) => course.id === courseId);
+}
+
+function seoulDateKey(value) {
+  if (!value) return "";
+  const parts = new Intl.DateTimeFormat("en", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(value));
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  return year && month && day ? `${year}-${month}-${day}` : "";
+}
+
+function hasCourseDateArrived(course) {
+  const courseDate = seoulDateKey(course?.starts_at);
+  if (!courseDate) return false;
+  return courseDate <= seoulDateKey(new Date());
+}
+
+function attendanceDocumentsForCourse(courseId) {
+  return state.attendanceDocuments.filter((document) => document.course_id === courseId);
 }
 
 function applicationCountBadges(applications) {
@@ -150,6 +187,8 @@ function applicationGroups(applications) {
 
 function renderApplicationRow(application) {
   const attendanceConfirmed = Boolean(application.attendance_confirmed_at);
+  const course = courseById(application.course_id);
+  const canConfirmAttendance = hasCourseDateArrived(course);
   return `
     <div class="table-row">
       <div class="row-top">
@@ -162,8 +201,9 @@ function renderApplicationRow(application) {
       <p class="muted">개인정보·문자 안내 동의 완료</p>
       <div class="actions">
         ${attendanceConfirmed
-          ? `<span class="badge green">참석 확인 ${escapeHtml(shortDate(application.attendance_confirmed_at))}</span>`
-          : `<button class="btn small" type="button" data-confirm-attendance="${escapeHtml(application.id)}">참석 확인</button>`}
+          ? `<span class="badge green">참석 확인 ${escapeHtml(shortDate(application.attendance_confirmed_at))}</span>
+             <button class="btn small secondary" type="button" data-unconfirm-attendance="${escapeHtml(application.id)}">참석 확인 취소</button>`
+          : `<button class="btn small" type="button" data-confirm-attendance="${escapeHtml(application.id)}" ${canConfirmAttendance ? "" : "disabled"}>${canConfirmAttendance ? "참석 확인" : "교육일 전"}</button>`}
       </div>
     </div>
   `;
@@ -333,6 +373,34 @@ async function removeUploadedArchiveFile(path) {
   if (error) console.warn("[모두의 인문학] 아카이브 업로드 롤백 파일 삭제 실패", error);
 }
 
+async function uploadAttendanceDocument(file, courseId, baseName) {
+  if (!hasSelectedFile(file)) return null;
+  const extension = ATTENDANCE_DOCUMENT_TYPES.get(file.type);
+  if (!extension) {
+    throw new Error("참석자 명단 스캔본은 PDF 또는 이미지 파일만 업로드할 수 있습니다.");
+  }
+  if (file.size > ATTENDANCE_DOCUMENT_MAX_BYTES) {
+    throw new Error("참석자 명단 스캔본은 15MB 이하로 업로드해 주세요.");
+  }
+
+  const originalName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const uniqueId = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const path = `${courseId}/${safeStorageSegment(baseName, "attendance")}-${uniqueId}-${originalName || `scan${extension}`}`;
+  const { error } = await supabase.storage.from(ATTENDANCE_DOCUMENT_BUCKET).upload(path, file, {
+    cacheControl: "3600",
+    contentType: file.type,
+    upsert: false,
+  });
+  if (error) throw error;
+  return { path, originalName, contentType: file.type, fileSize: file.size };
+}
+
+async function removeUploadedAttendanceDocument(path) {
+  if (!path) return;
+  const { error } = await supabase.storage.from(ATTENDANCE_DOCUMENT_BUCKET).remove([path]);
+  if (error) console.warn("[모두의 인문학] 참석자 명단 스캔본 업로드 롤백 파일 삭제 실패", error);
+}
+
 function statusBadge(status) {
   const className = status === "open" ? "green" : status === "finished" ? "gray" : status === "cancelled" ? "red" : "";
   return `<span class="badge ${className}">${escapeHtml(statusLabels[status] || status)}</span>`;
@@ -431,6 +499,7 @@ async function loadAdminData() {
     supabase.from("course_sessions").select("*").order("starts_at", { ascending: true }),
     supabase.from("course_archives").select("*").order("created_at", { ascending: false }),
     supabase.from("course_applications").select("*").order("created_at", { ascending: false }),
+    supabase.from("course_attendance_documents").select("*").order("created_at", { ascending: false }),
     supabase.from("reviews").select("*").order("created_at", { ascending: false }),
     supabase.from("review_draws").select("*").order("created_at", { ascending: false }),
     supabase.from("review_draw_winners").select("*").order("created_at", { ascending: false }),
@@ -447,6 +516,7 @@ async function loadAdminData() {
     state.sessions,
     state.archives,
     state.applications,
+    state.attendanceDocuments,
     state.reviews,
     state.draws,
     state.winners,
@@ -698,6 +768,43 @@ function renderReviews() {
   `;
 }
 
+function renderAttendanceDocumentSection(courseId) {
+  const course = courseById(courseId);
+  const documents = attendanceDocumentsForCourse(courseId);
+  const defaultTitle = `${courseName(courseId)} 참석자 명단`;
+  return `
+    <div class="section" style="margin-top: 12px;">
+      <h3>참석자 명단 스캔본</h3>
+      <p class="muted">서명과 연락처 확인 정보가 포함될 수 있으므로 관리자 전용 비공개 저장소에 보관합니다. 공개 아카이브에는 노출되지 않습니다.</p>
+      <form data-attendance-document-form>
+        <input type="hidden" name="course_id" value="${escapeHtml(courseId)}">
+        <div class="admin-grid">
+          <label>문서 제목<input name="title" value="${escapeHtml(defaultTitle)}" required maxlength="120"></label>
+          <label>스캔 파일<input name="attendance_document" type="file" accept="application/pdf,image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,image/tiff" required></label>
+        </div>
+        <div class="actions" style="margin-top: 12px;">
+          <button class="btn small" type="submit">스캔본 업로드</button>
+          <span class="badge gray">PDF·이미지 15MB 이하</span>
+        </div>
+      </form>
+      <div class="table-list" style="margin-top: 12px;">
+        ${documents.map((document) => `
+          <div class="table-row">
+            <div class="row-top">
+              <strong>${escapeHtml(document.title || course?.title || "참석자 명단")}</strong>
+              <span class="badge gray">${escapeHtml(shortDate(document.created_at))}</span>
+            </div>
+            <p class="muted">${escapeHtml(document.original_file_name || "스캔 파일")} · ${Math.ceil((document.file_size || 0) / 1024).toLocaleString("ko-KR")}KB</p>
+            <div class="actions">
+              <button class="btn small secondary" type="button" data-open-attendance-document="${escapeHtml(document.id)}">보기</button>
+            </div>
+          </div>
+        `).join("") || `<div class="empty">업로드된 참석자 명단 스캔본이 없습니다.</div>`}
+      </div>
+    </div>
+  `;
+}
+
 function renderApplications() {
   const applications = filteredApplications();
   const groups = applicationGroups(applications);
@@ -735,6 +842,7 @@ function renderApplications() {
           <div class="table-list" style="margin-top: 12px;">
             ${group.applications.map(renderApplicationRow).join("")}
           </div>
+          ${renderAttendanceDocumentSection(group.courseId)}
         </details>
       `).join("") || `<div class="empty">${state.applications.length ? "선택한 조건에 맞는 신청이 없습니다." : "아직 교육 신청이 없습니다."}</div>`}
     </div>
@@ -1081,6 +1189,81 @@ async function saveArchive(event) {
   render();
 }
 
+async function saveAttendanceDocument(event) {
+  event.preventDefault();
+  const form = getSubmitForm(event);
+  if (!form) return;
+  const formData = new FormData(form);
+  const courseId = String(formData.get("course_id") || "");
+  const course = courseById(courseId);
+  const title = String(formData.get("title") || "").trim();
+  const file = formData.get("attendance_document");
+
+  if (!course) {
+    showToast("교육 정보를 찾지 못했습니다.");
+    return;
+  }
+  if (!title) {
+    showToast("문서 제목을 입력해 주세요.");
+    return;
+  }
+  if (!hasSelectedFile(file)) {
+    showToast("업로드할 스캔 파일을 선택해 주세요.");
+    return;
+  }
+
+  let uploadedPath = "";
+  const submitButton = form.querySelector("button[type='submit']");
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "업로드 중...";
+  }
+
+  try {
+    const uploaded = await uploadAttendanceDocument(file, course.id, title);
+    uploadedPath = uploaded.path;
+    const { error } = await supabase.from("course_attendance_documents").insert({
+      course_id: course.id,
+      title,
+      storage_path: uploaded.path,
+      original_file_name: uploaded.originalName || null,
+      content_type: uploaded.contentType,
+      file_size: uploaded.fileSize,
+      uploaded_by: state.user.id,
+    });
+    if (error) throw error;
+
+    showToast("참석자 명단 스캔본을 업로드했습니다.");
+    await reload();
+    state.tab = "applications";
+    render();
+  } catch (error) {
+    await removeUploadedAttendanceDocument(uploadedPath);
+    throw error;
+  } finally {
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.textContent = "스캔본 업로드";
+    }
+  }
+}
+
+async function openAttendanceDocument(documentId) {
+  const document = state.attendanceDocuments.find((item) => item.id === documentId);
+  if (!document) {
+    showToast("문서 정보를 찾지 못했습니다.");
+    return;
+  }
+
+  const { data, error } = await supabase.storage
+    .from(ATTENDANCE_DOCUMENT_BUCKET)
+    .createSignedUrl(document.storage_path, 600);
+  if (error) throw error;
+
+  const opened = window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+  if (!opened) showToast("팝업 차단을 해제한 뒤 다시 시도해 주세요.");
+}
+
 async function updateReview(reviewId, action) {
   const payload = {};
   if (action === "verify") payload.verification_status = "verified";
@@ -1097,13 +1280,32 @@ async function updateReview(reviewId, action) {
 }
 
 async function confirmApplicationAttendance(applicationId) {
+  const application = state.applications.find((item) => item.id === applicationId);
+  const course = courseById(application?.course_id);
+  if (!hasCourseDateArrived(course)) {
+    throw new Error("교육일이 도래한 뒤 참석 확인할 수 있습니다.");
+  }
+
   const { data, error } = await supabase.rpc("confirm_course_application_attendance", {
     p_application_id: applicationId,
   });
   if (error) throw error;
-  if (data !== true) throw new Error("참석 확인할 신청을 찾지 못했습니다.");
+  if (data !== true) throw new Error("참석 확인할 신청을 찾지 못했거나 아직 교육일이 도래하지 않았습니다.");
 
   showToast("참석 확인을 저장했습니다.");
+  await reload();
+  state.tab = "applications";
+  render();
+}
+
+async function unconfirmApplicationAttendance(applicationId) {
+  const { data, error } = await supabase.rpc("unconfirm_course_application_attendance", {
+    p_application_id: applicationId,
+  });
+  if (error) throw error;
+  if (data !== true) throw new Error("취소할 참석 확인을 찾지 못했습니다.");
+
+  showToast("참석 확인을 취소했습니다.");
   await reload();
   state.tab = "applications";
   render();
@@ -1166,7 +1368,9 @@ function bindEvents() {
     const tabButton = event.target.closest("[data-admin-tab]");
     const reviewButton = event.target.closest("[data-review-action]");
     const attendanceButton = event.target.closest("[data-confirm-attendance]");
+    const unconfirmAttendanceButton = event.target.closest("[data-unconfirm-attendance]");
     const rosterButton = event.target.closest("[data-print-roster]");
+    const attendanceDocumentButton = event.target.closest("[data-open-attendance-document]");
     if (tabButton) {
       state.tab = tabButton.dataset.adminTab;
       render();
@@ -1192,9 +1396,29 @@ function bindEvents() {
       }
       return;
     }
+    if (unconfirmAttendanceButton) {
+      try {
+        unconfirmAttendanceButton.disabled = true;
+        unconfirmAttendanceButton.textContent = "취소 중...";
+        await unconfirmApplicationAttendance(unconfirmAttendanceButton.dataset.unconfirmAttendance);
+      } catch (error) {
+        showToast(`참석 확인 취소 실패: ${error.message}`);
+        unconfirmAttendanceButton.disabled = false;
+        unconfirmAttendanceButton.textContent = "참석 확인 취소";
+      }
+      return;
+    }
     if (rosterButton) {
       event.preventDefault();
       printApplicationRoster(rosterButton.dataset.printRoster);
+      return;
+    }
+    if (attendanceDocumentButton) {
+      try {
+        await openAttendanceDocument(attendanceDocumentButton.dataset.openAttendanceDocument);
+      } catch (error) {
+        showToast(`문서 열기 실패: ${error.message}`);
+      }
       return;
     }
     if (event.target.id === "newCourseButton") {
@@ -1237,6 +1461,7 @@ function bindEvents() {
       if (event.target.id === "venueForm") return await saveVenue(event);
       if (event.target.id === "courseForm") return await saveCourse(event);
       if (event.target.id === "archiveForm") return await saveArchive(event);
+      if (event.target.matches("[data-attendance-document-form]")) return await saveAttendanceDocument(event);
       if (event.target.id === "drawForm") return await runDraw(event);
     } catch (error) {
       showToast(`작업 실패: ${error.message}`);
