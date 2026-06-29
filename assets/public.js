@@ -371,6 +371,16 @@ function userApplicationForCourse(courseId) {
   return activeApplicationForCourse(courseId);
 }
 
+function myReviewForCourse(courseId) {
+  return state.myReviews.find((review) => review.course_id === courseId);
+}
+
+function canWriteReviewForCourse(course) {
+  if (!state.user || !course) return false;
+  const application = activeApplicationForCourse(course.id);
+  return Boolean(application && isAttendanceConfirmed(application));
+}
+
 function formatPhoneNumber(value) {
   const digits = String(value || "").replace(/\D/g, "").slice(0, 11);
   if (!digits) return "";
@@ -1018,19 +1028,26 @@ function renderReviews(course) {
 }
 
 function renderReviewForm(course) {
-  if (!state.user) {
-    return `<p>후기를 남기려면 이메일 인증이 필요합니다. 교육 정보는 인증 없이 볼 수 있습니다.</p><button class="btn" type="button" data-login-for-review>이메일 인증 후 후기 쓰기</button>`;
+  const application = activeApplicationForCourse(course.id);
+  if (!application || !isAttendanceConfirmed(application)) {
+    return "";
   }
 
-  const application = activeApplicationForCourse(course.id);
-  const cancelledApplication = cancelledApplicationForCourse(course.id);
-  if (!application) {
-    if (cancelledApplication) return `<p>취소한 신청은 후기를 작성할 수 없습니다. 문의가 필요하면 운영자에게 연락해 주세요.</p>`;
-    return `<p>후기는 교육 신청 후 관리자의 참석 확인이 완료된 참여자만 작성할 수 있습니다.</p>`;
+  const existingReview = myReviewForCourse(course.id);
+  if (existingReview) {
+    return `
+      <form id="reviewForm">
+        <input type="hidden" name="review_id" value="${escapeHtml(existingReview.id)}">
+        <label>내 후기<textarea name="body" required minlength="10">${escapeHtml(existingReview.body || "")}</textarea></label>
+        <div class="actions" style="margin-top: 12px;">
+          <button class="btn" type="submit">후기 수정</button>
+          <button class="btn danger" type="button" data-delete-review="${escapeHtml(existingReview.id)}">후기 삭제</button>
+          <span class="badge green">이미 작성한 후기</span>
+        </div>
+      </form>
+    `;
   }
-  if (!isAttendanceConfirmed(application)) {
-    return `<p>교육 참석 후 관리자가 참석 확인을 마치면 후기를 작성할 수 있습니다.</p>`;
-  }
+
   return `
     <form id="reviewForm">
       <label>후기<textarea name="body" placeholder="교육에서 좋았던 점, 기억에 남은 질문, 다음 참여자에게 전하고 싶은 말을 적어주세요." required minlength="10"></textarea></label>
@@ -1135,6 +1152,9 @@ function openCourseDetail(courseId) {
   const naverUrl = naverPlaceUrl(course.venue);
   const applicationUrl = normalizeSafeUrl(course.application_url, URL_RULES.external);
   const canApply = canApplyToCourse(course);
+  const canReview = canWriteReviewForCourse(course);
+  const canAddCalendar = !["finished", "cancelled"].includes(course.status);
+  const reviewEditorHtml = renderReviewForm(course);
 
   elements.detailBadges.innerHTML = `
     <span class="badge ${getStatusClass(course.status)}">${escapeHtml(statusLabels[course.status] || course.status)}</span>
@@ -1153,8 +1173,8 @@ function openCourseDetail(courseId) {
         <div class="actions" style="margin-top: 14px;">
           ${canApply ? `<button class="btn small" type="button" data-apply-course="${course.id}">신청하기</button>` : `<button class="btn small secondary" type="button" disabled>신청 마감</button>`}
           ${canApply && applicationUrl ? `<a class="btn small secondary" href="${escapeHtml(applicationUrl)}" target="_blank" rel="noreferrer">외부 신청 링크</a>` : ""}
-          <button class="btn small secondary" type="button" data-add-calendar="${course.id}">캘린더 등록</button>
-          <button class="btn small secondary" type="button" data-login-for-review>후기 쓰기</button>
+          ${canAddCalendar ? `<button class="btn small secondary" type="button" data-add-calendar="${course.id}">캘린더 등록</button>` : ""}
+          ${canReview ? `<button class="btn small secondary" type="button" data-login-for-review>${myReviewForCourse(course.id) ? "내 후기 수정" : "후기 쓰기"}</button>` : ""}
         </div>
       </div>
       <aside class="section">
@@ -1183,10 +1203,10 @@ function openCourseDetail(courseId) {
           ${course.archives.length ? course.archives.map((item) => archiveMediaHtml(item)).join("") : `<p class="muted">등록된 사진·영상·자료가 없습니다.</p>`}
         </div>
       </div>
-      <div class="section" style="grid-column: 1 / -1;">
+      ${reviewEditorHtml ? `<div class="section" style="grid-column: 1 / -1;">
         <h3>후기 작성</h3>
-        ${renderReviewForm(course)}
-      </div>
+        ${reviewEditorHtml}
+      </div>` : ""}
     </div>
   `;
   openModal(elements.detailModal);
@@ -1346,25 +1366,73 @@ async function handleReviewSubmit(event) {
   }
 
   const supabase = await getSupabaseClient();
-  const { error } = await supabase.from("reviews").insert({
-    course_id: course.id,
-    user_id: state.user.id,
-    author_name: getReviewAuthorName(state.user),
-    body,
-  });
+  const reviewId = String(form.elements.review_id?.value || "");
+  const request = reviewId
+    ? supabase.rpc("update_my_review", { p_review_id: reviewId, p_body: body })
+    : supabase.from("reviews").insert({
+      course_id: course.id,
+      user_id: state.user.id,
+      author_name: getReviewAuthorName(state.user),
+      body,
+    });
+  const { data, error } = await request;
 
-  if (error) {
-    if (error.code === "23505") showToast("이미 이 교육에 후기를 작성했습니다.");
+  if (error || (reviewId && data !== true)) {
+    if (error?.code === "23505") showToast("이미 이 교육에 후기를 작성했습니다.");
     else {
       console.error("Review submission failed", error);
-      showToast("후기를 등록하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+      showToast(reviewId ? "후기를 수정하지 못했습니다. 잠시 후 다시 시도해 주세요." : "후기를 등록하지 못했습니다. 잠시 후 다시 시도해 주세요.");
     }
     return;
   }
 
-  showToast("후기가 등록되었습니다.");
+  showToast(reviewId ? "후기를 수정했습니다." : "후기가 등록되었습니다.");
   await loadData({ waitForSupplementary: true });
+  await loadApplicationState(supabase);
   openCourseDetail(course.id);
+}
+
+async function handleReviewDelete(button) {
+  if (!state.user) {
+    openModal(elements.loginModal);
+    return;
+  }
+
+  const reviewId = button.dataset.deleteReview;
+  if (!reviewId) return;
+
+  if (button.dataset.confirmDelete !== "true") {
+    button.dataset.confirmDelete = "true";
+    button.textContent = "한 번 더 누르면 삭제됩니다";
+    window.setTimeout(() => {
+      if (button.dataset.confirmDelete === "true") {
+        button.dataset.confirmDelete = "false";
+        button.textContent = "후기 삭제";
+      }
+    }, 3000);
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = "삭제 중...";
+  const courseId = state.activeCourseId;
+  const supabase = await getSupabaseClient();
+  const { data, error } = await supabase.rpc("delete_my_review", { p_review_id: reviewId });
+  if (error || data !== true) {
+    console.error("Review delete failed", error);
+    showToast("후기를 삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    button.disabled = false;
+    button.textContent = "후기 삭제";
+    return;
+  }
+
+  showToast("후기를 삭제했습니다.");
+  await loadData({ waitForSupplementary: true });
+  await loadApplicationState(supabase);
+  if (courseId) openCourseDetail(courseId);
+  if (elements.profileModal.classList.contains("open") && elements.profileEyebrow.textContent === "나의 정보") {
+    openMyInfo();
+  }
 }
 
 function updateSessionUi(user) {
@@ -1470,6 +1538,7 @@ function bindEvents() {
     const applyButton = event.target.closest("[data-apply-course]");
     const cancelApplicationButton = event.target.closest("[data-cancel-application]");
     const archivePhotoButton = event.target.closest("[data-open-archive-photo]");
+    const deleteReviewButton = event.target.closest("[data-delete-review]");
     if (routeControl) {
       event.preventDefault();
       navigate(routeControl.dataset.route);
@@ -1495,6 +1564,10 @@ function bindEvents() {
     }
     if (cancelApplicationButton) {
       handleCancelApplication(cancelApplicationButton).catch((error) => showToast(`신청 취소 실패: ${error.message}`));
+      return;
+    }
+    if (deleteReviewButton) {
+      handleReviewDelete(deleteReviewButton).catch((error) => showToast(`후기 삭제 실패: ${error.message}`));
       return;
     }
     if (archivePhotoButton) {
