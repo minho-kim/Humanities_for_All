@@ -196,6 +196,7 @@ function printApplicationRoster(courseId) {
   }
 
   const title = courseName(courseId);
+  const densePrintClass = applications.length >= 40 ? "dense" : "";
   const rows = applications.map((application, index) => `
     <tr>
       <td>${index + 1}</td>
@@ -217,19 +218,27 @@ function printApplicationRoster(courseId) {
       <meta charset="utf-8">
       <title>${escapeHtml(title)} 신청자 명단</title>
       <style>
+        @page { size: A4 portrait; margin: 12mm; }
         body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 24px; color: #111; }
-        h1 { margin: 0 0 6px; font-size: 24px; }
-        p { margin: 0 0 18px; color: #555; }
+        h1 { margin: 0 0 6px; font-size: 22px; }
+        p { margin: 0 0 14px; color: #555; }
         table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-        th, td { border: 1px solid #222; padding: 10px 8px; text-align: center; min-height: 42px; }
+        thead { display: table-header-group; }
+        tr { break-inside: avoid; page-break-inside: avoid; }
+        th, td { border: 1px solid #222; padding: 9px 8px; text-align: center; min-height: 38px; }
+        th { background: #f1f3f5; font-weight: 800; }
         th:nth-child(1), td:nth-child(1) { width: 52px; }
         th:nth-child(2), td:nth-child(2) { width: 36%; text-align: left; }
         th:nth-child(5), td:nth-child(5) { width: 22%; }
-        .signature { height: 46px; }
-        @media print { button { display: none; } body { margin: 12mm; } }
+        .signature { height: 42px; }
+        body.dense h1 { font-size: 20px; }
+        body.dense p { margin-bottom: 10px; }
+        body.dense th, body.dense td { padding: 6px 6px; font-size: 12px; min-height: 30px; }
+        body.dense .signature { height: 32px; }
+        @media print { button { display: none; } body { margin: 0; } }
       </style>
     </head>
-    <body>
+    <body class="${densePrintClass}">
       <h1>${escapeHtml(title)} 신청자 명단</h1>
       <p>${escapeHtml(course?.starts_at ? shortDate(course.starts_at) : "일정 미정")} · 총 ${applications.length}명</p>
       <table>
