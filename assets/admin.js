@@ -47,6 +47,9 @@ const elements = {
   permissionNotice: document.getElementById("permissionNotice"),
   adminContent: document.getElementById("adminContent"),
   refreshButton: document.getElementById("refreshButton"),
+  adminNoticeModal: document.getElementById("adminNoticeModal"),
+  adminNoticeTitle: document.getElementById("adminNoticeTitle"),
+  adminNoticeBody: document.getElementById("adminNoticeBody"),
   toast: document.getElementById("toast"),
 };
 
@@ -90,6 +93,22 @@ function showToast(message) {
   showToast.timer = window.setTimeout(() => elements.toast.classList.remove("show"), 3000);
 }
 
+function openModal(modal) {
+  modal.classList.add("open");
+  const focusTarget = modal.querySelector("button, input, textarea, select");
+  if (focusTarget) focusTarget.focus();
+}
+
+function closeModal(modal) {
+  modal.classList.remove("open");
+}
+
+function openAdminNotice(title, bodyHtml) {
+  elements.adminNoticeTitle.textContent = title;
+  elements.adminNoticeBody.innerHTML = bodyHtml;
+  openModal(elements.adminNoticeModal);
+}
+
 function setLoginBusy(isBusy) {
   const button = elements.adminLoginForm.querySelector("button[type='submit']");
   if (!button) return;
@@ -123,6 +142,14 @@ function courseById(courseId) {
 
 function organizationById(organizationId) {
   return state.organizations.find((organization) => organization.id === organizationId);
+}
+
+function instructorById(instructorId) {
+  return state.instructors.find((instructor) => instructor.id === instructorId);
+}
+
+function venueById(venueId) {
+  return state.venues.find((venue) => venue.id === venueId);
 }
 
 function archiveById(archiveId) {
@@ -448,6 +475,19 @@ async function removeUploadedSiteImage(path) {
   if (error) console.warn("[모두의 인문학] 업로드 롤백 파일 삭제 실패", error);
 }
 
+function siteMediaStoragePathFromUrl(url) {
+  const safeUrl = normalizeSafeUrl(url, URL_RULES.image);
+  if (!safeUrl) return "";
+  try {
+    const parsed = new URL(safeUrl);
+    const prefix = `/storage/v1/object/public/${SITE_MEDIA_BUCKET}/`;
+    if (!parsed.pathname.startsWith(prefix)) return "";
+    return decodeURIComponent(parsed.pathname.slice(prefix.length));
+  } catch {
+    return "";
+  }
+}
+
 async function uploadArchiveFile(file, courseId, baseName) {
   if (!hasSelectedFile(file)) return null;
   const fileRule = ARCHIVE_FILE_TYPES.get(file.type);
@@ -524,6 +564,74 @@ async function removeUploadedAttendanceDocument(path) {
 function statusBadge(status) {
   const className = status === "open" ? "green" : status === "finished" ? "gray" : status === "cancelled" ? "red" : "";
   return `<span class="badge ${className}">${escapeHtml(statusLabels[status] || status)}</span>`;
+}
+
+function managedEntityConfig(kind) {
+  return {
+    organization: {
+      label: "단체",
+      table: "organizations",
+      tab: "organizations",
+      foreignKey: "organization_id",
+      itemById: organizationById,
+      mediaUrlKey: "logo_url",
+    },
+    instructor: {
+      label: "강사",
+      table: "instructors",
+      tab: "instructors",
+      foreignKey: "instructor_id",
+      itemById: instructorById,
+      mediaUrlKey: "photo_url",
+    },
+    venue: {
+      label: "장소",
+      table: "venues",
+      tab: "venues",
+      foreignKey: "venue_id",
+      itemById: venueById,
+      mediaUrlKey: "",
+    },
+  }[kind];
+}
+
+function connectedCoursesForEntity(kind, entityId) {
+  const config = managedEntityConfig(kind);
+  if (!config || !entityId) return [];
+  return state.courses
+    .filter((course) => course[config.foreignKey] === entityId)
+    .slice()
+    .sort((a, b) => {
+      const aTime = a.starts_at ? new Date(a.starts_at).getTime() : Number.MAX_SAFE_INTEGER;
+      const bTime = b.starts_at ? new Date(b.starts_at).getTime() : Number.MAX_SAFE_INTEGER;
+      if (aTime !== bTime) return aTime - bTime;
+      return (a.title || "").localeCompare(b.title || "", "ko");
+    });
+}
+
+function connectedCoursesHtml(courses) {
+  return `
+    <ul class="plain-list" style="margin-top: 12px;">
+      ${courses.map((course) => `
+        <li>
+          <strong>${escapeHtml(course.title || "교육명 없음")}</strong><br>
+          <span class="muted">${escapeHtml(shortDate(course.starts_at))} · ${escapeHtml(statusLabels[effectiveCourseStatus(course)] || effectiveCourseStatus(course) || "상태 없음")}</span>
+        </li>
+      `).join("")}
+    </ul>
+  `;
+}
+
+function showConnectedEntityNotice(kind, item, courses) {
+  const config = managedEntityConfig(kind);
+  openAdminNotice(
+    `${config.label}를 삭제할 수 없습니다`,
+    `
+      <p><strong>${escapeHtml(item.name || config.label)}</strong>에 연결된 교육이 있어 삭제하지 않았습니다.</p>
+      <p class="muted">교육 관리에서 아래 교육의 ${escapeHtml(config.label)} 연결을 먼저 변경한 뒤 다시 삭제해 주세요.</p>
+      ${connectedCoursesHtml(courses)}
+    `
+  );
 }
 
 function getSubmitForm(event) {
@@ -666,6 +774,7 @@ function renderDashboard() {
 
 function renderOrganizationForm(organization = {}) {
   const logoUrl = normalizeSafeUrl(organization.logo_url, URL_RULES.image);
+  const isEditing = Boolean(organization.id);
   return `
     <form id="organizationForm" class="section">
       <input type="hidden" name="organization_id" value="${escapeHtml(organization.id || "")}">
@@ -683,8 +792,9 @@ function renderOrganizationForm(organization = {}) {
       <label style="margin-top: 10px;">연락처<input name="contact_email" value="${escapeHtml(organization.contact_email || "")}" placeholder="이메일, 전화번호, 담당자 연락처 등"></label>
       <label style="margin-top: 10px;"><span><input name="is_active" type="checkbox" ${organization.is_active !== false ? "checked" : ""} style="width:auto;min-height:auto;"> 공개 페이지에 표시</span></label>
       <div class="actions" style="margin-top: 14px;">
-        <button class="btn" type="submit">${organization.id ? "단체 수정" : "단체 추가"}</button>
+        <button class="btn" type="submit">${isEditing ? "단체 수정" : "단체 추가"}</button>
         <button class="btn secondary" type="button" id="newOrganizationButton">새 단체 입력</button>
+        ${isEditing ? `<button class="btn danger" type="button" data-delete-entity="organization" data-entity-id="${escapeHtml(organization.id)}">단체 삭제</button>` : ""}
       </div>
     </form>
   `;
@@ -701,9 +811,9 @@ function renderOrganizations() {
     <h3>참여 단체</h3>
     <div class="table-list">
       ${state.organizations.map((organization) => {
-        const courseCount = state.courses.filter((course) => course.organization_id === organization.id).length;
+        const courseCount = connectedCoursesForEntity("organization", organization.id).length;
         const logoUrl = normalizeSafeUrl(organization.logo_url, URL_RULES.image);
-        return `<div class="table-row">${logoUrl ? `<img class="admin-thumb" src="${escapeHtml(logoUrl)}" alt="${escapeHtml(organization.name)} 로고">` : ""}<div class="row-top"><strong>${escapeHtml(organization.name)}</strong><span class="badge ${organization.is_active !== false ? "green" : "gray"}">${organization.is_active !== false ? "공개" : "숨김"}</span></div><span class="muted">교육 ${courseCount}개 · ${escapeHtml(organization.slug)}</span><p>${escapeHtml(organization.description || "소개 없음")}</p></div>`;
+        return `<div class="table-row">${logoUrl ? `<img class="admin-thumb" src="${escapeHtml(logoUrl)}" alt="${escapeHtml(organization.name)} 로고">` : ""}<div class="row-top"><strong>${escapeHtml(organization.name)}</strong><span class="badge ${organization.is_active !== false ? "green" : "gray"}">${organization.is_active !== false ? "공개" : "숨김"}</span></div><span class="muted">교육 ${courseCount}개 · ${escapeHtml(organization.slug)}</span><p>${escapeHtml(organization.description || "소개 없음")}</p><div class="actions"><button class="btn small danger" type="button" data-delete-entity="organization" data-entity-id="${escapeHtml(organization.id)}">삭제</button></div></div>`;
       }).join("") || `<div class="empty">등록된 단체가 없습니다.</div>`}
     </div>
   `;
@@ -711,6 +821,7 @@ function renderOrganizations() {
 
 function renderInstructorForm(instructor = {}) {
   const photoUrl = normalizeSafeUrl(instructor.photo_url, URL_RULES.image);
+  const isEditing = Boolean(instructor.id);
   return `
     <form id="instructorForm" class="section">
       <input type="hidden" name="instructor_id" value="${escapeHtml(instructor.id || "")}">
@@ -725,8 +836,9 @@ function renderInstructorForm(instructor = {}) {
       <label style="margin-top: 10px;">프로필 사진 URL<input name="photo_url" value="${escapeHtml(instructor.photo_url || "")}" placeholder="https://"></label>
       <label style="margin-top: 10px;"><span><input name="is_active" type="checkbox" ${instructor.is_active !== false ? "checked" : ""} style="width:auto;min-height:auto;"> 공개 페이지에서 사용</span></label>
       <div class="actions" style="margin-top: 14px;">
-        <button class="btn" type="submit">${instructor.id ? "강사 수정" : "강사 추가"}</button>
+        <button class="btn" type="submit">${isEditing ? "강사 수정" : "강사 추가"}</button>
         <button class="btn secondary" type="button" id="newInstructorButton">새 강사 입력</button>
+        ${isEditing ? `<button class="btn danger" type="button" data-delete-entity="instructor" data-entity-id="${escapeHtml(instructor.id)}">강사 삭제</button>` : ""}
       </div>
     </form>
   `;
@@ -744,13 +856,15 @@ function renderInstructors() {
     <div class="table-list">
       ${state.instructors.map((instructor) => {
         const photoUrl = normalizeSafeUrl(instructor.photo_url, URL_RULES.image);
-        return `<div class="table-row">${photoUrl ? `<img class="admin-thumb round" src="${escapeHtml(photoUrl)}" alt="${escapeHtml(instructor.name)} 사진">` : ""}<div class="row-top"><strong>${escapeHtml(instructor.name)}</strong><span class="badge ${instructor.is_active !== false ? "green" : "gray"}">${instructor.is_active !== false ? "사용" : "숨김"}</span></div><span class="muted">${escapeHtml(instructor.title || "직함 없음")}</span><p>${escapeHtml(instructor.bio || "프로필 소개 없음")}</p></div>`;
+        const courseCount = connectedCoursesForEntity("instructor", instructor.id).length;
+        return `<div class="table-row">${photoUrl ? `<img class="admin-thumb round" src="${escapeHtml(photoUrl)}" alt="${escapeHtml(instructor.name)} 사진">` : ""}<div class="row-top"><strong>${escapeHtml(instructor.name)}</strong><span class="badge ${instructor.is_active !== false ? "green" : "gray"}">${instructor.is_active !== false ? "사용" : "숨김"}</span></div><span class="muted">연결 교육 ${courseCount}개 · ${escapeHtml(instructor.title || "직함 없음")}</span><p>${escapeHtml(instructor.bio || "프로필 소개 없음")}</p><div class="actions"><button class="btn small danger" type="button" data-delete-entity="instructor" data-entity-id="${escapeHtml(instructor.id)}">삭제</button></div></div>`;
       }).join("") || `<div class="empty">등록된 강사가 없습니다.</div>`}
     </div>
   `;
 }
 
 function renderVenueForm(venue = {}) {
+  const isEditing = Boolean(venue.id);
   return `
     <form id="venueForm" class="section">
       <input type="hidden" name="venue_id" value="${escapeHtml(venue.id || "")}">
@@ -765,8 +879,9 @@ function renderVenueForm(venue = {}) {
       </div>
       <label style="margin-top: 10px;"><span><input name="is_online" type="checkbox" ${venue.is_online ? "checked" : ""} style="width:auto;min-height:auto;"> 온라인 장소</span></label>
       <div class="actions" style="margin-top: 14px;">
-        <button class="btn" type="submit">${venue.id ? "장소 수정" : "장소 추가"}</button>
+        <button class="btn" type="submit">${isEditing ? "장소 수정" : "장소 추가"}</button>
         <button class="btn secondary" type="button" id="newVenueButton">새 장소 입력</button>
+        ${isEditing ? `<button class="btn danger" type="button" data-delete-entity="venue" data-entity-id="${escapeHtml(venue.id)}">장소 삭제</button>` : ""}
       </div>
     </form>
   `;
@@ -785,7 +900,8 @@ function renderVenues() {
       ${state.venues.map((venue) => {
         const kakaoUrl = normalizeSafeUrl(venue.kakao_map_url, URL_RULES.kakaoMap);
         const naverUrl = normalizeSafeUrl(venue.naver_place_url, URL_RULES.naverPlace);
-        return `<div class="table-row"><div class="row-top"><strong>${escapeHtml(venue.name)}</strong><span class="badge ${venue.is_online ? "green" : "gray"}">${venue.is_online ? "온라인" : "오프라인"}</span></div><span class="muted">${escapeHtml(venue.address || "주소 없음")} ${venue.detail ? `· ${escapeHtml(venue.detail)}` : ""}</span><div class="actions">${kakaoUrl ? `<a class="btn small secondary" href="${escapeHtml(kakaoUrl)}" target="_blank" rel="noreferrer">카카오맵</a>` : ""}${naverUrl ? `<a class="btn small secondary" href="${escapeHtml(naverUrl)}" target="_blank" rel="noreferrer">네이버플레이스</a>` : ""}</div></div>`;
+        const courseCount = connectedCoursesForEntity("venue", venue.id).length;
+        return `<div class="table-row"><div class="row-top"><strong>${escapeHtml(venue.name)}</strong><span class="badge ${venue.is_online ? "green" : "gray"}">${venue.is_online ? "온라인" : "오프라인"}</span></div><span class="muted">연결 교육 ${courseCount}개 · ${escapeHtml(venue.address || "주소 없음")} ${venue.detail ? `· ${escapeHtml(venue.detail)}` : ""}</span><div class="actions">${kakaoUrl ? `<a class="btn small secondary" href="${escapeHtml(kakaoUrl)}" target="_blank" rel="noreferrer">카카오맵</a>` : ""}${naverUrl ? `<a class="btn small secondary" href="${escapeHtml(naverUrl)}" target="_blank" rel="noreferrer">네이버플레이스</a>` : ""}<button class="btn small danger" type="button" data-delete-entity="venue" data-entity-id="${escapeHtml(venue.id)}">삭제</button></div></div>`;
       }).join("") || `<div class="empty">등록된 장소가 없습니다.</div>`}
     </div>
   `;
@@ -1228,6 +1344,33 @@ async function saveVenue(event) {
   render();
 }
 
+async function deleteManagedEntity(kind, entityId) {
+  const config = managedEntityConfig(kind);
+  const item = config?.itemById(entityId);
+  if (!config || !item) {
+    showToast("삭제할 항목을 찾지 못했습니다.");
+    return false;
+  }
+
+  const connectedCourses = connectedCoursesForEntity(kind, entityId);
+  if (connectedCourses.length) {
+    showConnectedEntityNotice(kind, item, connectedCourses);
+    return false;
+  }
+
+  const { error } = await supabase.from(config.table).delete().eq("id", entityId);
+  if (error) throw error;
+
+  const mediaPath = config.mediaUrlKey ? siteMediaStoragePathFromUrl(item[config.mediaUrlKey]) : "";
+  if (mediaPath) await removeUploadedSiteImage(mediaPath);
+
+  showToast(`${config.label}를 삭제했습니다.`);
+  await reload();
+  state.tab = config.tab;
+  render();
+  return true;
+}
+
 async function saveCourse(event) {
   event.preventDefault();
   const form = getSubmitForm(event);
@@ -1599,6 +1742,12 @@ function bindEvents() {
     const attendanceDocumentButton = event.target.closest("[data-open-attendance-document]");
     const editArchiveButton = event.target.closest("[data-edit-archive]");
     const deleteArchiveButton = event.target.closest("[data-delete-archive]");
+    const deleteEntityButton = event.target.closest("[data-delete-entity]");
+    const closeAdminNoticeButton = event.target.closest("[data-close-admin-notice]");
+    if (closeAdminNoticeButton || event.target === elements.adminNoticeModal) {
+      closeModal(elements.adminNoticeModal);
+      return;
+    }
     if (tabButton) {
       state.tab = tabButton.dataset.adminTab;
       render();
@@ -1678,6 +1827,44 @@ function bindEvents() {
       }
       return;
     }
+    if (deleteEntityButton) {
+      const defaultDeleteLabel = deleteEntityButton.dataset.defaultLabel || deleteEntityButton.textContent;
+      deleteEntityButton.dataset.defaultLabel = defaultDeleteLabel;
+      const config = managedEntityConfig(deleteEntityButton.dataset.deleteEntity);
+      const item = config?.itemById(deleteEntityButton.dataset.entityId);
+      const connectedCourses = connectedCoursesForEntity(deleteEntityButton.dataset.deleteEntity, deleteEntityButton.dataset.entityId);
+      if (config && item && connectedCourses.length) {
+        showConnectedEntityNotice(deleteEntityButton.dataset.deleteEntity, item, connectedCourses);
+        return;
+      }
+
+      if (deleteEntityButton.dataset.confirmDelete !== "true") {
+        deleteEntityButton.dataset.confirmDelete = "true";
+        deleteEntityButton.textContent = "한 번 더 누르면 삭제";
+        window.setTimeout(() => {
+          if (deleteEntityButton.dataset.confirmDelete === "true") {
+            deleteEntityButton.dataset.confirmDelete = "false";
+            deleteEntityButton.textContent = defaultDeleteLabel;
+          }
+        }, 3000);
+        return;
+      }
+      try {
+        deleteEntityButton.disabled = true;
+        deleteEntityButton.textContent = "삭제 중...";
+        const deleted = await deleteManagedEntity(deleteEntityButton.dataset.deleteEntity, deleteEntityButton.dataset.entityId);
+        if (!deleted) {
+          deleteEntityButton.disabled = false;
+          deleteEntityButton.dataset.confirmDelete = "false";
+          deleteEntityButton.textContent = defaultDeleteLabel;
+        }
+      } catch (error) {
+        showToast(`삭제 실패: ${error.message}`);
+        deleteEntityButton.disabled = false;
+        deleteEntityButton.textContent = defaultDeleteLabel;
+      }
+      return;
+    }
     if (event.target.id === "newCourseButton") {
       const picker = document.getElementById("coursePicker");
       if (picker) picker.value = "";
@@ -1725,6 +1912,12 @@ function bindEvents() {
     if (event.target.matches("#courseForm input[name='starts_at']")) {
       const endInput = document.querySelector("#courseForm input[name='ends_at']");
       if (endInput) endInput.min = event.target.value || currentMinuteLocalDateTimeValue();
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && elements.adminNoticeModal.classList.contains("open")) {
+      closeModal(elements.adminNoticeModal);
     }
   });
 

@@ -64,6 +64,19 @@
     </div>
   </footer>
 
+  <div class="modal" id="adminNoticeModal" role="dialog" aria-modal="true" aria-labelledby="adminNoticeTitle">
+    <article class="modal-card" style="max-width: 640px;">
+      <div class="modal-header">
+        <div><span class="eyebrow">관리 안내</span><h2 id="adminNoticeTitle">안내</h2></div>
+        <button class="icon-btn" type="button" data-close-admin-notice aria-label="안내 닫기">×</button>
+      </div>
+      <div id="adminNoticeBody" style="margin-top: 14px;"></div>
+      <div class="actions" style="margin-top: 18px;">
+        <button class="btn secondary" type="button" data-close-admin-notice>확인</button>
+      </div>
+    </article>
+  </div>
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script type="module" src="./assets/admin.js"></script>
 </body>
