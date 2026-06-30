@@ -37,6 +37,7 @@ const state = {
   },
   activePage: "courses",
   activeOrganizationSlug: "",
+  activeInstructorId: "",
   activeView: "cards",
   activeCourseId: null,
   user: null,
@@ -51,8 +52,8 @@ const elements = {
   viewToggle: document.querySelector(".toggle"),
   orgCount: document.getElementById("orgCount"),
   courseCount: document.getElementById("courseCount"),
+  instructorCount: document.getElementById("instructorCount"),
   reviewCount: document.getElementById("reviewCount"),
-  archiveCount: document.getElementById("archiveCount"),
   searchInput: document.getElementById("searchInput"),
   orgFilter: document.getElementById("orgFilter"),
   instructorFilter: document.getElementById("instructorFilter"),
@@ -297,6 +298,13 @@ function publicOrganizations() {
   return state.organizations.filter((organization) => organization.is_active !== false);
 }
 
+function publicInstructors() {
+  return state.instructors
+    .filter((instructor) => instructor.is_active !== false && instructor.name)
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name, "ko"));
+}
+
 function publicArchiveItems() {
   return state.archives.filter((item) => item.is_public !== false && ["photo", "video", "file", "link"].includes(item.type) && normalizeSafeUrl(item.url, URL_RULES.archive));
 }
@@ -423,13 +431,22 @@ function coursesForOrganization(organizationId) {
   return state.composedCourses.filter((course) => course.organization_id === organizationId);
 }
 
+function coursesForInstructor(instructorId) {
+  return state.composedCourses
+    .filter((course) => course.instructor_id === instructorId)
+    .slice()
+    .sort((a, b) => new Date(a.starts_at || 0) - new Date(b.starts_at || 0));
+}
+
 function courseById(courseId) {
   return state.composedCourses.find((course) => course.id === courseId);
 }
 
 function routeHash(page, slug = "") {
   if (page === "organization" && slug) return `#organization/${encodeURIComponent(slug)}`;
+  if (page === "instructor" && slug) return `#instructor/${encodeURIComponent(slug)}`;
   if (page === "organizations") return "#organizations";
+  if (page === "instructors") return "#instructors";
   if (page === "reviews") return "#reviews";
   if (page === "archive") return "#archive";
   return "#courses";
@@ -440,15 +457,24 @@ function applyRouteFromHash() {
   if (value.startsWith("organization/")) {
     state.activePage = "organization";
     state.activeOrganizationSlug = value.replace("organization/", "");
+    state.activeInstructorId = "";
     return;
   }
-  if (["organizations", "reviews", "archive"].includes(value)) {
+  if (value.startsWith("instructor/")) {
+    state.activePage = "instructor";
+    state.activeInstructorId = value.replace("instructor/", "");
+    state.activeOrganizationSlug = "";
+    return;
+  }
+  if (["organizations", "instructors", "reviews", "archive"].includes(value)) {
     state.activePage = value;
     state.activeOrganizationSlug = "";
+    state.activeInstructorId = "";
     return;
   }
   state.activePage = "courses";
   state.activeOrganizationSlug = "";
+  state.activeInstructorId = "";
 }
 
 function navigate(page, slug = "") {
@@ -471,7 +497,9 @@ function setPageHeader({ title, description, showCourseTools = false, summary = 
   elements.resultSummary.textContent = summary;
   document.querySelectorAll(".page-tabs [data-route]").forEach((item) => {
     const route = item.dataset.route;
-    const active = state.activePage === route || (state.activePage === "organization" && route === "organizations");
+    const active = state.activePage === route
+      || (state.activePage === "organization" && route === "organizations")
+      || (state.activePage === "instructor" && route === "instructors");
     item.classList.toggle("active", active);
   });
 }
@@ -711,10 +739,10 @@ function filteredCourses() {
 }
 
 function renderStats() {
-  elements.orgCount.textContent = publicOrganizations().length.toLocaleString("ko-KR");
-  elements.courseCount.textContent = state.courses.length.toLocaleString("ko-KR");
-  elements.reviewCount.textContent = state.reviews.length.toLocaleString("ko-KR");
-  elements.archiveCount.textContent = publicArchiveItems().length.toLocaleString("ko-KR");
+  if (elements.courseCount) elements.courseCount.textContent = state.courses.length.toLocaleString("ko-KR");
+  if (elements.orgCount) elements.orgCount.textContent = publicOrganizations().length.toLocaleString("ko-KR");
+  if (elements.instructorCount) elements.instructorCount.textContent = publicInstructors().length.toLocaleString("ko-KR");
+  if (elements.reviewCount) elements.reviewCount.textContent = state.reviews.length.toLocaleString("ko-KR");
 }
 
 function courseCardHtml(course) {
@@ -762,6 +790,30 @@ function organizationCardHtml(organization) {
           <div class="actions">
             ${websiteUrl ? `<a class="btn small secondary" href="${escapeHtml(websiteUrl)}" target="_blank" rel="noreferrer">홈페이지</a>` : ""}
             <button class="btn small" type="button" data-open-organization="${escapeHtml(organization.slug)}">자세히 보기</button>
+          </div>
+        </div>
+      </article>
+    `;
+}
+
+function instructorCardHtml(instructor) {
+  const courses = coursesForInstructor(instructor.id);
+  const photoUrl = normalizeSafeUrl(instructor.photo_url, URL_RULES.image);
+  const profileUrl = normalizeSafeUrl(instructor.profile_url, URL_RULES.external);
+  return `
+      <article class="organization-card">
+        ${photoUrl ? `<img class="org-logo" src="${escapeHtml(photoUrl)}" alt="${escapeHtml(instructor.name)} 사진">` : ""}
+        <div>
+          <h3>${escapeHtml(instructor.name)}</h3>
+          ${instructor.title ? `<p>${escapeHtml(instructor.title)}</p>` : ""}
+          ${instructor.bio ? `<p>${escapeHtml(instructor.bio)}</p>` : ""}
+        </div>
+        <div class="footer">
+          <span class="review-note">교육 ${courses.length}개</span>
+          <div class="actions">
+            <button class="btn small secondary" type="button" data-open-instructor="${escapeHtml(instructor.id)}">프로필</button>
+            ${profileUrl ? `<a class="btn small secondary" href="${escapeHtml(profileUrl)}" target="_blank" rel="noreferrer">홈페이지/SNS</a>` : ""}
+            <button class="btn small" type="button" data-open-instructor-courses="${escapeHtml(instructor.id)}">교육 보기</button>
           </div>
         </div>
       </article>
@@ -890,6 +942,58 @@ function renderOrganizationPage() {
   `;
 }
 
+function renderInstructorsPage() {
+  const instructors = publicInstructors();
+  setPageHeader({
+    title: "강사",
+    description: "강사를 선택하면 해당 강사의 교육을 모아볼 수 있습니다.",
+    summary: `${instructors.length.toLocaleString("ko-KR")}명의 강사가 함께합니다.`,
+  });
+  elements.courseResults.className = "organization-grid";
+  elements.courseResults.innerHTML = instructors.map(instructorCardHtml).join("") || `<div class="empty">등록된 강사가 없습니다.</div>`;
+}
+
+function renderInstructorPage() {
+  const instructor = publicInstructors().find((item) => item.id === state.activeInstructorId);
+  if (!instructor) {
+    setPageHeader({
+      title: "강사",
+      description: "요청한 강사 정보를 찾을 수 없습니다.",
+      summary: "",
+    });
+    elements.courseResults.className = "content-stack";
+    elements.courseResults.innerHTML = `<div class="empty">강사 정보를 찾을 수 없습니다.</div>`;
+    return;
+  }
+
+  const courses = coursesForInstructor(instructor.id);
+  const photoUrl = normalizeSafeUrl(instructor.photo_url, URL_RULES.image);
+  const profileUrl = normalizeSafeUrl(instructor.profile_url, URL_RULES.external);
+  setPageHeader({
+    title: instructor.name,
+    description: "강사 소개와 이 강사가 진행하는 교육을 함께 볼 수 있습니다.",
+    summary: `${courses.length.toLocaleString("ko-KR")}개 교육이 있습니다.`,
+  });
+  elements.courseResults.className = "content-stack";
+  elements.courseResults.innerHTML = `
+    <article class="organization-detail section">
+      ${photoUrl ? `<img class="profile-photo" src="${escapeHtml(photoUrl)}" alt="${escapeHtml(instructor.name)} 사진">` : `<div class="profile-photo placeholder" aria-hidden="true"></div>`}
+      <div>
+        <h3>${escapeHtml(instructor.name)}</h3>
+        ${instructor.title ? `<p class="muted">${escapeHtml(instructor.title)}</p>` : ""}
+        ${instructor.bio ? `<p>${escapeHtml(instructor.bio)}</p>` : ""}
+        <div class="actions">
+          <button class="btn small secondary" type="button" data-route="instructors">강사 목록</button>
+          ${profileUrl ? `<a class="btn small" href="${escapeHtml(profileUrl)}" target="_blank" rel="noreferrer">홈페이지/SNS</a>` : ""}
+        </div>
+      </div>
+    </article>
+    <div class="course-grid">
+      ${courses.length ? courses.map(courseCardHtml).join("") : `<div class="empty">이 강사의 등록된 교육이 없습니다.</div>`}
+    </div>
+  `;
+}
+
 function renderReviewsPage() {
   setPageHeader({
     title: "후기 모아보기",
@@ -923,15 +1027,17 @@ function openInstructorProfile(instructorId) {
   const instructor = state.instructors.find((item) => item.id === instructorId);
   if (!instructor) return;
   const photoUrl = normalizeSafeUrl(instructor.photo_url, URL_RULES.image);
+  const profileUrl = normalizeSafeUrl(instructor.profile_url, URL_RULES.external);
   elements.profileEyebrow.textContent = "강사 프로필";
   elements.profileTitle.textContent = instructor.name;
   elements.profileBody.innerHTML = `
     <div class="profile-card">
-      ${photoUrl ? `<img class="profile-photo" src="${escapeHtml(photoUrl)}" alt="${escapeHtml(instructor.name)} 사진">` : `<div class="profile-photo placeholder">人</div>`}
+      ${photoUrl ? `<img class="profile-photo" src="${escapeHtml(photoUrl)}" alt="${escapeHtml(instructor.name)} 사진">` : `<div class="profile-photo placeholder" aria-hidden="true"></div>`}
       <div>
         <h3>${escapeHtml(instructor.name)}</h3>
         <p class="muted">${escapeHtml(instructor.title || "강사")}</p>
-        <p>${escapeHtml(instructor.bio || "프로필 소개가 곧 업데이트됩니다.")}</p>
+        ${instructor.bio ? `<p>${escapeHtml(instructor.bio)}</p>` : ""}
+        ${profileUrl ? `<div class="actions"><a class="btn small secondary" href="${escapeHtml(profileUrl)}" target="_blank" rel="noreferrer">홈페이지/SNS</a></div>` : ""}
       </div>
     </div>
   `;
@@ -1063,6 +1169,8 @@ function render() {
   renderStats();
   if (state.activePage === "organizations") renderOrganizationsPage();
   else if (state.activePage === "organization") renderOrganizationPage();
+  else if (state.activePage === "instructors") renderInstructorsPage();
+  else if (state.activePage === "instructor") renderInstructorPage();
   else if (state.activePage === "reviews") renderReviewsPage();
   else if (state.activePage === "archive") renderArchivePage();
   else renderCoursesPage();
@@ -1208,6 +1316,7 @@ function openCourseDetail(courseId) {
   const orgSlug = course.organization?.slug || "";
   const orgName = course.organization?.name || "";
   const orgWebsiteUrl = normalizeSafeUrl(course.organization?.website_url, URL_RULES.external);
+  const instructorProfileUrl = normalizeSafeUrl(course.instructor?.profile_url, URL_RULES.external);
   const kakaoUrl = kakaoMapUrl(course.venue);
   const naverUrl = naverPlaceUrl(course.venue);
   const applicationUrl = normalizeSafeUrl(course.application_url, URL_RULES.external);
@@ -1240,9 +1349,10 @@ function openCourseDetail(courseId) {
       <aside class="section">
         <h3>강사</h3>
         <p><strong>${course.instructor?.id ? `<button class="text-link" type="button" data-open-instructor="${course.instructor.id}">${escapeHtml(course.instructor.name)}</button>` : escapeHtml(course.instructor?.name || "강사 미정")}</strong> ${escapeHtml(course.instructor?.title || "")}</p>
-        <p>${escapeHtml(course.instructor?.bio || "강사 소개가 곧 업데이트됩니다.")}</p>
+        ${course.instructor?.bio ? `<p>${escapeHtml(course.instructor.bio)}</p>` : ""}
         <div class="actions" style="margin-top: 10px;">
           ${course.instructor?.id ? `<button class="btn small secondary" type="button" data-open-instructor="${course.instructor.id}">강사 프로필</button>` : ""}
+          ${instructorProfileUrl ? `<a class="btn small secondary" href="${escapeHtml(instructorProfileUrl)}" target="_blank" rel="noreferrer">홈페이지/SNS</a>` : ""}
         </div>
       </aside>
       <div class="section">
@@ -1615,6 +1725,7 @@ function bindEvents() {
     const openButton = event.target.closest("[data-open-course]");
     const organizationButton = event.target.closest("[data-open-organization]");
     const instructorButton = event.target.closest("[data-open-instructor]");
+    const instructorCoursesButton = event.target.closest("[data-open-instructor-courses]");
     const calendarButton = event.target.closest("[data-add-calendar]");
     const closeButton = event.target.closest("[data-close-modal]");
     const loginForReview = event.target.closest("[data-login-for-review]");
@@ -1634,6 +1745,10 @@ function bindEvents() {
     }
     if (instructorButton) {
       openInstructorProfile(instructorButton.dataset.openInstructor);
+      return;
+    }
+    if (instructorCoursesButton) {
+      navigate("instructor", instructorCoursesButton.dataset.openInstructorCourses);
       return;
     }
     if (calendarButton) {

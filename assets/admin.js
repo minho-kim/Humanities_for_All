@@ -85,6 +85,7 @@ const rosterNameSorter = new Intl.Collator("ko-KR", {
   numeric: true,
   sensitivity: "base",
 });
+const FINISHED_COURSE_DELETE_EXCEPTIONS = new Set(["테스트교육", "테스트교육2"]);
 
 function showToast(message) {
   elements.toast.textContent = message;
@@ -555,10 +556,13 @@ async function uploadAttendanceDocument(file, courseId, baseName) {
   return { path, originalName, contentType: file.type, fileSize: file.size };
 }
 
-async function removeUploadedAttendanceDocument(path) {
+async function removeUploadedAttendanceDocument(path, { strict = false } = {}) {
   if (!path) return;
   const { error } = await supabase.storage.from(ATTENDANCE_DOCUMENT_BUCKET).remove([path]);
-  if (error) console.warn("[모두의 인문학] 참석자 명단 스캔본 업로드 롤백 파일 삭제 실패", error);
+  if (error) {
+    console.warn("[모두의 인문학] 참석자 명단 스캔본 파일 삭제 실패", error);
+    if (strict) throw error;
+  }
 }
 
 function statusBadge(status) {
@@ -632,6 +636,47 @@ function showConnectedEntityNotice(kind, item, courses) {
       ${connectedCoursesHtml(courses)}
     `
   );
+}
+
+function isFinishedCourseDeleteException(course) {
+  return FINISHED_COURSE_DELETE_EXCEPTIONS.has(String(course?.title || "").trim());
+}
+
+function canDeleteCourse(course) {
+  if (!course?.id) return false;
+  return effectiveCourseStatus(course) !== "finished" || isFinishedCourseDeleteException(course);
+}
+
+function courseDeleteBlockNotice(course) {
+  openAdminNotice(
+    "완료된 교육은 삭제할 수 없습니다",
+    `
+      <p><strong>${escapeHtml(course?.title || "교육")}</strong>은 이미 완료된 교육이라 삭제하지 않았습니다.</p>
+      <p class="muted">완료 교육은 후기, 신청, 아카이브 기록과 연결될 수 있어 보존합니다. 테스트 정리를 위해 <strong>테스트교육</strong>, <strong>테스트교육2</strong>만 예외로 삭제할 수 있습니다.</p>
+    `
+  );
+}
+
+function courseRelatedCounts(courseId) {
+  return {
+    sessions: state.sessions.filter((session) => session.course_id === courseId).length,
+    archives: state.archives.filter((archive) => archive.course_id === courseId).length,
+    applications: state.applications.filter((application) => application.course_id === courseId).length,
+    attendanceDocuments: state.attendanceDocuments.filter((document) => document.course_id === courseId).length,
+    reviews: state.reviews.filter((review) => review.course_id === courseId).length,
+  };
+}
+
+function courseDeleteSummary(courseId) {
+  const counts = courseRelatedCounts(courseId);
+  const parts = [
+    counts.sessions ? `회차 ${counts.sessions}개` : "",
+    counts.archives ? `아카이브 ${counts.archives}개` : "",
+    counts.applications ? `신청 ${counts.applications}건` : "",
+    counts.attendanceDocuments ? `참석자 스캔본 ${counts.attendanceDocuments}개` : "",
+    counts.reviews ? `후기 ${counts.reviews}개` : "",
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : "연결 데이터 없음";
 }
 
 function getSubmitForm(event) {
@@ -821,6 +866,7 @@ function renderOrganizations() {
 
 function renderInstructorForm(instructor = {}) {
   const photoUrl = normalizeSafeUrl(instructor.photo_url, URL_RULES.image);
+  const profileUrl = normalizeSafeUrl(instructor.profile_url, URL_RULES.external);
   const isEditing = Boolean(instructor.id);
   return `
     <form id="instructorForm" class="section">
@@ -834,6 +880,8 @@ function renderInstructorForm(instructor = {}) {
       <label style="margin-top: 10px;">프로필 사진 업로드<input name="photo_file" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>
       <p class="media-upload-note">JPG, PNG, WEBP, GIF 형식 · 5MB 이하. 파일을 선택하면 저장할 때 Supabase Storage에 업로드됩니다.</p>
       <label style="margin-top: 10px;">프로필 사진 URL<input name="photo_url" value="${escapeHtml(instructor.photo_url || "")}" placeholder="https://"></label>
+      <label style="margin-top: 10px;">홈페이지/SNS URL<input name="profile_url" value="${escapeHtml(instructor.profile_url || "")}" placeholder="https://"></label>
+      ${profileUrl ? `<p class="muted"><a href="${escapeHtml(profileUrl)}" target="_blank" rel="noreferrer">현재 홈페이지/SNS 열기</a></p>` : ""}
       <label style="margin-top: 10px;"><span><input name="is_active" type="checkbox" ${instructor.is_active !== false ? "checked" : ""} style="width:auto;min-height:auto;"> 공개 페이지에서 사용</span></label>
       <div class="actions" style="margin-top: 14px;">
         <button class="btn" type="submit">${isEditing ? "강사 수정" : "강사 추가"}</button>
@@ -856,8 +904,9 @@ function renderInstructors() {
     <div class="table-list">
       ${state.instructors.map((instructor) => {
         const photoUrl = normalizeSafeUrl(instructor.photo_url, URL_RULES.image);
+        const profileUrl = normalizeSafeUrl(instructor.profile_url, URL_RULES.external);
         const courseCount = connectedCoursesForEntity("instructor", instructor.id).length;
-        return `<div class="table-row">${photoUrl ? `<img class="admin-thumb round" src="${escapeHtml(photoUrl)}" alt="${escapeHtml(instructor.name)} 사진">` : ""}<div class="row-top"><strong>${escapeHtml(instructor.name)}</strong><span class="badge ${instructor.is_active !== false ? "green" : "gray"}">${instructor.is_active !== false ? "사용" : "숨김"}</span></div><span class="muted">연결 교육 ${courseCount}개 · ${escapeHtml(instructor.title || "직함 없음")}</span><p>${escapeHtml(instructor.bio || "프로필 소개 없음")}</p><div class="actions"><button class="btn small danger" type="button" data-delete-entity="instructor" data-entity-id="${escapeHtml(instructor.id)}">삭제</button></div></div>`;
+        return `<div class="table-row">${photoUrl ? `<img class="admin-thumb round" src="${escapeHtml(photoUrl)}" alt="${escapeHtml(instructor.name)} 사진">` : ""}<div class="row-top"><strong>${escapeHtml(instructor.name)}</strong><span class="badge ${instructor.is_active !== false ? "green" : "gray"}">${instructor.is_active !== false ? "사용" : "숨김"}</span></div><span class="muted">연결 교육 ${courseCount}개 · ${escapeHtml(instructor.title || "직함 없음")}</span>${instructor.bio ? `<p>${escapeHtml(instructor.bio)}</p>` : ""}<div class="actions">${profileUrl ? `<a class="btn small secondary" href="${escapeHtml(profileUrl)}" target="_blank" rel="noreferrer">홈페이지/SNS</a>` : ""}<button class="btn small danger" type="button" data-delete-entity="instructor" data-entity-id="${escapeHtml(instructor.id)}">삭제</button></div></div>`;
       }).join("") || `<div class="empty">등록된 강사가 없습니다.</div>`}
     </div>
   `;
@@ -908,6 +957,8 @@ function renderVenues() {
 }
 
 function renderCourseForm(course = {}) {
+  const isEditing = Boolean(course.id);
+  const isDeleteAllowed = canDeleteCourse(course);
   const firstSession = state.sessions.find((session) => session.course_id === course.id) || {};
   const startValue = localDateTimeValue(course.starts_at || firstSession.starts_at);
   const endValue = localDateTimeValue(course.ends_at || firstSession.ends_at);
@@ -942,9 +993,13 @@ function renderCourseForm(course = {}) {
       <p class="media-upload-note">PDF 15MB 이하. 저장하면 해당 교육의 공개 자료로 함께 등록됩니다.</p>
       <label style="margin-top: 10px;"><span><input name="published" type="checkbox" ${course.published !== false ? "checked" : ""} style="width:auto;min-height:auto;"> 공개</span></label>
       <div class="actions" style="margin-top: 14px;">
-        <button class="btn" type="submit">${course.id ? "교육 수정" : "교육 추가"}</button>
+        <button class="btn" type="submit">${isEditing ? "교육 수정" : "교육 추가"}</button>
         <button class="btn secondary" type="button" id="newCourseButton">새 교육 입력</button>
+        ${isEditing && isDeleteAllowed ? `<button class="btn danger" type="button" data-delete-course="${escapeHtml(course.id)}">교육 삭제</button>` : ""}
+        ${isEditing && !isDeleteAllowed ? `<button class="btn danger" type="button" disabled>완료 교육 삭제 불가</button>` : ""}
       </div>
+      ${isEditing && !isDeleteAllowed ? `<p class="muted" style="margin-top: 8px;">이미 완료된 교육은 삭제할 수 없습니다.</p>` : ""}
+      ${isEditing && isDeleteAllowed ? `<p class="muted" style="margin-top: 8px;">삭제하면 ${escapeHtml(courseDeleteSummary(course.id))}도 함께 정리됩니다.</p>` : ""}
     </form>
   `;
 }
@@ -959,7 +1014,10 @@ function renderCourses() {
     <div style="margin-top: 14px;">${renderCourseForm(selectedCourse)}</div>
     <h3>최근 교육</h3>
     <div class="table-list">
-      ${state.courses.slice(0, 12).map((course) => `<div class="table-row"><div class="row-top"><strong>${escapeHtml(course.title)}</strong>${statusBadge(effectiveCourseStatus(course))}</div><span class="muted">${escapeHtml(course.topic)} · ${escapeHtml(shortDate(course.starts_at))}</span></div>`).join("")}
+      ${state.courses.slice(0, 12).map((course) => {
+        const deleteAllowed = canDeleteCourse(course);
+        return `<div class="table-row"><div class="row-top"><strong>${escapeHtml(course.title)}</strong>${statusBadge(effectiveCourseStatus(course))}</div><span class="muted">${escapeHtml(course.topic)} · ${escapeHtml(shortDate(course.starts_at))} · ${escapeHtml(courseDeleteSummary(course.id))}</span><div class="actions">${deleteAllowed ? `<button class="btn small danger" type="button" data-delete-course="${escapeHtml(course.id)}">삭제</button>` : `<button class="btn small danger" type="button" disabled>완료 교육 삭제 불가</button>`}</div></div>`;
+      }).join("")}
     </div>
   `;
 }
@@ -1279,6 +1337,7 @@ async function saveInstructor(event) {
     title: String(formData.get("title") || "").trim() || null,
     bio: String(formData.get("bio") || "").trim() || null,
     photo_url: requireSafeUrl(formData.get("photo_url"), "프로필 사진 URL", URL_RULES.image),
+    profile_url: requireSafeUrl(formData.get("profile_url"), "홈페이지/SNS URL", URL_RULES.external),
     is_active: formData.get("is_active") === "on",
   };
 
@@ -1444,6 +1503,60 @@ async function saveCourse(event) {
   await reload();
   state.tab = "courses";
   render();
+}
+
+async function deleteRowsByColumn(table, column, value) {
+  const { error } = await supabase.from(table).delete().eq(column, value);
+  if (error) throw error;
+}
+
+async function deleteCourse(courseId) {
+  const course = courseById(courseId);
+  if (!course) {
+    showToast("삭제할 교육을 찾지 못했습니다.");
+    return false;
+  }
+
+  if (!canDeleteCourse(course)) {
+    courseDeleteBlockNotice(course);
+    return false;
+  }
+
+  const archivePaths = [...new Set(
+    state.archives
+      .filter((archive) => archive.course_id === course.id)
+      .map((archive) => archiveStoragePathFromUrl(archive.url))
+      .filter(Boolean)
+  )];
+  const attendanceDocumentPaths = [...new Set(
+    state.attendanceDocuments
+      .filter((document) => document.course_id === course.id)
+      .map((document) => document.storage_path)
+      .filter(Boolean)
+  )];
+
+  await deleteRowsByColumn("review_draw_winners", "course_id", course.id);
+  await deleteRowsByColumn("reviews", "course_id", course.id);
+  await deleteRowsByColumn("course_attendance_documents", "course_id", course.id);
+  await deleteRowsByColumn("course_archives", "course_id", course.id);
+  await deleteRowsByColumn("course_sessions", "course_id", course.id);
+  await deleteRowsByColumn("course_applications", "course_id", course.id);
+
+  const { error } = await supabase.from("courses").delete().eq("id", course.id);
+  if (error) throw error;
+
+  for (const path of archivePaths) {
+    await removeUploadedArchiveFile(path);
+  }
+  for (const path of attendanceDocumentPaths) {
+    await removeUploadedAttendanceDocument(path);
+  }
+
+  showToast(`${course.title || "교육"}을 삭제했습니다.`);
+  await reload();
+  state.tab = "courses";
+  render();
+  return true;
 }
 
 async function saveArchive(event) {
@@ -1742,6 +1855,7 @@ function bindEvents() {
     const attendanceDocumentButton = event.target.closest("[data-open-attendance-document]");
     const editArchiveButton = event.target.closest("[data-edit-archive]");
     const deleteArchiveButton = event.target.closest("[data-delete-archive]");
+    const deleteCourseButton = event.target.closest("[data-delete-course]");
     const deleteEntityButton = event.target.closest("[data-delete-entity]");
     const closeAdminNoticeButton = event.target.closest("[data-close-admin-notice]");
     if (closeAdminNoticeButton || event.target === elements.adminNoticeModal) {
@@ -1824,6 +1938,42 @@ function bindEvents() {
         showToast(`아카이브 삭제 실패: ${error.message}`);
         deleteArchiveButton.disabled = false;
         deleteArchiveButton.textContent = "삭제";
+      }
+      return;
+    }
+    if (deleteCourseButton) {
+      const course = courseById(deleteCourseButton.dataset.deleteCourse);
+      const defaultDeleteLabel = deleteCourseButton.dataset.defaultLabel || deleteCourseButton.textContent;
+      deleteCourseButton.dataset.defaultLabel = defaultDeleteLabel;
+      if (course && !canDeleteCourse(course)) {
+        courseDeleteBlockNotice(course);
+        return;
+      }
+
+      if (deleteCourseButton.dataset.confirmDelete !== "true") {
+        deleteCourseButton.dataset.confirmDelete = "true";
+        deleteCourseButton.textContent = "한 번 더 누르면 삭제";
+        window.setTimeout(() => {
+          if (deleteCourseButton.dataset.confirmDelete === "true") {
+            deleteCourseButton.dataset.confirmDelete = "false";
+            deleteCourseButton.textContent = defaultDeleteLabel;
+          }
+        }, 3000);
+        return;
+      }
+      try {
+        deleteCourseButton.disabled = true;
+        deleteCourseButton.textContent = "삭제 중...";
+        const deleted = await deleteCourse(deleteCourseButton.dataset.deleteCourse);
+        if (!deleted) {
+          deleteCourseButton.disabled = false;
+          deleteCourseButton.dataset.confirmDelete = "false";
+          deleteCourseButton.textContent = defaultDeleteLabel;
+        }
+      } catch (error) {
+        showToast(`교육 삭제 실패: ${error.message}`);
+        deleteCourseButton.disabled = false;
+        deleteCourseButton.textContent = defaultDeleteLabel;
       }
       return;
     }
