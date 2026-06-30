@@ -1092,7 +1092,7 @@ function renderApplicationForm(course) {
           : canCancelApplication
             ? `<p class="muted">신청 취소는 아래 버튼으로 처리할 수 있습니다. 신청 내용 수정이 필요하면 운영자에게 문의해 주세요.</p>
                <button class="btn small secondary" type="button" data-cancel-application="${escapeHtml(existingApplication.id)}">신청 취소</button>`
-            : `<p class="muted">교육 시간이 지나 신청 취소는 운영자에게 문의해 주세요.</p>`}
+            : ""}
       </div>
     `;
   }
@@ -1321,7 +1321,6 @@ async function handleCancelApplication(button) {
 
   const course = state.composedCourses.find((item) => item.id === state.activeCourseId);
   if (course && !canApplyToCourse(course)) {
-    showToast("교육 시간이 지나 신청 취소는 운영자에게 문의해 주세요.");
     openCourseDetail(course.id);
     return;
   }
