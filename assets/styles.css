@@ -231,8 +231,15 @@ h1 {
 
 .filter-grid {
   display: grid;
-  grid-template-columns: minmax(240px, 1.7fr) repeat(4, minmax(140px, 1fr));
+  grid-template-columns: minmax(240px, 1.6fr) repeat(4, minmax(120px, 1fr)) auto;
   gap: 10px;
+  align-items: end;
+}
+
+.filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   align-items: end;
 }
 

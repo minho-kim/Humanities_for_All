@@ -28,6 +28,13 @@ const state = {
   myReviews: [],
   applications: [],
   composedCourses: [],
+  appliedFilters: {
+    q: "",
+    org: "",
+    instructor: "",
+    time: "",
+    status: "",
+  },
   activePage: "courses",
   activeOrganizationSlug: "",
   activeView: "cards",
@@ -51,6 +58,7 @@ const elements = {
   instructorFilter: document.getElementById("instructorFilter"),
   timeFilter: document.getElementById("timeFilter"),
   statusFilter: document.getElementById("statusFilter"),
+  searchResetButton: document.getElementById("searchResetButton"),
   resultSummary: document.getElementById("resultSummary"),
   courseResults: document.getElementById("courseResults"),
   detailModal: document.getElementById("detailModal"),
@@ -625,9 +633,20 @@ function populateFilters() {
   const instructors = [...instructorsById.values()].sort((a, b) => a.name.localeCompare(b.name, "ko"));
   populateSelect(elements.orgFilter, "전체 단체", orgNames);
   elements.instructorFilter.innerHTML = `<option value="">전체 강사</option>${instructors.map((instructor) => `<option value="${escapeHtml(instructor.id)}">${escapeHtml(instructor.name)}</option>`).join("")}`;
+  syncCourseFilterInputs();
 }
 
-function getFilters() {
+function emptyCourseFilters() {
+  return {
+    q: "",
+    org: "",
+    instructor: "",
+    time: "",
+    status: "",
+  };
+}
+
+function readCourseFilterInputs() {
   return {
     q: elements.searchInput.value.trim().toLowerCase(),
     org: elements.orgFilter.value,
@@ -637,11 +656,43 @@ function getFilters() {
   };
 }
 
+function syncCourseFilterInputs(filters = state.appliedFilters) {
+  elements.searchInput.value = filters.q || "";
+  elements.orgFilter.value = filters.org || "";
+  elements.instructorFilter.value = filters.instructor || "";
+  elements.timeFilter.value = filters.time || "";
+  elements.statusFilter.value = filters.status || "";
+}
+
+function applyCourseFilters() {
+  state.appliedFilters = readCourseFilterInputs();
+  if (state.activePage !== "courses") {
+    navigate("courses");
+    return;
+  }
+  renderCoursesPage();
+}
+
+function resetCourseFilters() {
+  state.appliedFilters = emptyCourseFilters();
+  syncCourseFilterInputs();
+  if (state.activePage !== "courses") {
+    navigate("courses");
+    return;
+  }
+  renderCoursesPage();
+}
+
+function getFilters() {
+  return state.appliedFilters;
+}
+
 function filteredCourses() {
   const filters = getFilters();
   return state.composedCourses.filter((course) => {
     const haystack = [
       course.title,
+      course.topic,
       course.summary,
       course.description,
       course.organization?.name,
@@ -777,7 +828,7 @@ function renderCoursesPage() {
   const organizations = publicOrganizations();
   setPageHeader({
     title: "교육 검색",
-    description: "관심 있는 교육을 교육명, 강사, 장소, 단체명으로 찾아보세요.",
+    description: "관심 있는 교육을 교육명, 주제, 강사, 장소, 단체명으로 찾아보세요.",
     showCourseTools: true,
     summary: state.courses.length
       ? `${courses.length.toLocaleString("ko-KR")}개 교육이 표시됩니다.`
@@ -1545,9 +1596,11 @@ function startAuthMonitor() {
 }
 
 function bindEvents() {
-  [elements.searchInput, elements.orgFilter, elements.instructorFilter, elements.timeFilter, elements.statusFilter].forEach((element) => {
-    element.addEventListener("input", render);
+  elements.courseFilters.addEventListener("submit", (event) => {
+    event.preventDefault();
+    applyCourseFilters();
   });
+  elements.searchResetButton.addEventListener("click", resetCourseFilters);
 
   document.querySelectorAll("[data-view]").forEach((button) => {
     button.addEventListener("click", () => {
