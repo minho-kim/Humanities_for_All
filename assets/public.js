@@ -1156,6 +1156,7 @@ function openCourseDetail(courseId) {
   state.activeCourseId = courseId;
   const orgSlug = course.organization?.slug || "";
   const orgName = course.organization?.name || "";
+  const orgWebsiteUrl = normalizeSafeUrl(course.organization?.website_url, URL_RULES.external);
   const kakaoUrl = kakaoMapUrl(course.venue);
   const naverUrl = naverPlaceUrl(course.venue);
   const applicationUrl = normalizeSafeUrl(course.application_url, URL_RULES.external);
@@ -1186,17 +1187,33 @@ function openCourseDetail(courseId) {
         </div>
       </div>
       <aside class="section">
-        <h3>강사·장소</h3>
+        <h3>강사</h3>
         <p><strong>${course.instructor?.id ? `<button class="text-link" type="button" data-open-instructor="${course.instructor.id}">${escapeHtml(course.instructor.name)}</button>` : escapeHtml(course.instructor?.name || "강사 미정")}</strong> ${escapeHtml(course.instructor?.title || "")}</p>
-        <p>${escapeHtml(course.instructor?.bio || "")}</p>
-        <p>📍 ${escapeHtml(course.venue?.name || "장소 미정")} ${course.venue?.address ? `· ${escapeHtml(course.venue.address)}` : ""} ${course.venue?.detail ? `· ${escapeHtml(course.venue.detail)}` : ""}</p>
-        <div class="actions" style="margin: 10px 0 14px;">
+        <p>${escapeHtml(course.instructor?.bio || "강사 소개가 곧 업데이트됩니다.")}</p>
+        <div class="actions" style="margin-top: 10px;">
           ${course.instructor?.id ? `<button class="btn small secondary" type="button" data-open-instructor="${course.instructor.id}">강사 프로필</button>` : ""}
+        </div>
+      </aside>
+      <div class="section">
+        <h3>장소</h3>
+        <p><strong>${escapeHtml(course.venue?.name || "장소 미정")}</strong></p>
+        ${course.venue?.address ? `<p class="muted">${escapeHtml(course.venue.address)}</p>` : ""}
+        ${course.venue?.detail ? `<p>${escapeHtml(course.venue.detail)}</p>` : ""}
+        <div class="actions" style="margin-top: 10px;">
           ${kakaoUrl ? `<a class="btn small secondary" href="${escapeHtml(kakaoUrl)}" target="_blank" rel="noreferrer">카카오맵</a>` : ""}
           ${naverUrl ? `<a class="btn small secondary" href="${escapeHtml(naverUrl)}" target="_blank" rel="noreferrer">네이버플레이스</a>` : ""}
         </div>
-        <p>주관 단체: ${orgSlug ? `<button class="text-link" type="button" data-open-organization="${escapeHtml(orgSlug)}">${escapeHtml(orgName)}</button>` : escapeHtml(orgName)}</p>
-      </aside>
+      </div>
+      <div class="section">
+        <h3>주관 단체</h3>
+        <p><strong>${orgSlug ? `<button class="text-link" type="button" data-open-organization="${escapeHtml(orgSlug)}">${escapeHtml(orgName)}</button>` : escapeHtml(orgName || "단체 미정")}</strong></p>
+        <p>${escapeHtml(course.organization?.description || "단체 소개가 곧 업데이트됩니다.")}</p>
+        ${course.organization?.contact_email ? `<p class="muted">연락처: ${escapeHtml(course.organization.contact_email)}</p>` : ""}
+        <div class="actions" style="margin-top: 10px;">
+          ${orgSlug ? `<button class="btn small secondary" type="button" data-open-organization="${escapeHtml(orgSlug)}">단체 소개</button>` : ""}
+          ${orgWebsiteUrl ? `<a class="btn small secondary" href="${escapeHtml(orgWebsiteUrl)}" target="_blank" rel="noreferrer">홈페이지</a>` : ""}
+        </div>
+      </div>
       <div class="section" id="applicationSection" style="grid-column: 1 / -1;">
         <h3>교육 신청</h3>
         ${renderApplicationForm(course)}
