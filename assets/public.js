@@ -337,7 +337,7 @@ function reviewStatusClass(review) {
 
 function applicationStatusLabel(application) {
   if (isCancelledApplication(application)) return "취소";
-  if (isAttendanceConfirmed(application)) return "참석 확인";
+  if (isAttendanceConfirmed(application)) return "참석 인증";
   return "신청";
 }
 
@@ -923,7 +923,7 @@ function renderApplicationHistory() {
               <span class="badge ${applicationStatusClass(application)}">${escapeHtml(applicationStatusLabel(application))}</span>
             </div>
             <p class="muted">신청일 ${escapeHtml(shortDate(application.created_at))} · 신청자 ${escapeHtml(application.applicant_name || "")}</p>
-            ${isAttendanceConfirmed(application) ? `<p class="muted">참석 확인: ${escapeHtml(shortDate(application.attendance_confirmed_at))}</p>` : ""}
+            ${isAttendanceConfirmed(application) ? `<p class="muted">참석 인증: ${escapeHtml(shortDate(application.attendance_confirmed_at))}</p>` : ""}
             ${application.note ? `<p>${escapeHtml(application.note)}</p>` : ""}
             ${course ? `<button class="btn small secondary" type="button" data-open-course="${course.id}">교육 보기</button>` : ""}
           </div>
@@ -1018,7 +1018,10 @@ function render() {
 }
 
 function renderReviews(course) {
-  if (!course.reviews.length) return `<li class="review-item">아직 등록된 후기가 없습니다. 교육 후 첫 후기를 남겨보세요.</li>`;
+  if (!course.reviews.length) {
+    const canReview = canWriteReviewForCourse(course);
+    return `<li class="review-item">${canReview ? "아직 등록된 후기가 없습니다. 교육 후 첫 후기를 남겨보세요." : "아직 등록된 후기가 없습니다."}</li>`;
+  }
   return course.reviews.map((review) => `
     <li class="review-item">
       <strong>${escapeHtml(getMaskedEmailName(review.author_name))}님의 후기 <span class="badge ${review.verification_status === "verified" ? "green" : "gray"}">${review.verification_status === "verified" ? "참여 확인" : "후기"}</span></strong><br>
@@ -1039,6 +1042,7 @@ function renderReviewForm(course) {
       <form id="reviewForm">
         <input type="hidden" name="review_id" value="${escapeHtml(existingReview.id)}">
         <label>내 후기<textarea name="body" required minlength="10">${escapeHtml(existingReview.body || "")}</textarea></label>
+        <p class="muted">후기는 글로만 작성합니다. 현장 사진과 영상은 운영자가 확인한 뒤 사진·영상·자료 아카이브에 올립니다.</p>
         <div class="actions" style="margin-top: 12px;">
           <button class="btn" type="submit">후기 수정</button>
           <button class="btn danger" type="button" data-delete-review="${escapeHtml(existingReview.id)}">후기 삭제</button>
@@ -1051,9 +1055,10 @@ function renderReviewForm(course) {
   return `
     <form id="reviewForm">
       <label>후기<textarea name="body" placeholder="교육에서 좋았던 점, 기억에 남은 질문, 다음 참여자에게 전하고 싶은 말을 적어주세요." required minlength="10"></textarea></label>
+      <p class="muted">후기는 글로만 작성합니다. 사진과 영상은 운영자가 확인한 뒤 사진·영상·자료 아카이브에 올립니다.</p>
       <div class="actions" style="margin-top: 12px;">
         <button class="btn" type="submit">후기 등록</button>
-        <span class="badge green">참석 확인 완료</span>
+        <span class="badge green">참석 인증 완료</span>
       </div>
     </form>
   `;
@@ -1073,18 +1078,21 @@ function renderApplicationForm(course) {
 
   if (existingApplication) {
     const attendanceConfirmed = isAttendanceConfirmed(existingApplication);
+    const canCancelApplication = !attendanceConfirmed && canApplyToCourse(course);
     return `
       <div class="table-row">
         <div class="row-top">
           <strong>이미 신청한 교육입니다.</strong>
-          <span class="badge ${attendanceConfirmed ? "green" : "gray"}">${attendanceConfirmed ? "참석 확인" : "신청"}</span>
+          <span class="badge ${attendanceConfirmed ? "green" : "gray"}">${attendanceConfirmed ? "참석 인증" : "신청"}</span>
         </div>
         <p class="muted">신청자: ${escapeHtml(existingApplication.applicant_name)} · 연락처: ${escapeHtml(existingApplication.phone)}</p>
         ${existingApplication.note ? `<p>${escapeHtml(existingApplication.note)}</p>` : ""}
         ${attendanceConfirmed
-          ? `<p class="muted">참석 확인이 완료되어 후기를 작성할 수 있습니다.</p>`
-          : `<p class="muted">신청 취소는 아래 버튼으로 처리할 수 있습니다. 신청 내용 수정이 필요하면 운영자에게 문의해 주세요.</p>
-             <button class="btn small secondary" type="button" data-cancel-application="${escapeHtml(existingApplication.id)}">신청 취소</button>`}
+          ? `<p class="muted">참석 인증이 완료되어 후기를 작성할 수 있습니다.</p>`
+          : canCancelApplication
+            ? `<p class="muted">신청 취소는 아래 버튼으로 처리할 수 있습니다. 신청 내용 수정이 필요하면 운영자에게 문의해 주세요.</p>
+               <button class="btn small secondary" type="button" data-cancel-application="${escapeHtml(existingApplication.id)}">신청 취소</button>`
+            : `<p class="muted">교육 시간이 지나 신청 취소는 운영자에게 문의해 주세요.</p>`}
       </div>
     `;
   }
@@ -1311,6 +1319,13 @@ async function handleCancelApplication(button) {
   const applicationId = button.dataset.cancelApplication;
   if (!applicationId) return;
 
+  const course = state.composedCourses.find((item) => item.id === state.activeCourseId);
+  if (course && !canApplyToCourse(course)) {
+    showToast("교육 시간이 지나 신청 취소는 운영자에게 문의해 주세요.");
+    openCourseDetail(course.id);
+    return;
+  }
+
   if (button.dataset.confirmCancel !== "true") {
     button.dataset.confirmCancel = "true";
     button.textContent = "한 번 더 누르면 취소됩니다";
@@ -1353,7 +1368,7 @@ async function handleReviewSubmit(event) {
 
   const application = activeApplicationForCourse(course.id);
   if (!application || !isAttendanceConfirmed(application)) {
-    showToast("참석 확인이 완료된 뒤 후기를 작성할 수 있습니다.");
+    showToast("참석 인증이 완료된 뒤 후기를 작성할 수 있습니다.");
     return;
   }
 
