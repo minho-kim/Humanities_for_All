@@ -81,6 +81,7 @@ const elements = {
 
 const PUBLIC_FETCH_TIMEOUT_MS = 7000;
 const PUBLIC_FETCH_RETRIES = 1;
+const STATUS_SYNC_TIMEOUT_MS = 4000;
 const SESSION_TIMEOUT_MS = 2500;
 const APPLICATION_TERMS_VERSION = "2026-06-29";
 let supplementaryLoadSequence = 0;
@@ -126,10 +127,20 @@ function hasCourseStarted(course) {
   return startsAt ? new Date(startsAt).getTime() <= Date.now() : false;
 }
 
+function courseEndAt(course) {
+  return course?.ends_at || course?.sessions?.[course.sessions.length - 1]?.ends_at || courseStartAt(course);
+}
+
+function hasCourseEnded(course) {
+  if (course?.status === "finished") return true;
+  const endsAt = courseEndAt(course);
+  return endsAt ? new Date(endsAt).getTime() <= Date.now() : false;
+}
+
 function effectiveCourseStatus(course) {
   if (!course) return "";
   if (course.status === "cancelled") return "cancelled";
-  if (hasCourseStarted(course)) return "finished";
+  if (course.status === "finished" || hasCourseEnded(course)) return "finished";
   return course.status || "scheduled";
 }
 
@@ -285,6 +296,33 @@ async function loadPublicRows(table, options) {
     if (!lastResult.error) return lastResult;
   }
   return lastResult;
+}
+
+async function syncFinishedCourseStatuses() {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), STATUS_SYNC_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/sync_finished_course_statuses`, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_PUBLISHABLE_KEY,
+        Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: "{}",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      console.warn("[모두의 인문학] 교육 종료 상태 동기화 실패", `HTTP ${response.status}: ${body.slice(0, 160)}`);
+    }
+  } catch (error) {
+    const message = error.name === "AbortError" ? "응답 대기 시간이 초과되었습니다." : error.message;
+    console.warn("[모두의 인문학] 교육 종료 상태 동기화 지연", message);
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 }
 
 function loadPublicReviews() {
@@ -542,6 +580,7 @@ async function loadData({ waitForSupplementary = false } = {}) {
   elements.resultSummary.textContent = "교육 정보를 불러오는 중입니다.";
   state.archives = [];
   state.reviews = [];
+  await syncFinishedCourseStatuses();
 
   const coreRequestMap = [
     ["organizations", loadPublicRows("organizations", { order: "sort_order.asc" })],

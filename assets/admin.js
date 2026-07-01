@@ -190,6 +190,7 @@ function hasCourseStarted(course) {
 }
 
 function hasCourseEnded(course) {
+  if (course?.status === "finished") return true;
   if (!course?.starts_at) return false;
   const endTime = course.ends_at || course.starts_at;
   return new Date(endTime).getTime() <= Date.now();
@@ -198,7 +199,7 @@ function hasCourseEnded(course) {
 function effectiveCourseStatus(course) {
   if (!course) return "";
   if (course.status === "cancelled") return "cancelled";
-  if (hasCourseStarted(course)) return "finished";
+  if (course.status === "finished" || hasCourseEnded(course)) return "finished";
   return course.status || "scheduled";
 }
 
@@ -433,6 +434,7 @@ function validateCourseTiming(courseId, formData) {
     startsAt: startDate.toISOString(),
     endsAt: endDate ? endDate.toISOString() : null,
     hasStarted: startDate.getTime() <= Date.now(),
+    hasEnded: (endDate || startDate).getTime() <= Date.now(),
   };
 }
 
@@ -818,6 +820,13 @@ async function loadAdminData() {
   ] = requests.map((result) => result.data || []);
 
   render();
+}
+
+async function syncFinishedCourseStatuses() {
+  const { error } = await supabase.rpc("sync_finished_course_statuses");
+  if (error) {
+    console.warn("[모두의 인문학] 교육 종료 상태 동기화 실패", error);
+  }
 }
 
 function renderDashboard() {
@@ -1535,7 +1544,7 @@ async function saveCourse(event) {
     organization_id: formData.get("organization_id"),
     instructor_id: formData.get("instructor_id") || null,
     venue_id: formData.get("venue_id") || null,
-    status: timing.hasStarted && selectedStatus !== "cancelled" ? "finished" : selectedStatus,
+    status: timing.hasEnded && selectedStatus !== "cancelled" ? "finished" : selectedStatus,
     starts_at: timing.startsAt,
     ends_at: timing.endsAt,
     summary: String(formData.get("summary") || "").trim(),
@@ -1988,6 +1997,7 @@ async function runDraw(event) {
 
 async function reload() {
   await refreshSession();
+  await syncFinishedCourseStatuses();
   await loadAdminData();
 }
 
