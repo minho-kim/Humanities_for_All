@@ -24,6 +24,13 @@ const state = {
   applicationFilters: {
     courseId: "",
   },
+  walkInSearch: {
+    courseId: "",
+    query: "",
+    candidates: [],
+    isLoading: false,
+    error: "",
+  },
   selectedArchiveId: "",
   organizations: [],
   instructors: [],
@@ -182,6 +189,12 @@ function hasCourseStarted(course) {
   return new Date(course.starts_at).getTime() <= Date.now();
 }
 
+function hasCourseEnded(course) {
+  if (!course?.starts_at) return false;
+  const endTime = course.ends_at || course.starts_at;
+  return new Date(endTime).getTime() <= Date.now();
+}
+
 function effectiveCourseStatus(course) {
   if (!course) return "";
   if (course.status === "cancelled") return "cancelled";
@@ -201,7 +214,7 @@ function attendanceDocumentsForCourse(courseId) {
 }
 
 function applicationCountBadges(applications) {
-  return `<span class="badge green">신청 ${applications.length}</span>`;
+  return `<span class="badge green">참가자 ${applications.length}</span>`;
 }
 
 function isActiveApplication(application) {
@@ -241,17 +254,27 @@ function applicationGroups(applications) {
     });
 }
 
+function activeApplicationForCourseUser(courseId, userId) {
+  return state.applications.find((application) => (
+    application.course_id === courseId
+    && application.user_id === userId
+    && isActiveApplication(application)
+  ));
+}
+
 function renderApplicationRow(application) {
   const attendanceConfirmed = Boolean(application.attendance_confirmed_at);
   const course = courseById(application.course_id);
   const canConfirmAttendance = hasCourseDateArrived(course);
+  const sourceLabel = application.registration_source === "admin_walk_in" ? "현장 등록" : "신청";
   return `
     <div class="table-row">
       <div class="row-top">
         <strong>${escapeHtml(application.applicant_name || "신청자")}</strong>
         <span class="badge ${attendanceConfirmed ? "green" : "gray"}">${attendanceConfirmed ? "참석 확인" : "신청"}</span>
+        ${application.registration_source === "admin_walk_in" ? `<span class="badge gray">현장 등록</span>` : ""}
       </div>
-      <div class="muted">신청일 ${escapeHtml(shortDate(application.created_at))}</div>
+      <div class="muted">${escapeHtml(sourceLabel)}일 ${escapeHtml(shortDate(application.created_at))}</div>
       <p class="muted">이메일: ${escapeHtml(application.email || "없음")} · 전화: ${escapeHtml(application.phone || "없음")}</p>
       ${application.note ? `<p>${escapeHtml(application.note)}</p>` : ""}
       <p class="muted">개인정보·문자 안내 동의 완료</p>
@@ -286,22 +309,23 @@ function printApplicationRoster(courseId) {
     .filter((application) => application.course_id === courseId)
     .slice()
     .sort(compareRosterApplications);
-  if (!applications.length) {
-    showToast("출력할 신청자가 없습니다.");
-    return;
-  }
 
   const title = courseName(courseId);
-  const densePrintClass = applications.length >= 40 ? "dense" : "";
-  const rows = applications.map((application, index) => `
+  const totalRowCount = Math.max(30, applications.length + 10);
+  const blankRowCount = totalRowCount - applications.length;
+  const densePrintClass = totalRowCount >= 40 ? "dense" : "";
+  const rows = Array.from({ length: totalRowCount }, (_, index) => {
+    const application = applications[index];
+    return `
     <tr>
       <td>${index + 1}</td>
       <td>${escapeHtml(title)}</td>
-      <td>${escapeHtml(application.applicant_name || "")}</td>
-      <td>${escapeHtml(phoneLastFour(application.phone))}</td>
+      <td>${escapeHtml(application?.applicant_name || "")}</td>
+      <td>${escapeHtml(phoneLastFour(application?.phone))}</td>
       <td class="signature"></td>
     </tr>
-  `).join("");
+  `;
+  }).join("");
   const printWindow = window.open("", "_blank", "width=980,height=720");
   if (!printWindow) {
     showToast("팝업 차단을 해제한 뒤 다시 시도해 주세요.");
@@ -312,7 +336,7 @@ function printApplicationRoster(courseId) {
     <html lang="ko">
     <head>
       <meta charset="utf-8">
-      <title>${escapeHtml(title)} 신청자 명단</title>
+      <title>${escapeHtml(title)} 참가자 명단</title>
       <style>
         @page { size: A4 portrait; margin: 12mm; }
         body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 24px; color: #111; }
@@ -335,8 +359,8 @@ function printApplicationRoster(courseId) {
       </style>
     </head>
     <body class="${densePrintClass}">
-      <h1>${escapeHtml(title)} 신청자 명단</h1>
-      <p>${escapeHtml(course?.starts_at ? shortDate(course.starts_at) : "일정 미정")} · 총 ${applications.length}명</p>
+      <h1>${escapeHtml(title)} 참가자 명단</h1>
+      <p>${escapeHtml(course?.starts_at ? shortDate(course.starts_at) : "일정 미정")} · 등록 참가자 ${applications.length}명 · 현장 기입칸 ${blankRowCount}개 · 총 ${totalRowCount}칸</p>
       <table>
         <thead><tr><th>번호</th><th>교육제목</th><th>성명</th><th>본인확인</th><th>서명</th></tr></thead>
         <tbody>${rows}</tbody>
@@ -1130,9 +1154,74 @@ function renderAttendanceDocumentSection(courseId) {
   `;
 }
 
+function renderWalkInSearchResults(courseId) {
+  const search = state.walkInSearch;
+  if (search.courseId !== courseId || (!search.query && !search.isLoading && !search.error)) return "";
+  if (search.isLoading) return `<div class="empty">참석자 후보를 검색하는 중입니다.</div>`;
+  if (search.error) return `<div class="empty">검색 실패: ${escapeHtml(search.error)}</div>`;
+  if (!search.candidates.length) return `<div class="empty">"${escapeHtml(search.query)}"에 맞는 기존 신청자 또는 인증 사용자를 찾지 못했습니다.</div>`;
+
+  return `
+    <div class="table-list" style="margin-top: 12px;">
+      ${search.candidates.map((candidate) => {
+        const existingApplication = activeApplicationForCourseUser(courseId, candidate.user_id);
+        const alreadyConfirmed = Boolean(existingApplication?.attendance_confirmed_at);
+        return `
+          <div class="table-row">
+            <div class="row-top">
+              <strong>${escapeHtml(candidate.applicant_name || "이름 없음")}</strong>
+              ${alreadyConfirmed ? `<span class="badge green">이미 참석 확인</span>` : existingApplication ? `<span class="badge gray">신청 있음</span>` : `<span class="badge gray">현장 등록 가능</span>`}
+            </div>
+            <p class="muted">이메일: ${escapeHtml(candidate.email || "없음")} · 전화 끝자리: ${escapeHtml(phoneLastFour(candidate.phone) || "없음")}</p>
+            ${candidate.last_application_at ? `<p class="muted">최근 신청/등록: ${escapeHtml(shortDate(candidate.last_application_at))}</p>` : ""}
+            <div class="actions">
+              <button class="btn small" type="button" data-add-walk-in-attendee="${escapeHtml(candidate.user_id)}" data-course-id="${escapeHtml(courseId)}" ${alreadyConfirmed ? "disabled" : ""}>${existingApplication ? "참석 확인" : "참석자로 등록"}</button>
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderWalkInAttendeeSection(courseId) {
+  const course = courseById(courseId);
+  if (!course) return "";
+  const courseEnded = hasCourseEnded(course);
+  return `
+    <div class="section" style="margin-top: 12px;">
+      <h3>현장 참석자 등록</h3>
+      <p class="muted">사전 신청 없이 참여한 사람은 교육 종료 후 기존 신청자·인증 사용자 정보에서 이름 또는 이메일로 찾아 참석자로 등록할 수 있습니다.</p>
+      ${courseEnded
+        ? `<form data-walk-in-search-form>
+            <input type="hidden" name="course_id" value="${escapeHtml(courseId)}">
+            <div class="admin-grid">
+              <label>이름 또는 이메일 검색<input name="query" value="${state.walkInSearch.courseId === courseId ? escapeHtml(state.walkInSearch.query) : ""}" placeholder="예: 홍길동 또는 user@example.com" minlength="2" required></label>
+            </div>
+            <div class="actions" style="margin-top: 12px;">
+              <button class="btn small" type="submit">검색</button>
+              <span class="badge gray">교육 종료 후 등록 가능</span>
+            </div>
+          </form>
+          ${renderWalkInSearchResults(courseId)}`
+        : `<div class="empty">교육 종료 후 현장 참석자 등록이 활성화됩니다.</div>`}
+    </div>
+  `;
+}
+
 function renderApplications() {
   const applications = filteredApplications();
-  const groups = applicationGroups(applications);
+  let groups = applicationGroups(applications);
+  if (state.applicationFilters.courseId && !groups.some((group) => group.courseId === state.applicationFilters.courseId)) {
+    const selectedCourse = courseById(state.applicationFilters.courseId);
+    if (selectedCourse) {
+      groups = [{
+        courseId: state.applicationFilters.courseId,
+        course: selectedCourse,
+        applications: [],
+      }, ...groups];
+    }
+  }
   elements.adminContent.innerHTML = `
     <h2>교육 신청 관리</h2>
     <p class="muted">신청자 이름, 이메일, 전화번호는 교육 접수와 안내 목적으로만 사용하세요. 전화번호는 별도 인증 없이 신청자가 입력한 값입니다.</p>
@@ -1160,16 +1249,17 @@ function renderApplications() {
               </span>
               <span class="actions">
                 ${applicationCountBadges(group.applications)}
-                <button class="btn small secondary" type="button" data-print-roster="${escapeHtml(group.courseId)}">신청자 명단 출력</button>
+                <button class="btn small secondary" type="button" data-print-roster="${escapeHtml(group.courseId)}">참가자 명단 출력</button>
               </span>
             </div>
           </summary>
           <div class="table-list" style="margin-top: 12px;">
-            ${group.applications.map(renderApplicationRow).join("")}
+            ${group.applications.map(renderApplicationRow).join("") || `<div class="empty">이 교육의 신청·등록 참가자가 없습니다.</div>`}
           </div>
+          ${renderWalkInAttendeeSection(group.courseId)}
           ${renderAttendanceDocumentSection(group.courseId)}
         </details>
-      `).join("") || `<div class="empty">${state.applications.length ? "선택한 조건에 맞는 신청이 없습니다." : "아직 교육 신청이 없습니다."}</div>`}
+      `).join("") || `<div class="empty">${state.applications.length ? "선택한 조건에 맞는 신청이 없습니다." : "아직 교육 신청이 없습니다. 특정 교육을 선택하면 교육 종료 후 현장 참석자를 등록할 수 있습니다."}</div>`}
     </div>
   `;
 }
@@ -1793,6 +1883,69 @@ async function unconfirmApplicationAttendance(applicationId) {
   render();
 }
 
+async function searchWalkInCandidates(event) {
+  event.preventDefault();
+  const form = getSubmitForm(event);
+  if (!form) return;
+
+  const formData = new FormData(form);
+  const courseId = String(formData.get("course_id") || "");
+  const query = String(formData.get("query") || "").trim();
+  if (query.length < 2) {
+    showToast("이름 또는 이메일을 2글자 이상 입력해 주세요.");
+    return;
+  }
+
+  state.walkInSearch = {
+    courseId,
+    query,
+    candidates: [],
+    isLoading: true,
+    error: "",
+  };
+  renderApplications();
+
+  const { data, error } = await supabase.rpc("search_applicant_candidates", {
+    p_query: query,
+  });
+
+  state.walkInSearch = {
+    courseId,
+    query,
+    candidates: error ? [] : (data || []),
+    isLoading: false,
+    error: error?.message || "",
+  };
+  renderApplications();
+}
+
+async function addWalkInAttendee(courseId, userId) {
+  const course = courseById(courseId);
+  if (!hasCourseEnded(course)) {
+    throw new Error("교육 종료 후 현장 참석자를 등록할 수 있습니다.");
+  }
+
+  const { data, error } = await supabase.rpc("add_walk_in_course_attendee", {
+    p_course_id: courseId,
+    p_user_id: userId,
+  });
+  if (error) throw error;
+  if (!data) throw new Error("참석자 등록 결과를 확인하지 못했습니다.");
+
+  showToast("현장 참석자를 등록하고 참석 확인을 저장했습니다.");
+  await reload();
+  state.tab = "applications";
+  state.applicationFilters.courseId = courseId;
+  state.walkInSearch = {
+    courseId: "",
+    query: "",
+    candidates: [],
+    isLoading: false,
+    error: "",
+  };
+  render();
+}
+
 async function runDraw(event) {
   event.preventDefault();
   const form = getSubmitForm(event);
@@ -1852,6 +2005,7 @@ function bindEvents() {
     const attendanceButton = event.target.closest("[data-confirm-attendance]");
     const unconfirmAttendanceButton = event.target.closest("[data-unconfirm-attendance]");
     const rosterButton = event.target.closest("[data-print-roster]");
+    const addWalkInButton = event.target.closest("[data-add-walk-in-attendee]");
     const attendanceDocumentButton = event.target.closest("[data-open-attendance-document]");
     const editArchiveButton = event.target.closest("[data-edit-archive]");
     const deleteArchiveButton = event.target.closest("[data-delete-archive]");
@@ -1902,6 +2056,20 @@ function bindEvents() {
     if (rosterButton) {
       event.preventDefault();
       printApplicationRoster(rosterButton.dataset.printRoster);
+      return;
+    }
+    if (addWalkInButton) {
+      const defaultLabel = addWalkInButton.textContent;
+      try {
+        addWalkInButton.disabled = true;
+        addWalkInButton.textContent = "등록 중...";
+        await addWalkInAttendee(addWalkInButton.dataset.courseId, addWalkInButton.dataset.addWalkInAttendee);
+        addWalkInButton.textContent = defaultLabel;
+      } catch (error) {
+        showToast(`현장 참석자 등록 실패: ${error.message}`);
+        addWalkInButton.disabled = false;
+        addWalkInButton.textContent = defaultLabel;
+      }
       return;
     }
     if (attendanceDocumentButton) {
@@ -2079,6 +2247,7 @@ function bindEvents() {
       if (event.target.id === "courseForm") return await saveCourse(event);
       if (event.target.id === "archiveForm") return await saveArchive(event);
       if (event.target.matches("[data-attendance-document-form]")) return await saveAttendanceDocument(event);
+      if (event.target.matches("[data-walk-in-search-form]")) return await searchWalkInCandidates(event);
       if (event.target.id === "drawForm") return await runDraw(event);
     } catch (error) {
       showToast(`작업 실패: ${error.message}`);
