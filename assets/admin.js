@@ -786,10 +786,7 @@ function adminSearchSelectedLabel(kind, item) {
   return `${item.name || "이름 없음"} · ${item.title || "직함 없음"}`;
 }
 
-function renderAdminSearchPicker({
-  kind,
-  label,
-  placeholder,
+function renderAdminSearchResultsContent({
   query,
   selectedItem,
   items,
@@ -802,6 +799,16 @@ function renderAdminSearchPicker({
   const hasQuery = Boolean(normalizeSearchText(query));
   const shouldShowResults = !hideResultsUntilQuery || hasQuery;
   const results = shouldShowResults ? searchItems(items, query, textBuilder) : [];
+  if (!shouldShowResults) return `<p class="muted">${escapeHtml(emptyQueryText)}</p>`;
+  return `
+    <div class="admin-search-results">
+      ${results.map((item) => resultBuilder(item, selectedItem?.id || "")).join("") || `<div class="empty">${escapeHtml(emptyText)}</div>`}
+    </div>
+  `;
+}
+
+function renderAdminSearchPicker(config) {
+  const { kind, label, placeholder, query, selectedItem } = config;
   return `
     <div class="admin-search-picker">
       <label>${escapeHtml(label)}<input type="search" data-admin-search="${escapeHtml(kind)}" value="${escapeHtml(query || "")}" placeholder="${escapeHtml(placeholder)}" autocomplete="off"></label>
@@ -811,13 +818,61 @@ function renderAdminSearchPicker({
           <button class="btn small secondary" type="button" data-admin-clear-selection="${escapeHtml(kind)}">새로 입력</button>
         </div>
       ` : `<p class="muted">검색 결과에서 항목을 선택하면 아래 입력폼에 불러옵니다. 선택하지 않으면 새 항목을 추가합니다.</p>`}
-      ${shouldShowResults
-        ? `<div class="admin-search-results">
-            ${results.map((item) => resultBuilder(item, selectedItem?.id || "")).join("") || `<div class="empty">${escapeHtml(emptyText)}</div>`}
-          </div>`
-        : `<p class="muted">${escapeHtml(emptyQueryText)}</p>`}
+      <div data-admin-search-results="${escapeHtml(kind)}">
+        ${renderAdminSearchResultsContent(config)}
+      </div>
     </div>
   `;
+}
+
+function adminSearchResultConfig(kind) {
+  if (kind === "instructor") {
+    const selectedId = state.adminSelections.instructorId || "";
+    return {
+      query: state.adminSearch.instructor,
+      selectedItem: state.instructors.find((instructor) => instructor.id === selectedId) || {},
+      items: state.instructors,
+      textBuilder: instructorSearchText,
+      resultBuilder: instructorResultHtml,
+      emptyText: "검색어에 맞는 강사가 없습니다.",
+      hideResultsUntilQuery: true,
+      emptyQueryText: "강사명, 직함, 소개, 홈페이지/SNS 중 하나를 입력하면 검색 결과가 표시됩니다.",
+    };
+  }
+  if (kind === "venue") {
+    const selectedId = state.adminSelections.venueId || "";
+    return {
+      query: state.adminSearch.venue,
+      selectedItem: state.venues.find((venue) => venue.id === selectedId) || {},
+      items: state.venues,
+      textBuilder: venueSearchText,
+      resultBuilder: venueResultHtml,
+      emptyText: "검색어에 맞는 장소가 없습니다.",
+      hideResultsUntilQuery: true,
+      emptyQueryText: "장소명, 주소, 세부 장소, 지도 URL 중 하나를 입력하면 검색 결과가 표시됩니다.",
+    };
+  }
+  if (kind === "course") {
+    const selectedId = state.adminSelections.courseId || "";
+    return {
+      query: state.adminSearch.course,
+      selectedItem: state.courses.find((course) => course.id === selectedId) || {},
+      items: state.courses,
+      textBuilder: courseSearchText,
+      resultBuilder: courseResultHtml,
+      emptyText: "검색어에 맞는 교육이 없습니다.",
+      hideResultsUntilQuery: true,
+      emptyQueryText: "교육명, 주제, 단체, 강사, 장소, 상태 중 하나를 입력하면 검색 결과가 표시됩니다.",
+    };
+  }
+  return null;
+}
+
+function updateAdminSearchResults(kind) {
+  const config = adminSearchResultConfig(kind);
+  const resultsContainer = document.querySelector(`[data-admin-search-results="${kind}"]`);
+  if (!config || !resultsContainer) return;
+  resultsContainer.innerHTML = renderAdminSearchResultsContent(config);
 }
 
 function courseInstructorSelectedHtml(selectedId = "") {
@@ -2543,16 +2598,7 @@ function bindEvents() {
     if (adminSearchInput) {
       const kind = adminSearchInput.dataset.adminSearch;
       state.adminSearch[kind] = adminSearchInput.value;
-      if (kind === "instructor") renderInstructors();
-      if (kind === "venue") renderVenues();
-      if (kind === "course") renderCourses();
-      window.requestAnimationFrame(() => {
-        const nextInput = document.querySelector(`[data-admin-search="${kind}"]`);
-        if (nextInput) {
-          nextInput.focus();
-          nextInput.setSelectionRange(nextInput.value.length, nextInput.value.length);
-        }
-      });
+      updateAdminSearchResults(kind);
       return;
     }
     if (event.target.matches("[data-course-instructor-search]")) {
