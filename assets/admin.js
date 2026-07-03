@@ -47,6 +47,10 @@ const state = {
     kind: "",
     query: "",
   },
+  dashboardStatsSearch: {
+    organization: "",
+    instructor: "",
+  },
   selectedArchiveId: "",
   organizations: [],
   instructors: [],
@@ -373,6 +377,9 @@ function average(values) {
   return valid.reduce((sum, value) => sum + Number(value), 0) / valid.length;
 }
 
+const ORGANIZATION_METRIC_HEADERS = ["단체", "등록 교육", "총 신청자", "평균 신청자", "참석 확인", "참석률", "후기", "교육당 후기"];
+const INSTRUCTOR_METRIC_HEADERS = ["강사", "교육", "총 신청자", "총 참석자", "평균 참석률", "후기", "교육당 후기", "연결 단체"];
+
 function organizationStats() {
   return state.organizations.map((organization) => {
     const courses = state.courses.filter((course) => course.organization_id === organization.id);
@@ -414,6 +421,32 @@ function instructorStats() {
   }).sort((a, b) => b.courseCount - a.courseCount || b.applicationCount - a.applicationCount || a.name.localeCompare(b.name, "ko"));
 }
 
+function organizationMetricRows(items = organizationStats()) {
+  return items.map((item) => [
+    item.name,
+    formatNumber(item.courseCount),
+    formatNumber(item.applicationCount),
+    formatDecimal(item.averageApplications),
+    formatNumber(item.attendedCount),
+    formatPercent(item.attendanceRate),
+    formatNumber(item.reviewCount),
+    formatDecimal(item.averageReviews),
+  ]);
+}
+
+function instructorMetricRows(items = instructorStats()) {
+  return items.map((item) => [
+    item.name,
+    formatNumber(item.courseCount),
+    formatNumber(item.applicationCount),
+    formatNumber(item.attendedCount),
+    formatPercent(item.averageAttendanceRate),
+    formatNumber(item.reviewCount),
+    formatDecimal(item.averageReviews),
+    formatNumber(item.connectedOrganizationCount),
+  ]);
+}
+
 function metricTable(headers, rows, emptyText) {
   if (!rows.length) return `<div class="empty">${escapeHtml(emptyText)}</div>`;
   return `
@@ -424,6 +457,101 @@ function metricTable(headers, rows, emptyText) {
       </table>
     </div>
   `;
+}
+
+function dashboardMetricConfig(kind) {
+  if (kind === "organization") {
+    return {
+      title: "단체별 운영 통계",
+      label: "단체 검색",
+      placeholder: "단체명을 입력하세요",
+      query: state.dashboardStatsSearch.organization,
+      headers: ORGANIZATION_METRIC_HEADERS,
+      items: organizationStats(),
+      rowsFor: organizationMetricRows,
+      emptyText: "검색어에 맞는 단체 통계가 없습니다.",
+      guideText: "단체명을 검색하면 해당 단체의 운영 통계만 표시됩니다.",
+      filename: "모두의인문학_단체별_운영통계.csv",
+    };
+  }
+  return {
+    title: "강사별 운영 통계",
+    label: "강사 검색",
+    placeholder: "강사명이나 직함을 입력하세요",
+    query: state.dashboardStatsSearch.instructor,
+    headers: INSTRUCTOR_METRIC_HEADERS,
+    items: instructorStats(),
+    rowsFor: instructorMetricRows,
+    emptyText: "검색어에 맞는 강사 통계가 없습니다.",
+    guideText: "강사명이나 직함을 검색하면 해당 강사의 운영 통계만 표시됩니다.",
+    filename: "모두의인문학_강사별_운영통계.csv",
+  };
+}
+
+function filteredDashboardMetricItems(kind) {
+  const config = dashboardMetricConfig(kind);
+  const query = normalizeSearchText(config.query);
+  if (!query) return [];
+  return config.items.filter((item) => itemMatchesSearch(item, query, (value) => value.name));
+}
+
+function dashboardMetricResultsHtml(kind) {
+  const config = dashboardMetricConfig(kind);
+  if (!normalizeSearchText(config.query)) return `<div class="empty compact-empty">${escapeHtml(config.guideText)}</div>`;
+  return metricTable(config.headers, config.rowsFor(filteredDashboardMetricItems(kind)), config.emptyText);
+}
+
+function renderDashboardMetricSection(kind) {
+  const config = dashboardMetricConfig(kind);
+  return `
+    <div class="section" style="margin-top: 16px;">
+      <div class="row-top">
+        <div>
+          <h3>${escapeHtml(config.title)}</h3>
+          <p class="muted">숨김 처리되지 않은 후기와 취소되지 않은 신청을 기준으로 계산합니다.</p>
+        </div>
+        <button class="btn small secondary" type="button" data-download-dashboard-stats="${escapeHtml(kind)}">전체 엑셀 다운로드</button>
+      </div>
+      <label class="dashboard-stat-search">${escapeHtml(config.label)}
+        <input type="search" data-dashboard-stat-search="${escapeHtml(kind)}" value="${escapeHtml(config.query)}" placeholder="${escapeHtml(config.placeholder)}" autocomplete="off">
+      </label>
+      <div data-dashboard-stat-results="${escapeHtml(kind)}">
+        ${dashboardMetricResultsHtml(kind)}
+      </div>
+    </div>
+  `;
+}
+
+function updateDashboardMetricResults(kind) {
+  const results = document.querySelector(`[data-dashboard-stat-results="${kind}"]`);
+  if (!results) return;
+  results.innerHTML = dashboardMetricResultsHtml(kind);
+}
+
+function safeCsvCell(value) {
+  const text = String(value ?? "");
+  const safeText = /^[=+\-@]/.test(text) ? `'${text}` : text;
+  return `"${safeText.replace(/"/g, '""')}"`;
+}
+
+function downloadCsv(filename, headers, rows) {
+  const csv = [headers, ...rows]
+    .map((row) => row.map(safeCsvCell).join(","))
+    .join("\r\n");
+  const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function downloadDashboardStats(kind) {
+  const config = dashboardMetricConfig(kind);
+  downloadCsv(config.filename, config.headers, config.rowsFor(config.items));
 }
 
 const REVIEW_KEYWORD_STOPWORDS = new Set([
@@ -1425,26 +1553,6 @@ function renderDashboard() {
   const verified = state.reviews.filter((review) => review.verification_status === "verified").length;
   const pending = state.reviews.filter((review) => review.verification_status === "pending").length;
   const applications = activeApplications();
-  const organizationRows = organizationStats().map((item) => [
-    item.name,
-    formatNumber(item.courseCount),
-    formatNumber(item.applicationCount),
-    formatDecimal(item.averageApplications),
-    formatNumber(item.attendedCount),
-    formatPercent(item.attendanceRate),
-    formatNumber(item.reviewCount),
-    formatDecimal(item.averageReviews),
-  ]);
-  const instructorRows = instructorStats().map((item) => [
-    item.name,
-    formatNumber(item.courseCount),
-    formatNumber(item.applicationCount),
-    formatNumber(item.attendedCount),
-    formatPercent(item.averageAttendanceRate),
-    formatNumber(item.reviewCount),
-    formatDecimal(item.averageReviews),
-    formatNumber(item.connectedOrganizationCount),
-  ]);
   elements.adminContent.innerHTML = `
     <h2>운영 현황</h2>
     <div class="stat-grid" style="margin-bottom: 16px;">
@@ -1459,24 +1567,8 @@ function renderDashboard() {
       <div class="section"><h3>후기 검수</h3><p>참여 확인 ${verified}개 · 확인 대기 ${pending}개</p></div>
       <div class="section"><h3>관리자 전용 추첨</h3><p>추첨 기록 ${state.draws.length}건 · 당첨 이력 ${state.winners.length}건</p></div>
     </div>
-    <div class="section" style="margin-top: 16px;">
-      <h3>단체별 운영 통계</h3>
-      <p class="muted">숨김 처리되지 않은 후기와 취소되지 않은 신청을 기준으로 계산합니다.</p>
-      ${metricTable(
-        ["단체", "등록 교육", "총 신청자", "평균 신청자", "참석 확인", "참석률", "후기", "교육당 후기"],
-        organizationRows,
-        "등록된 단체 통계가 없습니다."
-      )}
-    </div>
-    <div class="section" style="margin-top: 16px;">
-      <h3>강사별 운영 통계</h3>
-      <p class="muted">평균 참석률은 신청자가 있는 교육별 참석률의 평균입니다.</p>
-      ${metricTable(
-        ["강사", "교육", "총 신청자", "총 참석자", "평균 참석률", "후기", "교육당 후기", "연결 단체"],
-        instructorRows,
-        "등록된 강사 통계가 없습니다."
-      )}
-    </div>
+    ${renderDashboardMetricSection("organization")}
+    ${renderDashboardMetricSection("instructor")}
     <div class="section" style="margin-top: 16px;">
       <h3>후기 주요 단어</h3>
       <p class="muted">후기 본문에서 자주 등장한 단어를 간단 집계한 결과입니다. 조사와 일부 일반어는 제외했습니다.</p>
@@ -2714,9 +2806,14 @@ function bindEvents() {
     const deleteArchiveButton = event.target.closest("[data-delete-archive]");
     const deleteCourseButton = event.target.closest("[data-delete-course]");
     const deleteEntityButton = event.target.closest("[data-delete-entity]");
+    const downloadDashboardStatsButton = event.target.closest("[data-download-dashboard-stats]");
     const closeAdminNoticeButton = event.target.closest("[data-close-admin-notice]");
     if (closeAdminNoticeButton || event.target === elements.adminNoticeModal) {
       closeModal(elements.adminNoticeModal);
+      return;
+    }
+    if (downloadDashboardStatsButton) {
+      downloadDashboardStats(downloadDashboardStatsButton.dataset.downloadDashboardStats);
       return;
     }
     if (openCoursePickerButton) {
@@ -2983,6 +3080,12 @@ function bindEvents() {
   });
 
   document.body.addEventListener("input", (event) => {
+    if (event.target.matches("[data-dashboard-stat-search]")) {
+      const kind = event.target.dataset.dashboardStatSearch;
+      state.dashboardStatsSearch[kind] = event.target.value;
+      updateDashboardMetricResults(kind);
+      return;
+    }
     const adminSearchInput = event.target.closest("[data-admin-search]");
     if (adminSearchInput) {
       const kind = adminSearchInput.dataset.adminSearch;
