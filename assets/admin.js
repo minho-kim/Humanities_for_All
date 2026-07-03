@@ -296,7 +296,7 @@ function effectiveCourseStatus(course) {
   if (!course) return "";
   if (course.status === "cancelled") return "cancelled";
   if (course.status === "finished" || hasCourseEnded(course)) return "finished";
-  return course.status || "scheduled";
+  return "open";
 }
 
 function archiveTypeLabel(type) {

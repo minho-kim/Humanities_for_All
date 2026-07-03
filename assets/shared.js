@@ -3,7 +3,7 @@ export const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_rXN3xjZ2aJGeb00QMEs1KQ_b
 export const ARCHIVE_BUCKET = "archive-media";
 export const SITE_MEDIA_BUCKET = "site-media";
 export const ATTENDANCE_DOCUMENT_BUCKET = "attendance-documents";
-export const APP_VERSION = "2026.07.03.1146";
+export const APP_VERSION = "2026.07.03.1157";
 
 export const URL_RULES = Object.freeze({
   external: Object.freeze({ protocols: ["https:"] }),
