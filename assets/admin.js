@@ -32,11 +32,13 @@ const state = {
     error: "",
   },
   adminSelections: {
+    organizationId: "",
     instructorId: "",
     venueId: "",
     courseId: "",
   },
   adminSearch: {
+    organization: "",
     instructor: "",
     venue: "",
     course: "",
@@ -761,6 +763,21 @@ function instructorResultHtml(instructor, selectedId = "", actionAttribute = "da
   `;
 }
 
+function organizationResultHtml(organization, selectedId = "") {
+  const courseCount = connectedCoursesForEntity("organization", organization.id).length;
+  const logoUrl = normalizeSafeUrl(organization.logo_url, URL_RULES.image);
+  return `
+    <button class="admin-search-result ${organization.id === selectedId ? "selected" : ""}" type="button" data-admin-select="organization" data-entity-id="${escapeHtml(organization.id)}">
+      <span class="admin-search-title">
+        <strong>${escapeHtml(organization.name || "단체명 없음")}</strong>
+        <span>${escapeHtml(organization.is_active !== false ? "공개" : "숨김")}</span>
+      </span>
+      <span class="muted">연결 교육 ${courseCount}개 · ${escapeHtml(organization.slug || "주소 이름 없음")}${organization.contact_email ? ` · ${escapeHtml(organization.contact_email)}` : ""}</span>
+      ${logoUrl ? `<span class="muted">로고 등록됨</span>` : ""}
+    </button>
+  `;
+}
+
 function venueResultHtml(venue, selectedId = "") {
   const courseCount = connectedCoursesForEntity("venue", venue.id).length;
   return `
@@ -968,6 +985,7 @@ function clearCoursePickerSelection(kind) {
 function adminSearchSelectedLabel(kind, item) {
   if (!item) return "";
   if (kind === "course") return item.title || "교육명 없음";
+  if (kind === "organization") return item.name || "단체명 없음";
   if (kind === "venue") return `${item.name || "장소명 없음"}${item.address ? ` · ${item.address}` : ""}`;
   return `${item.name || "이름 없음"} · ${item.title || "직함 없음"}`;
 }
@@ -1012,6 +1030,19 @@ function renderAdminSearchPicker(config) {
 }
 
 function adminSearchResultConfig(kind) {
+  if (kind === "organization") {
+    const selectedId = state.adminSelections.organizationId || "";
+    return {
+      query: state.adminSearch.organization,
+      selectedItem: state.organizations.find((organization) => organization.id === selectedId) || {},
+      items: state.organizations,
+      textBuilder: organizationSearchText,
+      resultBuilder: organizationResultHtml,
+      emptyText: "검색어에 맞는 단체가 없습니다.",
+      hideResultsUntilQuery: true,
+      emptyQueryText: "단체명, 소개, 홈페이지, 연락처 중 하나를 입력하면 검색 결과가 표시됩니다.",
+    };
+  }
   if (kind === "instructor") {
     const selectedId = state.adminSelections.instructorId || "";
     return {
@@ -1288,21 +1319,25 @@ function renderOrganizationForm(organization = {}) {
 }
 
 function renderOrganizations() {
-  const selectedId = document.getElementById("organizationPicker")?.value || "";
+  const selectedId = state.adminSelections.organizationId || "";
   const selectedOrganization = state.organizations.find((organization) => organization.id === selectedId) || {};
   elements.adminContent.innerHTML = `
     <h2>단체 관리</h2>
     <p class="muted">공개 페이지의 참여 단체 소개와 단체별 교육 모아보기에 사용됩니다.</p>
-    <label>수정할 단체 선택<select id="organizationPicker"><option value="">새 단체</option>${state.organizations.map((organization) => `<option value="${organization.id}" ${organization.id === selectedId ? "selected" : ""}>${escapeHtml(organization.name)}</option>`).join("")}</select></label>
+    ${renderAdminSearchPicker({
+      kind: "organization",
+      label: "수정할 단체 검색",
+      placeholder: "단체명, 소개, 홈페이지, 연락처로 검색",
+      query: state.adminSearch.organization,
+      selectedItem: selectedOrganization,
+      items: state.organizations,
+      textBuilder: organizationSearchText,
+      resultBuilder: organizationResultHtml,
+      emptyText: "검색어에 맞는 단체가 없습니다.",
+      hideResultsUntilQuery: true,
+      emptyQueryText: "단체명, 소개, 홈페이지, 연락처 중 하나를 입력하면 검색 결과가 표시됩니다.",
+    })}
     <div style="margin-top: 14px;">${renderOrganizationForm(selectedOrganization)}</div>
-    <h3>참여 단체</h3>
-    <div class="table-list">
-      ${state.organizations.map((organization) => {
-        const courseCount = connectedCoursesForEntity("organization", organization.id).length;
-        const logoUrl = normalizeSafeUrl(organization.logo_url, URL_RULES.image);
-        return `<div class="table-row">${logoUrl ? `<img class="admin-thumb" src="${escapeHtml(logoUrl)}" alt="${escapeHtml(organization.name)} 로고">` : ""}<div class="row-top"><strong>${escapeHtml(organization.name)}</strong><span class="badge ${organization.is_active !== false ? "green" : "gray"}">${organization.is_active !== false ? "공개" : "숨김"}</span></div><span class="muted">교육 ${courseCount}개 · ${escapeHtml(organization.slug)}</span><p>${escapeHtml(organization.description || "소개 없음")}</p><div class="actions"><button class="btn small danger" type="button" data-delete-entity="organization" data-entity-id="${escapeHtml(organization.id)}">삭제</button></div></div>`;
-      }).join("") || `<div class="empty">등록된 단체가 없습니다.</div>`}
-    </div>
   `;
 }
 
@@ -1800,6 +1835,7 @@ async function saveOrganization(event) {
   if (!form) return;
   const formData = new FormData(form);
   const organizationId = formData.get("organization_id");
+  const isNewOrganization = !organizationId;
   const sortOrder = Number(formData.get("sort_order") || 0);
   const logoFile = formData.get("logo_file");
   const organizationName = String(formData.get("name") || "").trim();
@@ -1833,7 +1869,7 @@ async function saveOrganization(event) {
     ? supabase.from("organizations").update(payload).eq("id", organizationId)
     : supabase.from("organizations").insert(payload);
 
-  const { error } = await request;
+  const { data: savedOrganization, error } = await request.select().single();
   if (error) {
     await removeUploadedSiteImage(uploadedLogoPath);
     throw error;
@@ -1842,6 +1878,13 @@ async function saveOrganization(event) {
   showToast("단체 정보를 저장했습니다.");
   await reload();
   state.tab = "organizations";
+  if (isNewOrganization) {
+    state.adminSelections.organizationId = "";
+    state.adminSearch.organization = "";
+  } else {
+    state.adminSelections.organizationId = savedOrganization?.id || organizationId || "";
+    state.adminSearch.organization = payload.name;
+  }
   render();
 }
 
@@ -2496,6 +2539,10 @@ function bindEvents() {
     if (adminSelectButton) {
       const kind = adminSelectButton.dataset.adminSelect;
       const entityId = adminSelectButton.dataset.entityId || "";
+      if (kind === "organization") {
+        state.adminSelections.organizationId = entityId;
+        renderOrganizations();
+      }
       if (kind === "instructor") {
         state.adminSelections.instructorId = entityId;
         renderInstructors();
@@ -2512,6 +2559,11 @@ function bindEvents() {
     }
     if (adminClearSelectionButton) {
       const kind = adminClearSelectionButton.dataset.adminClearSelection;
+      if (kind === "organization") {
+        state.adminSelections.organizationId = "";
+        state.adminSearch.organization = "";
+        renderOrganizations();
+      }
       if (kind === "instructor") {
         state.adminSelections.instructorId = "";
         state.adminSearch.instructor = "";
@@ -2708,8 +2760,8 @@ function bindEvents() {
       renderArchive();
     }
     if (event.target.id === "newOrganizationButton") {
-      const picker = document.getElementById("organizationPicker");
-      if (picker) picker.value = "";
+      state.adminSelections.organizationId = "";
+      state.adminSearch.organization = "";
       renderOrganizations();
     }
     if (event.target.id === "newInstructorButton") {
@@ -2725,7 +2777,6 @@ function bindEvents() {
   });
 
   document.body.addEventListener("change", (event) => {
-    if (event.target.id === "organizationPicker") renderOrganizations();
     if (event.target.id === "archivePicker") {
       state.selectedArchiveId = event.target.value;
       renderArchive();
