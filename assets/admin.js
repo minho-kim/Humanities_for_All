@@ -31,6 +31,17 @@ const state = {
     isLoading: false,
     error: "",
   },
+  adminSelections: {
+    instructorId: "",
+    venueId: "",
+    courseId: "",
+  },
+  adminSearch: {
+    instructor: "",
+    venue: "",
+    course: "",
+    courseInstructor: "",
+  },
   selectedArchiveId: "",
   organizations: [],
   instructors: [],
@@ -88,6 +99,8 @@ const ATTENDANCE_DOCUMENT_TYPES = new Map([
   ["image/tiff", ".tiff"],
 ]);
 const ATTENDANCE_DOCUMENT_MAX_BYTES = 15 * 1024 * 1024;
+const ADMIN_SEARCH_LIMIT = 10;
+const COURSE_INSTRUCTOR_SEARCH_LIMIT = 8;
 const rosterNameSorter = new Intl.Collator("ko-KR", {
   numeric: true,
   sensitivity: "base",
@@ -140,6 +153,23 @@ function optionList(items, selectedId = "") {
   return items.map((item) => `<option value="${item.id}" ${item.id === selectedId ? "selected" : ""}>${escapeHtml(item.name || item.title)}</option>`).join("");
 }
 
+function normalizeSearchText(value) {
+  return String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function itemMatchesSearch(item, query, textBuilder) {
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) return true;
+  const haystack = normalizeSearchText(textBuilder(item));
+  return normalizedQuery.split(" ").every((token) => haystack.includes(token));
+}
+
+function searchItems(items, query, textBuilder, limit = ADMIN_SEARCH_LIMIT) {
+  return items
+    .filter((item) => itemMatchesSearch(item, query, textBuilder))
+    .slice(0, limit);
+}
+
 function courseName(courseId) {
   return state.courses.find((course) => course.id === courseId)?.title || "교육 미정";
 }
@@ -158,6 +188,48 @@ function instructorById(instructorId) {
 
 function venueById(venueId) {
   return state.venues.find((venue) => venue.id === venueId);
+}
+
+function instructorSearchText(instructor) {
+  return [
+    instructor.name,
+    instructor.title,
+    instructor.bio,
+    instructor.profile_url,
+    instructor.is_active === false ? "숨김 비공개" : "사용 공개",
+  ].join(" ");
+}
+
+function venueSearchText(venue) {
+  return [
+    venue.name,
+    venue.address,
+    venue.detail,
+    venue.kakao_map_url,
+    venue.naver_place_url,
+    venue.is_online ? "온라인" : "오프라인",
+  ].join(" ");
+}
+
+function courseSearchText(course) {
+  const organization = organizationById(course.organization_id);
+  const instructor = instructorById(course.instructor_id);
+  const venue = venueById(course.venue_id);
+  const status = effectiveCourseStatus(course);
+  return [
+    course.title,
+    course.topic,
+    course.summary,
+    course.description,
+    statusLabels[status],
+    organization?.name,
+    instructor?.name,
+    instructor?.title,
+    instructor?.bio,
+    venue?.name,
+    venue?.address,
+    shortDate(course.starts_at),
+  ].join(" ");
 }
 
 function archiveById(archiveId) {
@@ -652,6 +724,136 @@ function connectedCoursesHtml(courses) {
   `;
 }
 
+function instructorResultHtml(instructor, selectedId = "", actionAttribute = "data-admin-select=\"instructor\"") {
+  const courseCount = connectedCoursesForEntity("instructor", instructor.id).length;
+  return `
+    <button class="admin-search-result ${instructor.id === selectedId ? "selected" : ""}" type="button" ${actionAttribute} data-entity-id="${escapeHtml(instructor.id)}">
+      <span class="admin-search-title">
+        <strong>${escapeHtml(instructor.name || "이름 없음")}</strong>
+        <span>${escapeHtml(instructor.title || "직함 없음")}</span>
+      </span>
+      <span class="muted">연결 교육 ${courseCount}개${instructor.bio ? ` · ${escapeHtml(instructor.bio)}` : ""}</span>
+    </button>
+  `;
+}
+
+function courseInstructorResultHtml(instructor, selectedId = "") {
+  const courseCount = connectedCoursesForEntity("instructor", instructor.id).length;
+  return `
+    <button class="admin-search-result ${instructor.id === selectedId ? "selected" : ""}" type="button" data-course-instructor-select="${escapeHtml(instructor.id)}">
+      <span class="admin-search-title">
+        <strong>${escapeHtml(instructor.name || "이름 없음")}</strong>
+        <span>${escapeHtml(instructor.title || "직함 없음")}</span>
+      </span>
+      <span class="muted">연결 교육 ${courseCount}개${instructor.bio ? ` · ${escapeHtml(instructor.bio)}` : ""}</span>
+    </button>
+  `;
+}
+
+function venueResultHtml(venue, selectedId = "") {
+  const courseCount = connectedCoursesForEntity("venue", venue.id).length;
+  return `
+    <button class="admin-search-result ${venue.id === selectedId ? "selected" : ""}" type="button" data-admin-select="venue" data-entity-id="${escapeHtml(venue.id)}">
+      <span class="admin-search-title">
+        <strong>${escapeHtml(venue.name || "장소명 없음")}</strong>
+        <span>${escapeHtml(venue.is_online ? "온라인" : "오프라인")}</span>
+      </span>
+      <span class="muted">연결 교육 ${courseCount}개 · ${escapeHtml(venue.address || "주소 없음")}${venue.detail ? ` · ${escapeHtml(venue.detail)}` : ""}</span>
+    </button>
+  `;
+}
+
+function courseResultHtml(course, selectedId = "") {
+  const organization = organizationById(course.organization_id);
+  const instructor = instructorById(course.instructor_id);
+  const venue = venueById(course.venue_id);
+  const status = effectiveCourseStatus(course);
+  return `
+    <button class="admin-search-result ${course.id === selectedId ? "selected" : ""}" type="button" data-admin-select="course" data-entity-id="${escapeHtml(course.id)}">
+      <span class="admin-search-title">
+        <strong>${escapeHtml(course.title || "교육명 없음")}</strong>
+        ${statusBadge(status)}
+      </span>
+      <span class="muted">${escapeHtml(shortDate(course.starts_at))} · ${escapeHtml(course.topic || "주제 없음")} · ${escapeHtml(organization?.name || "단체 미정")} · ${escapeHtml(instructor?.name || "강사 미정")} ${instructor?.title ? `(${escapeHtml(instructor.title)})` : ""} · ${escapeHtml(venue?.name || "장소 미정")}</span>
+    </button>
+  `;
+}
+
+function adminSearchSelectedLabel(kind, item) {
+  if (!item) return "";
+  if (kind === "course") return item.title || "교육명 없음";
+  if (kind === "venue") return `${item.name || "장소명 없음"}${item.address ? ` · ${item.address}` : ""}`;
+  return `${item.name || "이름 없음"} · ${item.title || "직함 없음"}`;
+}
+
+function renderAdminSearchPicker({ kind, label, placeholder, query, selectedItem, items, textBuilder, resultBuilder, emptyText }) {
+  const results = searchItems(items, query, textBuilder);
+  return `
+    <div class="admin-search-picker">
+      <label>${escapeHtml(label)}<input type="search" data-admin-search="${escapeHtml(kind)}" value="${escapeHtml(query || "")}" placeholder="${escapeHtml(placeholder)}" autocomplete="off"></label>
+      ${selectedItem?.id ? `
+        <div class="admin-search-selected">
+          <span>수정 중: <strong>${escapeHtml(adminSearchSelectedLabel(kind, selectedItem))}</strong></span>
+          <button class="btn small secondary" type="button" data-admin-clear-selection="${escapeHtml(kind)}">새로 입력</button>
+        </div>
+      ` : `<p class="muted">검색 결과에서 항목을 선택하면 아래 입력폼에 불러옵니다. 선택하지 않으면 새 항목을 추가합니다.</p>`}
+      <div class="admin-search-results">
+        ${results.map((item) => resultBuilder(item, selectedItem?.id || "")).join("") || `<div class="empty">${escapeHtml(emptyText)}</div>`}
+      </div>
+    </div>
+  `;
+}
+
+function courseInstructorSelectedHtml(selectedId = "") {
+  const instructor = instructorById(selectedId);
+  if (!instructor) return `<p class="muted">강사를 선택하지 않았습니다. 검색 결과에서 강사를 선택하거나 비워두면 강사 미정으로 저장됩니다.</p>`;
+  return `
+    <div class="admin-search-selected">
+      <span>선택한 강사: <strong>${escapeHtml(instructor.name || "이름 없음")}</strong> · ${escapeHtml(instructor.title || "직함 없음")}</span>
+      <button class="btn small secondary" type="button" data-course-instructor-clear>선택 해제</button>
+    </div>
+  `;
+}
+
+function courseInstructorSearchResultsHtml(selectedId = "") {
+  const results = searchItems(
+    state.instructors,
+    state.adminSearch.courseInstructor,
+    instructorSearchText,
+    COURSE_INSTRUCTOR_SEARCH_LIMIT,
+  );
+  return results.map((instructor) => courseInstructorResultHtml(instructor, selectedId)).join("")
+    || `<div class="empty">검색어에 맞는 강사가 없습니다. 강사 관리에서 먼저 강사를 추가해 주세요.</div>`;
+}
+
+function renderCourseInstructorSearch(selectedId = "") {
+  return `
+    <div class="admin-search-picker admin-grid-wide">
+      <label>강사 검색<input type="search" data-course-instructor-search value="${escapeHtml(state.adminSearch.courseInstructor || "")}" placeholder="강사명, 직함, 소개, 홈페이지/SNS로 검색" autocomplete="off"></label>
+      <input type="hidden" name="instructor_id" value="${escapeHtml(selectedId || "")}">
+      <div id="courseInstructorSelected">${courseInstructorSelectedHtml(selectedId)}</div>
+      <div id="courseInstructorSearchResults" class="admin-search-results compact">
+        ${courseInstructorSearchResultsHtml(selectedId)}
+      </div>
+    </div>
+  `;
+}
+
+function updateCourseInstructorSearchResults() {
+  const hiddenInput = document.querySelector("#courseForm input[name='instructor_id']");
+  const selectedId = hiddenInput?.value || "";
+  const selectedContainer = document.getElementById("courseInstructorSelected");
+  const resultsContainer = document.getElementById("courseInstructorSearchResults");
+  if (selectedContainer) selectedContainer.innerHTML = courseInstructorSelectedHtml(selectedId);
+  if (resultsContainer) resultsContainer.innerHTML = courseInstructorSearchResultsHtml(selectedId);
+}
+
+function setCourseFormInstructor(instructorId = "") {
+  const hiddenInput = document.querySelector("#courseForm input[name='instructor_id']");
+  if (hiddenInput) hiddenInput.value = instructorId;
+  updateCourseInstructorSearchResults();
+}
+
 function showConnectedEntityNotice(kind, item, courses) {
   const config = managedEntityConfig(kind);
   openAdminNotice(
@@ -926,12 +1128,22 @@ function renderInstructorForm(instructor = {}) {
 }
 
 function renderInstructors() {
-  const selectedId = document.getElementById("instructorPicker")?.value || "";
+  const selectedId = state.adminSelections.instructorId || "";
   const selectedInstructor = state.instructors.find((instructor) => instructor.id === selectedId) || {};
   elements.adminContent.innerHTML = `
     <h2>강사 관리</h2>
     <p class="muted">교육 상세 화면에서 강사 프로필로 표시됩니다.</p>
-    <label>수정할 강사 선택<select id="instructorPicker"><option value="">새 강사</option>${state.instructors.map((instructor) => `<option value="${instructor.id}" ${instructor.id === selectedId ? "selected" : ""}>${escapeHtml(instructor.name)}</option>`).join("")}</select></label>
+    ${renderAdminSearchPicker({
+      kind: "instructor",
+      label: "수정할 강사 검색",
+      placeholder: "강사명, 직함, 소개, 홈페이지/SNS로 검색",
+      query: state.adminSearch.instructor,
+      selectedItem: selectedInstructor,
+      items: state.instructors,
+      textBuilder: instructorSearchText,
+      resultBuilder: instructorResultHtml,
+      emptyText: "검색어에 맞는 강사가 없습니다.",
+    })}
     <div style="margin-top: 14px;">${renderInstructorForm(selectedInstructor)}</div>
     <h3>강사 목록</h3>
     <div class="table-list">
@@ -970,12 +1182,22 @@ function renderVenueForm(venue = {}) {
 }
 
 function renderVenues() {
-  const selectedId = document.getElementById("venuePicker")?.value || "";
+  const selectedId = state.adminSelections.venueId || "";
   const selectedVenue = state.venues.find((venue) => venue.id === selectedId) || {};
   elements.adminContent.innerHTML = `
     <h2>장소 관리</h2>
     <p class="muted">교육 상세 화면에서 주소, 카카오맵, 네이버플레이스 링크로 표시됩니다. 정확한 장소 페이지가 있으면 URL을 붙여 넣으세요.</p>
-    <label>수정할 장소 선택<select id="venuePicker"><option value="">새 장소</option>${state.venues.map((venue) => `<option value="${venue.id}" ${venue.id === selectedId ? "selected" : ""}>${escapeHtml(venue.name)}</option>`).join("")}</select></label>
+    ${renderAdminSearchPicker({
+      kind: "venue",
+      label: "수정할 장소 검색",
+      placeholder: "장소명, 주소, 세부 장소, 지도 URL로 검색",
+      query: state.adminSearch.venue,
+      selectedItem: selectedVenue,
+      items: state.venues,
+      textBuilder: venueSearchText,
+      resultBuilder: venueResultHtml,
+      emptyText: "검색어에 맞는 장소가 없습니다.",
+    })}
     <div style="margin-top: 14px;">${renderVenueForm(selectedVenue)}</div>
     <h3>장소 목록</h3>
     <div class="table-list">
@@ -1009,7 +1231,7 @@ function renderCourseForm(course = {}) {
         <label>교육명<input name="title" value="${escapeHtml(course.title || "")}" required></label>
         <label>주제<input name="topic" value="${escapeHtml(course.topic || "")}" required></label>
         <label>단체<select name="organization_id" required><option value="">선택</option>${optionList(state.organizations, course.organization_id)}</select></label>
-        <label>강사<select name="instructor_id"><option value="">선택</option>${optionList(state.instructors, course.instructor_id)}</select></label>
+        ${renderCourseInstructorSearch(course.instructor_id || "")}
         <label>장소<select name="venue_id"><option value="">선택</option>${optionList(state.venues, course.venue_id)}</select></label>
         <label>상태<select name="status"><option value="scheduled" ${selectedStatus === "scheduled" ? "selected" : ""}>예정</option><option value="open" ${selectedStatus === "open" ? "selected" : ""}>모집 중</option><option value="finished" ${selectedStatus === "finished" ? "selected" : ""}>종료</option><option value="cancelled" ${selectedStatus === "cancelled" ? "selected" : ""}>취소</option></select></label>
         <label>시작 일시<input name="starts_at" type="datetime-local" value="${escapeHtml(startValue)}" min="${escapeHtml(startMinValue)}" required></label>
@@ -1038,12 +1260,22 @@ function renderCourseForm(course = {}) {
 }
 
 function renderCourses() {
-  const selectedId = document.getElementById("coursePicker")?.value || "";
+  const selectedId = state.adminSelections.courseId || "";
   const selectedCourse = state.courses.find((course) => course.id === selectedId) || {};
   elements.adminContent.innerHTML = `
     <h2>교육 관리</h2>
     <p class="muted">새 교육을 등록하거나 기존 교육을 수정합니다. 회차는 첫 회차 기준으로 함께 생성·수정됩니다.</p>
-    <label>수정할 교육 선택<select id="coursePicker"><option value="">새 교육</option>${state.courses.map((course) => `<option value="${course.id}" ${course.id === selectedId ? "selected" : ""}>${escapeHtml(course.title)}</option>`).join("")}</select></label>
+    ${renderAdminSearchPicker({
+      kind: "course",
+      label: "수정할 교육 검색",
+      placeholder: "교육명, 주제, 단체, 강사, 장소, 상태로 검색",
+      query: state.adminSearch.course,
+      selectedItem: selectedCourse,
+      items: state.courses,
+      textBuilder: courseSearchText,
+      resultBuilder: courseResultHtml,
+      emptyText: "검색어에 맞는 교육이 없습니다.",
+    })}
     <div style="margin-top: 14px;">${renderCourseForm(selectedCourse)}</div>
     <h3>최근 교육</h3>
     <div class="table-list">
@@ -1457,7 +1689,7 @@ async function saveInstructor(event) {
     ? supabase.from("instructors").update(payload).eq("id", instructorId)
     : supabase.from("instructors").insert(payload);
 
-  const { error } = await request;
+  const { data: savedInstructor, error } = await request.select().single();
   if (error) {
     await removeUploadedSiteImage(uploadedPhotoPath);
     throw error;
@@ -1466,6 +1698,8 @@ async function saveInstructor(event) {
   showToast("강사 정보를 저장했습니다.");
   await reload();
   state.tab = "instructors";
+  state.adminSelections.instructorId = savedInstructor?.id || instructorId || "";
+  state.adminSearch.instructor = payload.name;
   render();
 }
 
@@ -1493,12 +1727,14 @@ async function saveVenue(event) {
     ? supabase.from("venues").update(payload).eq("id", venueId)
     : supabase.from("venues").insert(payload);
 
-  const { error } = await request;
+  const { data: savedVenue, error } = await request.select().single();
   if (error) throw error;
 
   showToast("장소 정보를 저장했습니다.");
   await reload();
   state.tab = "venues";
+  state.adminSelections.venueId = savedVenue?.id || venueId || "";
+  state.adminSearch.venue = payload.name;
   render();
 }
 
@@ -1601,6 +1837,9 @@ async function saveCourse(event) {
   showToast(hasSelectedFile(formData.get("course_file")) ? "교육과 자료를 저장했습니다." : "교육을 저장했습니다.");
   await reload();
   state.tab = "courses";
+  state.adminSelections.courseId = savedCourse.id || courseId || "";
+  state.adminSearch.course = payload.title;
+  state.adminSearch.courseInstructor = "";
   render();
 }
 
@@ -2011,6 +2250,10 @@ function bindEvents() {
 
   document.body.addEventListener("click", async (event) => {
     const tabButton = event.target.closest("[data-admin-tab]");
+    const adminSelectButton = event.target.closest("[data-admin-select]");
+    const adminClearSelectionButton = event.target.closest("[data-admin-clear-selection]");
+    const courseInstructorSelectButton = event.target.closest("[data-course-instructor-select]");
+    const courseInstructorClearButton = event.target.closest("[data-course-instructor-clear]");
     const reviewButton = event.target.closest("[data-review-action]");
     const attendanceButton = event.target.closest("[data-confirm-attendance]");
     const unconfirmAttendanceButton = event.target.closest("[data-unconfirm-attendance]");
@@ -2024,6 +2267,52 @@ function bindEvents() {
     const closeAdminNoticeButton = event.target.closest("[data-close-admin-notice]");
     if (closeAdminNoticeButton || event.target === elements.adminNoticeModal) {
       closeModal(elements.adminNoticeModal);
+      return;
+    }
+    if (adminSelectButton) {
+      const kind = adminSelectButton.dataset.adminSelect;
+      const entityId = adminSelectButton.dataset.entityId || "";
+      if (kind === "instructor") {
+        state.adminSelections.instructorId = entityId;
+        renderInstructors();
+      }
+      if (kind === "venue") {
+        state.adminSelections.venueId = entityId;
+        renderVenues();
+      }
+      if (kind === "course") {
+        state.adminSelections.courseId = entityId;
+        state.adminSearch.courseInstructor = "";
+        renderCourses();
+      }
+      return;
+    }
+    if (adminClearSelectionButton) {
+      const kind = adminClearSelectionButton.dataset.adminClearSelection;
+      if (kind === "instructor") {
+        state.adminSelections.instructorId = "";
+        state.adminSearch.instructor = "";
+        renderInstructors();
+      }
+      if (kind === "venue") {
+        state.adminSelections.venueId = "";
+        state.adminSearch.venue = "";
+        renderVenues();
+      }
+      if (kind === "course") {
+        state.adminSelections.courseId = "";
+        state.adminSearch.course = "";
+        state.adminSearch.courseInstructor = "";
+        renderCourses();
+      }
+      return;
+    }
+    if (courseInstructorSelectButton) {
+      setCourseFormInstructor(courseInstructorSelectButton.dataset.courseInstructorSelect || "");
+      return;
+    }
+    if (courseInstructorClearButton) {
+      setCourseFormInstructor("");
       return;
     }
     if (tabButton) {
@@ -2194,8 +2483,9 @@ function bindEvents() {
       return;
     }
     if (event.target.id === "newCourseButton") {
-      const picker = document.getElementById("coursePicker");
-      if (picker) picker.value = "";
+      state.adminSelections.courseId = "";
+      state.adminSearch.course = "";
+      state.adminSearch.courseInstructor = "";
       renderCourses();
     }
     if (event.target.id === "newArchiveButton") {
@@ -2210,22 +2500,19 @@ function bindEvents() {
       renderOrganizations();
     }
     if (event.target.id === "newInstructorButton") {
-      const picker = document.getElementById("instructorPicker");
-      if (picker) picker.value = "";
+      state.adminSelections.instructorId = "";
+      state.adminSearch.instructor = "";
       renderInstructors();
     }
     if (event.target.id === "newVenueButton") {
-      const picker = document.getElementById("venuePicker");
-      if (picker) picker.value = "";
+      state.adminSelections.venueId = "";
+      state.adminSearch.venue = "";
       renderVenues();
     }
   });
 
   document.body.addEventListener("change", (event) => {
     if (event.target.id === "organizationPicker") renderOrganizations();
-    if (event.target.id === "instructorPicker") renderInstructors();
-    if (event.target.id === "venuePicker") renderVenues();
-    if (event.target.id === "coursePicker") renderCourses();
     if (event.target.id === "archivePicker") {
       state.selectedArchiveId = event.target.value;
       renderArchive();
@@ -2237,6 +2524,27 @@ function bindEvents() {
   });
 
   document.body.addEventListener("input", (event) => {
+    const adminSearchInput = event.target.closest("[data-admin-search]");
+    if (adminSearchInput) {
+      const kind = adminSearchInput.dataset.adminSearch;
+      state.adminSearch[kind] = adminSearchInput.value;
+      if (kind === "instructor") renderInstructors();
+      if (kind === "venue") renderVenues();
+      if (kind === "course") renderCourses();
+      window.requestAnimationFrame(() => {
+        const nextInput = document.querySelector(`[data-admin-search="${kind}"]`);
+        if (nextInput) {
+          nextInput.focus();
+          nextInput.setSelectionRange(nextInput.value.length, nextInput.value.length);
+        }
+      });
+      return;
+    }
+    if (event.target.matches("[data-course-instructor-search]")) {
+      state.adminSearch.courseInstructor = event.target.value;
+      updateCourseInstructorSearchResults();
+      return;
+    }
     if (event.target.matches("#courseForm input[name='starts_at']")) {
       const endInput = document.querySelector("#courseForm input[name='ends_at']");
       if (endInput) endInput.min = event.target.value || currentMinuteLocalDateTimeValue();
