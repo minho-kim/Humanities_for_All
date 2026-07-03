@@ -135,19 +135,41 @@ function courseStartAt(course) {
   return course?.sessions?.[0]?.starts_at || course?.starts_at || "";
 }
 
+function seoulDateKey(value) {
+  if (!value) return "";
+  const parts = new Intl.DateTimeFormat("en", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(value));
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  return year && month && day ? `${year}-${month}-${day}` : "";
+}
+
+function hasNoExplicitCourseEndElapsed(startsAt) {
+  const courseDate = seoulDateKey(startsAt);
+  const today = seoulDateKey(new Date());
+  return Boolean(courseDate && today && today > courseDate);
+}
+
 function hasCourseStarted(course) {
   const startsAt = courseStartAt(course);
   return startsAt ? new Date(startsAt).getTime() <= Date.now() : false;
 }
 
 function courseEndAt(course) {
-  return course?.ends_at || course?.sessions?.[course.sessions.length - 1]?.ends_at || courseStartAt(course);
+  return course?.ends_at || course?.sessions?.[course.sessions.length - 1]?.ends_at || "";
 }
 
 function hasCourseEnded(course) {
   if (course?.status === "finished") return true;
+  const startsAt = courseStartAt(course);
   const endsAt = courseEndAt(course);
-  return endsAt ? new Date(endsAt).getTime() <= Date.now() : false;
+  if (endsAt) return new Date(endsAt).getTime() <= Date.now();
+  return hasNoExplicitCourseEndElapsed(startsAt);
 }
 
 function effectiveCourseStatus(course) {
@@ -1534,7 +1556,6 @@ function openCourseDetail(courseId) {
   const instructorProfileUrl = normalizeSafeUrl(course.instructor?.profile_url, URL_RULES.external);
   const kakaoUrl = kakaoMapUrl(course.venue);
   const naverUrl = naverPlaceUrl(course.venue);
-  const applicationUrl = normalizeSafeUrl(course.application_url, URL_RULES.external);
   const canApply = canApplyToCourse(course);
   const canReview = canWriteReviewForCourse(course);
   const canAddCalendar = !["finished", "cancelled"].includes(course.status);
@@ -1556,7 +1577,6 @@ function openCourseDetail(courseId) {
         </ul>
         <div class="actions" style="margin-top: 14px;">
           ${canApply ? `<button class="btn small" type="button" data-apply-course="${course.id}">신청하기</button>` : `<button class="btn small secondary" type="button" disabled>신청 마감</button>`}
-          ${canApply && applicationUrl ? `<a class="btn small secondary" href="${escapeHtml(applicationUrl)}" target="_blank" rel="noreferrer">외부 신청 링크</a>` : ""}
           ${canAddCalendar ? `<button class="btn small secondary" type="button" data-add-calendar="${course.id}">캘린더 등록</button>` : ""}
           ${canReview ? `<button class="btn small secondary" type="button" data-login-for-review>${myReviewForCourse(course.id) ? "내 후기 수정" : "후기 쓰기"}</button>` : ""}
         </div>

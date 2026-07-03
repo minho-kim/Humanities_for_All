@@ -363,6 +363,19 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 .content-stack { display: grid; gap: 16px; margin-bottom: 22px; }
 .admin-search-picker { display: grid; gap: 10px; }
 .admin-grid-wide { grid-column: 1 / -1; }
+.course-picker-field {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+.course-picker-field .admin-search-selected {
+  color: var(--ink);
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+.course-picker-label { display: inline-flex; align-items: center; min-height: 20px; }
 .admin-search-selected {
   display: flex;
   justify-content: space-between;
