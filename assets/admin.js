@@ -786,8 +786,22 @@ function adminSearchSelectedLabel(kind, item) {
   return `${item.name || "이름 없음"} · ${item.title || "직함 없음"}`;
 }
 
-function renderAdminSearchPicker({ kind, label, placeholder, query, selectedItem, items, textBuilder, resultBuilder, emptyText }) {
-  const results = searchItems(items, query, textBuilder);
+function renderAdminSearchPicker({
+  kind,
+  label,
+  placeholder,
+  query,
+  selectedItem,
+  items,
+  textBuilder,
+  resultBuilder,
+  emptyText,
+  hideResultsUntilQuery = false,
+  emptyQueryText = "검색어를 입력하면 결과가 표시됩니다.",
+}) {
+  const hasQuery = Boolean(normalizeSearchText(query));
+  const shouldShowResults = !hideResultsUntilQuery || hasQuery;
+  const results = shouldShowResults ? searchItems(items, query, textBuilder) : [];
   return `
     <div class="admin-search-picker">
       <label>${escapeHtml(label)}<input type="search" data-admin-search="${escapeHtml(kind)}" value="${escapeHtml(query || "")}" placeholder="${escapeHtml(placeholder)}" autocomplete="off"></label>
@@ -797,9 +811,11 @@ function renderAdminSearchPicker({ kind, label, placeholder, query, selectedItem
           <button class="btn small secondary" type="button" data-admin-clear-selection="${escapeHtml(kind)}">새로 입력</button>
         </div>
       ` : `<p class="muted">검색 결과에서 항목을 선택하면 아래 입력폼에 불러옵니다. 선택하지 않으면 새 항목을 추가합니다.</p>`}
-      <div class="admin-search-results">
-        ${results.map((item) => resultBuilder(item, selectedItem?.id || "")).join("") || `<div class="empty">${escapeHtml(emptyText)}</div>`}
-      </div>
+      ${shouldShowResults
+        ? `<div class="admin-search-results">
+            ${results.map((item) => resultBuilder(item, selectedItem?.id || "")).join("") || `<div class="empty">${escapeHtml(emptyText)}</div>`}
+          </div>`
+        : `<p class="muted">${escapeHtml(emptyQueryText)}</p>`}
     </div>
   `;
 }
@@ -1143,17 +1159,10 @@ function renderInstructors() {
       textBuilder: instructorSearchText,
       resultBuilder: instructorResultHtml,
       emptyText: "검색어에 맞는 강사가 없습니다.",
+      hideResultsUntilQuery: true,
+      emptyQueryText: "강사명, 직함, 소개, 홈페이지/SNS 중 하나를 입력하면 검색 결과가 표시됩니다.",
     })}
     <div style="margin-top: 14px;">${renderInstructorForm(selectedInstructor)}</div>
-    <h3>강사 목록</h3>
-    <div class="table-list">
-      ${state.instructors.map((instructor) => {
-        const photoUrl = normalizeSafeUrl(instructor.photo_url, URL_RULES.image);
-        const profileUrl = normalizeSafeUrl(instructor.profile_url, URL_RULES.external);
-        const courseCount = connectedCoursesForEntity("instructor", instructor.id).length;
-        return `<div class="table-row">${photoUrl ? `<img class="admin-thumb round" src="${escapeHtml(photoUrl)}" alt="${escapeHtml(instructor.name)} 사진">` : ""}<div class="row-top"><strong>${escapeHtml(instructor.name)}</strong><span class="badge ${instructor.is_active !== false ? "green" : "gray"}">${instructor.is_active !== false ? "사용" : "숨김"}</span></div><span class="muted">연결 교육 ${courseCount}개 · ${escapeHtml(instructor.title || "직함 없음")}</span>${instructor.bio ? `<p>${escapeHtml(instructor.bio)}</p>` : ""}<div class="actions">${profileUrl ? `<a class="btn small secondary" href="${escapeHtml(profileUrl)}" target="_blank" rel="noreferrer">홈페이지/SNS</a>` : ""}<button class="btn small danger" type="button" data-delete-entity="instructor" data-entity-id="${escapeHtml(instructor.id)}">삭제</button></div></div>`;
-      }).join("") || `<div class="empty">등록된 강사가 없습니다.</div>`}
-    </div>
   `;
 }
 
@@ -1197,17 +1206,10 @@ function renderVenues() {
       textBuilder: venueSearchText,
       resultBuilder: venueResultHtml,
       emptyText: "검색어에 맞는 장소가 없습니다.",
+      hideResultsUntilQuery: true,
+      emptyQueryText: "장소명, 주소, 세부 장소, 지도 URL 중 하나를 입력하면 검색 결과가 표시됩니다.",
     })}
     <div style="margin-top: 14px;">${renderVenueForm(selectedVenue)}</div>
-    <h3>장소 목록</h3>
-    <div class="table-list">
-      ${state.venues.map((venue) => {
-        const kakaoUrl = normalizeSafeUrl(venue.kakao_map_url, URL_RULES.kakaoMap);
-        const naverUrl = normalizeSafeUrl(venue.naver_place_url, URL_RULES.naverPlace);
-        const courseCount = connectedCoursesForEntity("venue", venue.id).length;
-        return `<div class="table-row"><div class="row-top"><strong>${escapeHtml(venue.name)}</strong><span class="badge ${venue.is_online ? "green" : "gray"}">${venue.is_online ? "온라인" : "오프라인"}</span></div><span class="muted">연결 교육 ${courseCount}개 · ${escapeHtml(venue.address || "주소 없음")} ${venue.detail ? `· ${escapeHtml(venue.detail)}` : ""}</span><div class="actions">${kakaoUrl ? `<a class="btn small secondary" href="${escapeHtml(kakaoUrl)}" target="_blank" rel="noreferrer">카카오맵</a>` : ""}${naverUrl ? `<a class="btn small secondary" href="${escapeHtml(naverUrl)}" target="_blank" rel="noreferrer">네이버플레이스</a>` : ""}<button class="btn small danger" type="button" data-delete-entity="venue" data-entity-id="${escapeHtml(venue.id)}">삭제</button></div></div>`;
-      }).join("") || `<div class="empty">등록된 장소가 없습니다.</div>`}
-    </div>
   `;
 }
 
@@ -1275,15 +1277,10 @@ function renderCourses() {
       textBuilder: courseSearchText,
       resultBuilder: courseResultHtml,
       emptyText: "검색어에 맞는 교육이 없습니다.",
+      hideResultsUntilQuery: true,
+      emptyQueryText: "교육명, 주제, 단체, 강사, 장소, 상태 중 하나를 입력하면 검색 결과가 표시됩니다.",
     })}
     <div style="margin-top: 14px;">${renderCourseForm(selectedCourse)}</div>
-    <h3>최근 교육</h3>
-    <div class="table-list">
-      ${state.courses.slice(0, 12).map((course) => {
-        const deleteAllowed = canDeleteCourse(course);
-        return `<div class="table-row"><div class="row-top"><strong>${escapeHtml(course.title)}</strong>${statusBadge(effectiveCourseStatus(course))}</div><span class="muted">${escapeHtml(course.topic)} · ${escapeHtml(shortDate(course.starts_at))} · ${escapeHtml(courseDeleteSummary(course.id))}</span><div class="actions">${deleteAllowed ? `<button class="btn small danger" type="button" data-delete-course="${escapeHtml(course.id)}">삭제</button>` : `<button class="btn small danger" type="button" disabled>완료 교육 삭제 불가</button>`}</div></div>`;
-      }).join("")}
-    </div>
   `;
 }
 
@@ -1662,6 +1659,7 @@ async function saveInstructor(event) {
   if (!form) return;
   const formData = new FormData(form);
   const instructorId = formData.get("instructor_id");
+  const isNewInstructor = !instructorId;
   const photoFile = formData.get("photo_file");
   const payload = {
     name: String(formData.get("name") || "").trim(),
@@ -1698,8 +1696,13 @@ async function saveInstructor(event) {
   showToast("강사 정보를 저장했습니다.");
   await reload();
   state.tab = "instructors";
-  state.adminSelections.instructorId = savedInstructor?.id || instructorId || "";
-  state.adminSearch.instructor = payload.name;
+  if (isNewInstructor) {
+    state.adminSelections.instructorId = "";
+    state.adminSearch.instructor = "";
+  } else {
+    state.adminSelections.instructorId = savedInstructor?.id || instructorId || "";
+    state.adminSearch.instructor = payload.name;
+  }
   render();
 }
 
@@ -1709,6 +1712,7 @@ async function saveVenue(event) {
   if (!form) return;
   const formData = new FormData(form);
   const venueId = formData.get("venue_id");
+  const isNewVenue = !venueId;
   const payload = {
     name: String(formData.get("name") || "").trim(),
     address: String(formData.get("address") || "").trim() || null,
@@ -1733,8 +1737,13 @@ async function saveVenue(event) {
   showToast("장소 정보를 저장했습니다.");
   await reload();
   state.tab = "venues";
-  state.adminSelections.venueId = savedVenue?.id || venueId || "";
-  state.adminSearch.venue = payload.name;
+  if (isNewVenue) {
+    state.adminSelections.venueId = "";
+    state.adminSearch.venue = "";
+  } else {
+    state.adminSelections.venueId = savedVenue?.id || venueId || "";
+    state.adminSearch.venue = payload.name;
+  }
   render();
 }
 
@@ -1771,6 +1780,7 @@ async function saveCourse(event) {
   if (!form) return;
   const formData = new FormData(form);
   const courseId = formData.get("course_id");
+  const isNewCourse = !courseId;
   const timing = validateCourseTiming(courseId, formData);
   if (!timing) return;
   const selectedStatus = String(formData.get("status") || "scheduled");
@@ -1837,9 +1847,14 @@ async function saveCourse(event) {
   showToast(hasSelectedFile(formData.get("course_file")) ? "교육과 자료를 저장했습니다." : "교육을 저장했습니다.");
   await reload();
   state.tab = "courses";
-  state.adminSelections.courseId = savedCourse.id || courseId || "";
-  state.adminSearch.course = payload.title;
   state.adminSearch.courseInstructor = "";
+  if (isNewCourse) {
+    state.adminSelections.courseId = "";
+    state.adminSearch.course = "";
+  } else {
+    state.adminSelections.courseId = savedCourse.id || courseId || "";
+    state.adminSearch.course = payload.title;
+  }
   render();
 }
 
