@@ -324,6 +324,158 @@ function activeApplications() {
   return state.applications.filter(isActiveApplication);
 }
 
+function visibleReviews() {
+  return state.reviews.filter((review) => review.is_hidden !== true);
+}
+
+function formatNumber(value) {
+  return Number(value || 0).toLocaleString("ko-KR");
+}
+
+function formatDecimal(value, digits = 1) {
+  const number = Number(value || 0);
+  return number.toLocaleString("ko-KR", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
+function formatPercent(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "-";
+  return `${formatDecimal(Number(value) * 100, 1)}%`;
+}
+
+function courseIdsSet(courses) {
+  return new Set(courses.map((course) => course.id).filter(Boolean));
+}
+
+function applicationsForCourseIds(courseIds) {
+  return activeApplications().filter((application) => courseIds.has(application.course_id));
+}
+
+function reviewsForCourseIds(courseIds) {
+  return visibleReviews().filter((review) => courseIds.has(review.course_id));
+}
+
+function attendanceCount(applications) {
+  return applications.filter((application) => Boolean(application.attendance_confirmed_at)).length;
+}
+
+function courseAttendanceRate(courseId) {
+  const applications = applicationsForCourseIds(new Set([courseId]));
+  if (!applications.length) return null;
+  return attendanceCount(applications) / applications.length;
+}
+
+function average(values) {
+  const valid = values.filter((value) => value !== null && value !== undefined && !Number.isNaN(Number(value)));
+  if (!valid.length) return null;
+  return valid.reduce((sum, value) => sum + Number(value), 0) / valid.length;
+}
+
+function organizationStats() {
+  return state.organizations.map((organization) => {
+    const courses = state.courses.filter((course) => course.organization_id === organization.id);
+    const courseIds = courseIdsSet(courses);
+    const applications = applicationsForCourseIds(courseIds);
+    const attended = attendanceCount(applications);
+    const reviews = reviewsForCourseIds(courseIds);
+    return {
+      name: organization.name || "단체명 없음",
+      courseCount: courses.length,
+      applicationCount: applications.length,
+      averageApplications: courses.length ? applications.length / courses.length : 0,
+      attendedCount: attended,
+      attendanceRate: applications.length ? attended / applications.length : null,
+      reviewCount: reviews.length,
+      averageReviews: courses.length ? reviews.length / courses.length : 0,
+    };
+  }).sort((a, b) => b.courseCount - a.courseCount || b.applicationCount - a.applicationCount || a.name.localeCompare(b.name, "ko"));
+}
+
+function instructorStats() {
+  return state.instructors.map((instructor) => {
+    const courses = state.courses.filter((course) => course.instructor_id === instructor.id);
+    const courseIds = courseIdsSet(courses);
+    const applications = applicationsForCourseIds(courseIds);
+    const attended = attendanceCount(applications);
+    const reviews = reviewsForCourseIds(courseIds);
+    const connectedOrganizationCount = new Set(courses.map((course) => course.organization_id).filter(Boolean)).size;
+    return {
+      name: `${instructor.name || "이름 없음"}${instructor.title ? ` · ${instructor.title}` : ""}`,
+      courseCount: courses.length,
+      applicationCount: applications.length,
+      attendedCount: attended,
+      averageAttendanceRate: average(courses.map((course) => courseAttendanceRate(course.id))),
+      reviewCount: reviews.length,
+      averageReviews: courses.length ? reviews.length / courses.length : 0,
+      connectedOrganizationCount,
+    };
+  }).sort((a, b) => b.courseCount - a.courseCount || b.applicationCount - a.applicationCount || a.name.localeCompare(b.name, "ko"));
+}
+
+function metricTable(headers, rows, emptyText) {
+  if (!rows.length) return `<div class="empty">${escapeHtml(emptyText)}</div>`;
+  return `
+    <div class="metric-table-wrap">
+      <table class="metric-table">
+        <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>
+        <tbody>${rows.map((row) => `<tr>${row.map((cell, index) => `<td class="${index === 0 ? "" : "numeric"}">${escapeHtml(cell)}</td>`).join("")}</tr>`).join("")}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+const REVIEW_KEYWORD_STOPWORDS = new Set([
+  "그리고", "하지만", "그래서", "또한", "정말", "너무", "매우", "조금", "많이", "더욱", "아주",
+  "있는", "없는", "있어", "있고", "있다", "했다", "하는", "하여", "해서", "하면", "되었", "되었습니다",
+  "좋았습니다", "좋았어요", "좋았", "좋은", "좋고", "감사합니다", "감사", "생각", "시간", "오늘",
+  "교육", "강의", "수업", "프로그램", "참여", "참석", "후기", "강사", "단체", "이번",
+]);
+
+function normalizeReviewKeyword(token) {
+  let value = String(token || "").toLowerCase().trim();
+  value = value.replace(/(입니다|합니다|했습니다|였습니다|스럽습니다|스럽네요|스럽다|네요|어요|아요|였다|했다|한다|하게|하고|하여|해서)$/u, "");
+  value = value.replace(/(으로서|으로써|으로|에서|에게|보다|까지|부터|처럼|만큼|이고|이며|하고|들과|들의|으로|와|과|을|를|이|가|은|는|도|만|의|에|로)$/u, "");
+  return value.trim();
+}
+
+function reviewKeywordStats(limit = 18) {
+  const counts = new Map();
+  visibleReviews().forEach((review) => {
+    const text = String(review.body || "")
+      .replace(/https?:\/\/\S+/gi, " ")
+      .replace(/[^\p{L}\p{N}\s]/gu, " ");
+    const tokens = text.match(/[\p{L}\p{N}]{2,}/gu) || [];
+    tokens.forEach((token) => {
+      const keyword = normalizeReviewKeyword(token);
+      if (keyword.length < 2 || REVIEW_KEYWORD_STOPWORDS.has(keyword)) return;
+      counts.set(keyword, (counts.get(keyword) || 0) + 1);
+    });
+  });
+  return [...counts.entries()]
+    .map(([word, count]) => ({ word, count }))
+    .sort((a, b) => b.count - a.count || a.word.localeCompare(b.word, "ko"))
+    .slice(0, limit);
+}
+
+function renderReviewKeywordChart() {
+  const keywords = reviewKeywordStats();
+  if (!keywords.length) return `<div class="empty">분석할 후기가 아직 없습니다.</div>`;
+  const maxCount = keywords[0].count || 1;
+  return `
+    <div class="keyword-chart" aria-label="후기 주요 단어">
+      ${keywords.map((item) => `
+        <div class="keyword-row">
+          <span class="keyword-label">${escapeHtml(item.word)}</span>
+          <span class="keyword-bar" style="--keyword-width:${Math.max(8, Math.round((item.count / maxCount) * 100))}%"></span>
+          <span class="keyword-count">${formatNumber(item.count)}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
 function filteredApplications() {
   return activeApplications().filter((application) => {
     if (state.applicationFilters.courseId && application.course_id !== state.applicationFilters.courseId) return false;
@@ -1273,6 +1425,26 @@ function renderDashboard() {
   const verified = state.reviews.filter((review) => review.verification_status === "verified").length;
   const pending = state.reviews.filter((review) => review.verification_status === "pending").length;
   const applications = activeApplications();
+  const organizationRows = organizationStats().map((item) => [
+    item.name,
+    formatNumber(item.courseCount),
+    formatNumber(item.applicationCount),
+    formatDecimal(item.averageApplications),
+    formatNumber(item.attendedCount),
+    formatPercent(item.attendanceRate),
+    formatNumber(item.reviewCount),
+    formatDecimal(item.averageReviews),
+  ]);
+  const instructorRows = instructorStats().map((item) => [
+    item.name,
+    formatNumber(item.courseCount),
+    formatNumber(item.applicationCount),
+    formatNumber(item.attendedCount),
+    formatPercent(item.averageAttendanceRate),
+    formatNumber(item.reviewCount),
+    formatDecimal(item.averageReviews),
+    formatNumber(item.connectedOrganizationCount),
+  ]);
   elements.adminContent.innerHTML = `
     <h2>운영 현황</h2>
     <div class="stat-grid" style="margin-bottom: 16px;">
@@ -1286,6 +1458,29 @@ function renderDashboard() {
       <div class="section"><h3>교육 신청</h3><p>현재 신청 ${applications.length}건</p></div>
       <div class="section"><h3>후기 검수</h3><p>참여 확인 ${verified}개 · 확인 대기 ${pending}개</p></div>
       <div class="section"><h3>관리자 전용 추첨</h3><p>추첨 기록 ${state.draws.length}건 · 당첨 이력 ${state.winners.length}건</p></div>
+    </div>
+    <div class="section" style="margin-top: 16px;">
+      <h3>단체별 운영 통계</h3>
+      <p class="muted">숨김 처리되지 않은 후기와 취소되지 않은 신청을 기준으로 계산합니다.</p>
+      ${metricTable(
+        ["단체", "등록 교육", "총 신청자", "평균 신청자", "참석 확인", "참석률", "후기", "교육당 후기"],
+        organizationRows,
+        "등록된 단체 통계가 없습니다."
+      )}
+    </div>
+    <div class="section" style="margin-top: 16px;">
+      <h3>강사별 운영 통계</h3>
+      <p class="muted">평균 참석률은 신청자가 있는 교육별 참석률의 평균입니다.</p>
+      ${metricTable(
+        ["강사", "교육", "총 신청자", "총 참석자", "평균 참석률", "후기", "교육당 후기", "연결 단체"],
+        instructorRows,
+        "등록된 강사 통계가 없습니다."
+      )}
+    </div>
+    <div class="section" style="margin-top: 16px;">
+      <h3>후기 주요 단어</h3>
+      <p class="muted">후기 본문에서 자주 등장한 단어를 간단 집계한 결과입니다. 조사와 일부 일반어는 제외했습니다.</p>
+      ${renderReviewKeywordChart()}
     </div>
   `;
 }
