@@ -47,6 +47,12 @@ const state = {
     kind: "",
     query: "",
   },
+  courseTemplate: {
+    query: "",
+    sourceCourseId: "",
+    sourceTitle: "",
+    draft: null,
+  },
   dashboardStatsSearch: {
     organization: "",
     instructor: "",
@@ -1087,6 +1093,97 @@ function courseResultHtml(course, selectedId = "") {
   `;
 }
 
+function courseTemplateResultHtml(course) {
+  const organization = organizationById(course.organization_id);
+  const instructor = instructorById(course.instructor_id);
+  const venue = venueById(course.venue_id);
+  const status = effectiveCourseStatus(course);
+  return `
+    <button class="admin-search-result" type="button" data-load-course-template="${escapeHtml(course.id)}">
+      <span class="admin-search-title">
+        <strong>${escapeHtml(course.title || "교육명 없음")}</strong>
+        ${statusBadge(status)}
+      </span>
+      <span class="muted">${escapeHtml(shortDate(course.starts_at))} · ${escapeHtml(course.topic || "주제 없음")} · ${escapeHtml(organization?.name || "단체 미정")} · ${escapeHtml(instructor?.name || "강사 미정")} · ${escapeHtml(venue?.name || "장소 미정")}</span>
+      <span class="muted">선택하면 단체, 강사, 장소, 주제, 요약, 상세 설명만 새 교육 입력폼에 복사합니다.</span>
+    </button>
+  `;
+}
+
+function courseTemplateResultsHtml() {
+  const query = state.courseTemplate.query || "";
+  if (!normalizeSearchText(query)) {
+    return `<p class="muted">교육명, 주제, 단체, 강사, 장소 중 하나를 입력하면 불러올 교육이 표시됩니다.</p>`;
+  }
+  const results = searchItems(state.courses, query, courseSearchText, ADMIN_SEARCH_LIMIT);
+  return `
+    <div class="admin-search-results">
+      ${results.map(courseTemplateResultHtml).join("") || `<div class="empty">검색어에 맞는 교육이 없습니다.</div>`}
+    </div>
+  `;
+}
+
+function renderCourseTemplateModalBody() {
+  return `
+    <div class="admin-search-picker">
+      <p class="muted">기존 교육의 운영 정보만 새 교육 입력폼으로 가져옵니다. 교육명, 시작·종료 일시, 자료, 신청자, 후기, 아카이브는 복사하지 않습니다.</p>
+      <label>불러올 교육 검색<input type="search" data-course-template-search value="${escapeHtml(state.courseTemplate.query || "")}" placeholder="교육명, 주제, 단체, 강사, 장소로 검색" autocomplete="off"></label>
+      <div data-course-template-results>${courseTemplateResultsHtml()}</div>
+    </div>
+  `;
+}
+
+function openCourseTemplateModal() {
+  state.courseTemplate.query = "";
+  openAdminNotice("기존 교육 불러오기", renderCourseTemplateModalBody());
+  window.requestAnimationFrame(() => {
+    document.querySelector("[data-course-template-search]")?.focus();
+  });
+}
+
+function updateCourseTemplateResults() {
+  const resultsContainer = document.querySelector("[data-course-template-results]");
+  if (!resultsContainer) return;
+  resultsContainer.innerHTML = courseTemplateResultsHtml();
+}
+
+function clearCourseTemplateDraft() {
+  state.courseTemplate.sourceCourseId = "";
+  state.courseTemplate.sourceTitle = "";
+  state.courseTemplate.draft = null;
+}
+
+function courseTemplateDraftFrom(course) {
+  return {
+    title: "",
+    topic: course.topic || "",
+    organization_id: course.organization_id || "",
+    instructor_id: course.instructor_id || "",
+    venue_id: course.venue_id || "",
+    starts_at: null,
+    ends_at: null,
+    summary: course.summary || "",
+    description: course.description || "",
+    published: course.published !== false,
+  };
+}
+
+function loadCourseTemplate(courseId) {
+  const course = courseById(courseId);
+  if (!course) {
+    showToast("불러올 교육을 찾지 못했습니다.");
+    return;
+  }
+  state.adminSelections.courseId = "";
+  state.adminSearch.course = "";
+  state.courseTemplate.sourceCourseId = course.id;
+  state.courseTemplate.sourceTitle = course.title || "교육명 없음";
+  state.courseTemplate.draft = courseTemplateDraftFrom(course);
+  closeModal(elements.adminNoticeModal);
+  renderCourses();
+  showToast("기존 교육 내용을 새 교육 입력폼에 불러왔습니다.");
+}
+
 function coursePickerFieldName(kind) {
   return {
     organization: "organization_id",
@@ -1745,6 +1842,12 @@ function renderCourseForm(course = {}) {
   return `
     <form id="courseForm" class="section">
       <input type="hidden" name="course_id" value="${escapeHtml(course.id || "")}">
+      ${!isEditing && state.courseTemplate.sourceCourseId ? `
+        <div class="admin-search-selected" style="margin-bottom: 12px;">
+          <span><strong>${escapeHtml(state.courseTemplate.sourceTitle)}</strong> 내용을 불러왔습니다. 새 교육으로 저장됩니다.</span>
+          <span class="muted">일정·자료·신청·후기·아카이브는 복사하지 않습니다.</span>
+        </div>
+      ` : ""}
       <div class="admin-grid">
         <label>교육명<input name="title" value="${escapeHtml(course.title || "")}" required></label>
         <label>주제<input name="topic" value="${escapeHtml(course.topic || "")}" required></label>
@@ -1766,6 +1869,7 @@ function renderCourseForm(course = {}) {
       <div class="actions" style="margin-top: 14px;">
         <button class="btn" type="submit">${isEditing ? "교육 수정" : "교육 추가"}</button>
         <button class="btn secondary" type="button" id="newCourseButton">새 교육 입력</button>
+        ${!isEditing ? `<button class="btn secondary" type="button" data-open-course-template>기존 교육 불러오기</button>` : ""}
         ${isEditing && isDeleteAllowed ? `<button class="btn danger" type="button" data-delete-course="${escapeHtml(course.id)}">교육 삭제</button>` : ""}
         ${isEditing && !isDeleteAllowed ? `<button class="btn danger" type="button" disabled>완료 교육 삭제 불가</button>` : ""}
       </div>
@@ -1777,7 +1881,9 @@ function renderCourseForm(course = {}) {
 
 function renderCourses() {
   const selectedId = state.adminSelections.courseId || "";
-  const selectedCourse = state.courses.find((course) => course.id === selectedId) || {};
+  const selectedCourse = selectedId
+    ? state.courses.find((course) => course.id === selectedId) || {}
+    : state.courseTemplate.draft || {};
   elements.adminContent.innerHTML = `
     <h2>교육 관리</h2>
     <p class="muted">새 교육을 등록하거나 기존 교육을 수정합니다. 회차는 첫 회차 기준으로 함께 생성·수정됩니다.</p>
@@ -2374,6 +2480,7 @@ async function saveCourse(event) {
   showToast(hasSelectedFile(formData.get("course_file")) ? "교육과 자료를 저장했습니다." : "교육을 저장했습니다.");
   await reload();
   state.tab = "courses";
+  clearCourseTemplateDraft();
   if (isNewCourse) {
     state.adminSelections.courseId = "";
     state.adminSearch.course = "";
@@ -2796,6 +2903,8 @@ function bindEvents() {
     const openCoursePickerButton = event.target.closest("[data-open-course-picker]");
     const clearCoursePickerButton = event.target.closest("[data-clear-course-picker]");
     const coursePickerSelectButton = event.target.closest("[data-course-picker-select]");
+    const openCourseTemplateButton = event.target.closest("[data-open-course-template]");
+    const loadCourseTemplateButton = event.target.closest("[data-load-course-template]");
     const reviewButton = event.target.closest("[data-review-action]");
     const attendanceButton = event.target.closest("[data-confirm-attendance]");
     const unconfirmAttendanceButton = event.target.closest("[data-unconfirm-attendance]");
@@ -2814,6 +2923,14 @@ function bindEvents() {
     }
     if (downloadDashboardStatsButton) {
       downloadDashboardStats(downloadDashboardStatsButton.dataset.downloadDashboardStats);
+      return;
+    }
+    if (openCourseTemplateButton) {
+      openCourseTemplateModal();
+      return;
+    }
+    if (loadCourseTemplateButton) {
+      loadCourseTemplate(loadCourseTemplateButton.dataset.loadCourseTemplate);
       return;
     }
     if (openCoursePickerButton) {
@@ -2844,6 +2961,7 @@ function bindEvents() {
         renderVenues();
       }
       if (kind === "course") {
+        clearCourseTemplateDraft();
         state.adminSelections.courseId = entityId;
         renderCourses();
       }
@@ -2867,6 +2985,7 @@ function bindEvents() {
         renderVenues();
       }
       if (kind === "course") {
+        clearCourseTemplateDraft();
         state.adminSelections.courseId = "";
         state.adminSearch.course = "";
         renderCourses();
@@ -3041,6 +3160,7 @@ function bindEvents() {
       return;
     }
     if (event.target.id === "newCourseButton") {
+      clearCourseTemplateDraft();
       state.adminSelections.courseId = "";
       state.adminSearch.course = "";
       renderCourses();
@@ -3098,6 +3218,11 @@ function bindEvents() {
       state.coursePicker.kind = kind;
       state.coursePicker.query = event.target.value;
       updateCoursePickerModalResults(kind);
+      return;
+    }
+    if (event.target.matches("[data-course-template-search]")) {
+      state.courseTemplate.query = event.target.value;
+      updateCourseTemplateResults();
       return;
     }
     if (event.target.matches("#courseForm input[name='starts_at']")) {
