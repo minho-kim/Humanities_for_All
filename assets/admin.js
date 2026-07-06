@@ -69,6 +69,7 @@ const state = {
   applications: [],
   attendanceDocuments: [],
   reviews: [],
+  contentReports: [],
   draws: [],
   winners: [],
 };
@@ -718,6 +719,65 @@ function renderExpectationRow(application) {
       <p><strong>${escapeHtml(application.applicant_name || "신청자")}</strong> · ${escapeHtml(application.email || "이메일 없음")} · ${escapeHtml(application.phone || "전화 없음")}</p>
       <p><strong>기대평 / 강사에게 하고 싶은 질문</strong><br>${escapeHtml(application.note)}</p>
       <p class="muted">신청일 ${escapeHtml(shortDate(application.created_at))}${application.updated_at ? ` · 마지막 수정 ${escapeHtml(shortDate(application.updated_at))}` : ""}</p>
+      <div class="actions">
+        <button class="btn small danger" type="button" data-clear-application-note-admin="${escapeHtml(application.id)}">기대평·질문 삭제</button>
+      </div>
+    </div>
+  `;
+}
+
+function reportContentTypeLabel(type) {
+  if (type === "review") return "후기";
+  if (type === "expectation") return "기대평·질문";
+  return "콘텐츠";
+}
+
+function reportStatusLabel(status) {
+  if (status === "resolved") return "처리 완료";
+  if (status === "dismissed") return "기각";
+  return "접수";
+}
+
+function reportStatusClass(status) {
+  if (status === "resolved") return "green";
+  if (status === "dismissed") return "gray";
+  return "red";
+}
+
+function reportCourseLabel(report) {
+  const course = courseById(report.course_id);
+  return course ? `${course.title}${course.starts_at ? ` · ${shortDate(course.starts_at)}` : ""}` : "교육 정보 없음";
+}
+
+function sortedContentReports() {
+  return state.contentReports.slice().sort((a, b) => {
+    const statusWeight = { open: 0, resolved: 1, dismissed: 2 };
+    const aWeight = statusWeight[a.status] ?? 0;
+    const bWeight = statusWeight[b.status] ?? 0;
+    if (aWeight !== bWeight) return aWeight - bWeight;
+    return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+  });
+}
+
+function renderReportRow(report) {
+  return `
+    <div class="table-row">
+      <div class="row-top">
+        <strong>${escapeHtml(reportContentTypeLabel(report.content_type))} 신고</strong>
+        <span class="badge ${reportStatusClass(report.status)}">${escapeHtml(reportStatusLabel(report.status))}</span>
+      </div>
+      <p class="muted">${escapeHtml(reportCourseLabel(report))} · 신고일 ${escapeHtml(shortDate(report.created_at))}</p>
+      <p><strong>신고된 내용</strong><br>${escapeHtml(report.content_excerpt)}</p>
+      ${report.reason ? `<p><strong>신고 사유</strong><br>${escapeHtml(report.reason)}</p>` : `<p class="muted">신고 사유는 입력되지 않았습니다.</p>`}
+      <p class="muted">신고자: ${escapeHtml(report.reporter_email || "이메일 정보 없음")}</p>
+      <div class="actions">
+        ${report.content_type === "review"
+          ? `<button class="btn small danger" type="button" data-review-action="hide" data-review-id="${escapeHtml(report.content_id)}">후기 숨김</button>`
+          : `<button class="btn small danger" type="button" data-clear-application-note-admin="${escapeHtml(report.content_id)}">기대평·질문 삭제</button>`}
+        <button class="btn small secondary" type="button" data-report-status="resolved" data-report-id="${escapeHtml(report.id)}">처리 완료</button>
+        <button class="btn small secondary" type="button" data-report-status="dismissed" data-report-id="${escapeHtml(report.id)}">기각</button>
+        ${report.status !== "open" ? `<button class="btn small secondary" type="button" data-report-status="open" data-report-id="${escapeHtml(report.id)}">다시 접수</button>` : ""}
+      </div>
     </div>
   `;
 }
@@ -1664,6 +1724,7 @@ async function loadAdminData() {
     supabase.from("course_applications").select("*").order("created_at", { ascending: false }),
     supabase.from("course_attendance_documents").select("*").order("created_at", { ascending: false }),
     supabase.from("reviews").select("*").order("created_at", { ascending: false }),
+    supabase.from("content_reports").select("*").order("created_at", { ascending: false }),
     supabase.from("review_draws").select("*").order("created_at", { ascending: false }),
     supabase.from("review_draw_winners").select("*").order("created_at", { ascending: false }),
   ]);
@@ -1681,6 +1742,7 @@ async function loadAdminData() {
     state.applications,
     state.attendanceDocuments,
     state.reviews,
+    state.contentReports,
     state.draws,
     state.winners,
   ] = requests.map((result) => result.data || []);
@@ -2022,6 +2084,22 @@ function renderReviews() {
   `;
 }
 
+function renderReports() {
+  const reports = sortedContentReports();
+  const openCount = reports.filter((report) => report.status === "open").length;
+  elements.adminContent.innerHTML = `
+    <h2>신고 관리</h2>
+    <p class="muted">공개 후기와 기대평·질문에 들어온 신고를 확인합니다. 신고가 접수되어도 자동 숨김 처리되지는 않으며, 관리자가 내용을 확인한 뒤 조치합니다.</p>
+    <div class="actions" style="margin: 12px 0 14px;">
+      <span class="badge red">접수 ${openCount.toLocaleString("ko-KR")}건</span>
+      <span class="badge gray">전체 ${reports.length.toLocaleString("ko-KR")}건</span>
+    </div>
+    <div class="table-list">
+      ${reports.map(renderReportRow).join("") || `<div class="empty">아직 신고 내역이 없습니다.</div>`}
+    </div>
+  `;
+}
+
 function renderAttendanceDocumentSection(courseId) {
   const course = courseById(courseId);
   const documents = attendanceDocumentsForCourse(courseId);
@@ -2238,6 +2316,7 @@ function render() {
   else if (state.tab === "expectations") renderExpectations();
   else if (state.tab === "archive") renderArchive();
   else if (state.tab === "reviews") renderReviews();
+  else if (state.tab === "reports") renderReports();
   else if (state.tab === "draws") renderDraws();
   else renderDashboard();
 }
@@ -2804,7 +2883,7 @@ async function openAttendanceDocument(documentId) {
   if (!opened) showToast("팝업 차단을 해제한 뒤 다시 시도해 주세요.");
 }
 
-async function updateReview(reviewId, action) {
+async function updateReview(reviewId, action, nextTab = state.tab) {
   const payload = {};
   if (action === "hide") {
     payload.is_hidden = true;
@@ -2823,7 +2902,7 @@ async function updateReview(reviewId, action) {
   if (error) throw error;
   showToast("후기 상태를 변경했습니다.");
   await reload();
-  state.tab = "reviews";
+  state.tab = nextTab;
   render();
 }
 
@@ -2834,6 +2913,34 @@ async function deleteReview(reviewId) {
   showToast("후기를 삭제했습니다.");
   await reload();
   state.tab = "reviews";
+  render();
+}
+
+async function clearApplicationNoteAdmin(applicationId, nextTab = state.tab) {
+  const { error } = await supabase
+    .from("course_applications")
+    .update({ note: null })
+    .eq("id", applicationId);
+  if (error) throw error;
+
+  showToast("기대평/질문을 삭제했습니다.");
+  await reload();
+  state.tab = nextTab;
+  render();
+}
+
+async function updateReportStatus(reportId, status) {
+  const payload = {
+    status,
+    resolved_at: status === "open" ? null : new Date().toISOString(),
+    resolved_by: status === "open" ? null : state.user.id,
+  };
+  const { error } = await supabase.from("content_reports").update(payload).eq("id", reportId);
+  if (error) throw error;
+
+  showToast("신고 상태를 변경했습니다.");
+  await reload();
+  state.tab = "reports";
   render();
 }
 
@@ -2997,6 +3104,8 @@ function bindEvents() {
     const loadCourseTemplateButton = event.target.closest("[data-load-course-template]");
     const reviewButton = event.target.closest("[data-review-action]");
     const deleteReviewButton = event.target.closest("[data-delete-review-admin]");
+    const clearApplicationNoteButton = event.target.closest("[data-clear-application-note-admin]");
+    const reportStatusButton = event.target.closest("[data-report-status]");
     const attendanceButton = event.target.closest("[data-confirm-attendance]");
     const unconfirmAttendanceButton = event.target.closest("[data-unconfirm-attendance]");
     const rosterButton = event.target.closest("[data-print-roster]");
@@ -3119,6 +3228,44 @@ function bindEvents() {
         deleteReviewButton.disabled = false;
         deleteReviewButton.dataset.confirmDelete = "false";
         deleteReviewButton.textContent = defaultDeleteLabel;
+      }
+      return;
+    }
+    if (clearApplicationNoteButton) {
+      const defaultDeleteLabel = clearApplicationNoteButton.dataset.defaultLabel || clearApplicationNoteButton.textContent;
+      clearApplicationNoteButton.dataset.defaultLabel = defaultDeleteLabel;
+      if (clearApplicationNoteButton.dataset.confirmDelete !== "true") {
+        clearApplicationNoteButton.dataset.confirmDelete = "true";
+        clearApplicationNoteButton.textContent = "한 번 더 누르면 삭제";
+        window.setTimeout(() => {
+          if (clearApplicationNoteButton.dataset.confirmDelete === "true") {
+            clearApplicationNoteButton.dataset.confirmDelete = "false";
+            clearApplicationNoteButton.textContent = defaultDeleteLabel;
+          }
+        }, 3000);
+        return;
+      }
+      try {
+        clearApplicationNoteButton.disabled = true;
+        clearApplicationNoteButton.textContent = "삭제 중...";
+        await clearApplicationNoteAdmin(clearApplicationNoteButton.dataset.clearApplicationNoteAdmin, state.tab);
+      } catch (error) {
+        showToast(`기대평/질문 삭제 실패: ${error.message}`);
+        clearApplicationNoteButton.disabled = false;
+        clearApplicationNoteButton.dataset.confirmDelete = "false";
+        clearApplicationNoteButton.textContent = defaultDeleteLabel;
+      }
+      return;
+    }
+    if (reportStatusButton) {
+      try {
+        reportStatusButton.disabled = true;
+        reportStatusButton.textContent = "저장 중...";
+        await updateReportStatus(reportStatusButton.dataset.reportId, reportStatusButton.dataset.reportStatus);
+      } catch (error) {
+        showToast(`신고 상태 변경 실패: ${error.message}`);
+        reportStatusButton.disabled = false;
+        reportStatusButton.textContent = reportStatusLabel(reportStatusButton.dataset.reportStatus);
       }
       return;
     }

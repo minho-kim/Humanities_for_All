@@ -44,6 +44,7 @@
           <a href="#organizations" data-route="organizations">참여 단체</a>
           <a href="#instructors" data-route="instructors">강사</a>
           <a href="#reviews" data-route="reviews">후기</a>
+          <a href="#expectations" data-route="expectations">기대평·질문</a>
           <a href="#archive" data-route="archive">사진·영상·자료</a>
         </nav>
       </div>
@@ -81,6 +82,7 @@
         <a href="#organizations" data-route="organizations">참여 단체</a>
         <a href="#instructors" data-route="instructors">강사</a>
         <a href="#reviews" data-route="reviews">후기</a>
+        <a href="#expectations" data-route="expectations">기대평·질문</a>
         <a href="#archive" data-route="archive">사진·영상·자료</a>
       </nav>
     </div>
@@ -124,6 +126,27 @@
         <button class="icon-btn" type="button" data-close-modal aria-label="정보 닫기">×</button>
       </div>
       <div id="profileBody"></div>
+    </article>
+  </div>
+
+  <div class="modal" id="reportModal" role="dialog" aria-modal="true" aria-labelledby="reportTitle">
+    <article class="modal-card" style="max-width: 560px;">
+      <div class="modal-header">
+        <div><span class="eyebrow">콘텐츠 신고</span><h2 id="reportTitle">신고하시겠습니까?</h2></div>
+        <button class="icon-btn" type="button" data-close-modal aria-label="신고 닫기">×</button>
+      </div>
+      <form id="reportForm">
+        <input type="hidden" name="content_type">
+        <input type="hidden" name="content_id">
+        <p class="lead" id="reportDescription">관리자가 내용을 확인한 뒤 필요한 조치를 합니다.</p>
+        <label>신고 사유(선택)
+          <textarea name="reason" maxlength="500" placeholder="문제가 되는 이유를 간단히 적어주세요."></textarea>
+        </label>
+        <div class="actions" style="margin-top: 12px;">
+          <button class="btn danger" type="submit">신고하기</button>
+          <button class="btn secondary" type="button" data-close-modal>취소</button>
+        </div>
+      </form>
     </article>
   </div>
 

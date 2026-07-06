@@ -24,6 +24,7 @@ const state = {
   sessions: [],
   archives: [],
   reviews: [],
+  expectations: [],
   myReviews: [],
   applications: [],
   composedCourses: [],
@@ -87,6 +88,10 @@ const elements = {
   profileEyebrow: document.getElementById("profileEyebrow"),
   profileTitle: document.getElementById("profileTitle"),
   profileBody: document.getElementById("profileBody"),
+  reportModal: document.getElementById("reportModal"),
+  reportForm: document.getElementById("reportForm"),
+  reportTitle: document.getElementById("reportTitle"),
+  reportDescription: document.getElementById("reportDescription"),
   toast: document.getElementById("toast"),
 };
 
@@ -402,6 +407,10 @@ function loadPublicReviews() {
   });
 }
 
+function loadPublicExpectations() {
+  return fetchPublicRpc("get_public_expectations", {}, PUBLIC_FETCH_TIMEOUT_MS);
+}
+
 function publicOrganizations() {
   return state.organizations.filter((organization) => organization.is_active !== false);
 }
@@ -450,6 +459,7 @@ function applyLandingSummary(summary = {}) {
   state.sessions = featuredCourses.flatMap((course) => Array.isArray(course.sessions) ? course.sessions : []);
   state.archives = [];
   state.reviews = [];
+  state.expectations = [];
   state.supplementaryLoaded = false;
   composeCourses();
   state.landingCourses = state.composedCourses.slice();
@@ -618,6 +628,7 @@ function routeHash(page, slug = "") {
   if (page === "organizations") return "#organizations";
   if (page === "instructors") return "#instructors";
   if (page === "reviews") return "#reviews";
+  if (page === "expectations") return "#expectations";
   if (page === "archive") return "#archive";
   return "#courses";
 }
@@ -636,7 +647,7 @@ function applyRouteFromHash() {
     state.activeOrganizationSlug = "";
     return;
   }
-  if (["organizations", "instructors", "reviews", "archive"].includes(value)) {
+  if (["organizations", "instructors", "reviews", "expectations", "archive"].includes(value)) {
     state.activePage = value;
     state.activeOrganizationSlug = "";
     state.activeInstructorId = "";
@@ -660,7 +671,7 @@ function navigate(page, slug = "") {
 }
 
 function pageNeedsSupplementaryData(page) {
-  return ["reviews", "archive"].includes(page);
+  return ["reviews", "expectations", "archive"].includes(page);
 }
 
 function setPageHeader({ title, description, showCourseTools = false, summary = "" }) {
@@ -685,6 +696,7 @@ function composeCourses() {
   const sessionsByCourse = groupBy(state.sessions, "course_id");
   const archivesByCourse = groupBy(state.archives, "course_id");
   const reviewsByCourse = groupBy(state.reviews, "course_id");
+  const expectationsByCourse = groupBy(state.expectations, "course_id");
 
   state.composedCourses = state.courses.map((course) => {
     const sessions = (sessionsByCourse.get(course.id) || []).slice().sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
@@ -693,6 +705,7 @@ function composeCourses() {
       .slice()
       .sort((a, b) => a.sort_order - b.sort_order);
     const reviews = (reviewsByCourse.get(course.id) || []).slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const expectations = (expectationsByCourse.get(course.id) || []).slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     const composedCourse = {
       ...course,
       sessions,
@@ -707,6 +720,7 @@ function composeCourses() {
       sessions,
       archives,
       reviews,
+      expectations,
       reviewCount: Number(course.review_count ?? reviews.length),
       archiveCount: Number(course.archive_count ?? archives.length),
       timeLabel: getTimeLabel({ ...course, sessions }),
@@ -745,6 +759,7 @@ async function loadData({ waitForSupplementary = false } = {}) {
   elements.resultSummary.textContent = "교육 정보를 불러오는 중입니다.";
   state.archives = [];
   state.reviews = [];
+  state.expectations = [];
   state.supplementaryLoaded = false;
   await syncFinishedCourseStatuses();
 
@@ -813,11 +828,13 @@ async function loadSupplementaryData() {
   const supplementaryRequestMap = [
     ["archives", loadPublicRows("course_archives", { order: "sort_order.asc" })],
     ["reviews", loadPublicReviews()],
+    ["expectations", loadPublicExpectations()],
   ];
   const dataByKey = await resolveDataRequests(supplementaryRequestMap);
   if (sequence !== supplementaryLoadSequence) return;
   state.archives = dataByKey.get("archives") || [];
   state.reviews = (dataByKey.get("reviews") || []).filter(isPublicReview);
+  state.expectations = dataByKey.get("expectations") || [];
   state.supplementaryLoaded = true;
 
   composeCourses();
@@ -1270,6 +1287,11 @@ function renderInstructorPage() {
   `;
 }
 
+function reportButtonHtml(contentType, contentId) {
+  if (!contentId) return "";
+  return `<button class="btn small secondary" type="button" data-report-content="${escapeHtml(contentType)}" data-report-id="${escapeHtml(contentId)}">신고</button>`;
+}
+
 function renderReviewsPage() {
   setPageHeader({
     title: "후기 모아보기",
@@ -1290,11 +1312,46 @@ function renderReviewsPage() {
             <p>${escapeHtml(review.body)}</p>
             <div class="footer">
               <span class="muted">${escapeHtml(course?.title || "교육 정보")} · ${escapeHtml(course?.organization?.name || "")}</span>
-              ${course ? `<button class="btn small secondary" type="button" data-open-course="${course.id}">교육 보기</button>` : ""}
+              <div class="actions">
+                ${course ? `<button class="btn small secondary" type="button" data-open-course="${course.id}">교육 보기</button>` : ""}
+                ${reportButtonHtml("review", review.id)}
+              </div>
             </div>
           </article>
         `;
       }).join("") || `<div class="empty">아직 등록된 후기가 없습니다.</div>`}
+    </div>
+  `;
+}
+
+function renderExpectationsPage() {
+  setPageHeader({
+    title: "기대평·질문 모아보기",
+    description: "교육 신청자가 남긴 기대평과 강사에게 하고 싶은 질문을 모아볼 수 있습니다.",
+    summary: state.expectations.length ? "공개된 기대평과 질문을 최신순으로 보여드립니다." : "아직 공개된 기대평이나 질문이 없습니다.",
+  });
+  elements.courseResults.className = "content-stack";
+  elements.courseResults.innerHTML = `
+    <div class="table-list">
+      ${state.expectations.map((expectation) => {
+        const course = courseById(expectation.course_id);
+        return `
+          <article class="review-card">
+            <div class="row-top">
+              <strong>${escapeHtml(getMaskedEmailName(expectation.author_name))}님의 기대평·질문</strong>
+              <span class="badge green">기대평·질문</span>
+            </div>
+            <p>${escapeHtml(expectation.body)}</p>
+            <div class="footer">
+              <span class="muted">${escapeHtml(course?.title || "교육 정보")} · ${escapeHtml(course?.organization?.name || "")}</span>
+              <div class="actions">
+                ${course ? `<button class="btn small secondary" type="button" data-open-course="${course.id}">교육 보기</button>` : ""}
+                ${reportButtonHtml("expectation", expectation.id)}
+              </div>
+            </div>
+          </article>
+        `;
+      }).join("") || `<div class="empty">아직 공개된 기대평이나 질문이 없습니다.</div>`}
     </div>
   `;
 }
@@ -1377,6 +1434,10 @@ function canEditApplicationNote(application, course = null) {
   );
 }
 
+function canDeleteApplicationNote(application) {
+  return Boolean(application && !isCancelledApplication(application) && String(application.note || "").trim());
+}
+
 function renderApplicationNoteForm(application, course = null) {
   const targetCourse = course || courseById(application?.course_id);
   const note = String(application?.note || "");
@@ -1384,7 +1445,10 @@ function renderApplicationNoteForm(application, course = null) {
   if (!application) return "";
   if (!canEdit) {
     return note
-      ? `<p><strong>기대평 / 강사에게 하고 싶은 질문</strong><br>${escapeHtml(note)}</p>`
+      ? `<div>
+          <p><strong>기대평 / 강사에게 하고 싶은 질문</strong><br>${escapeHtml(note)}</p>
+          ${canDeleteApplicationNote(application) ? `<button class="btn small danger" type="button" data-delete-application-note="${escapeHtml(application.id)}">기대평·질문 삭제</button>` : ""}
+        </div>`
       : `<p class="muted">교육 시작 후에는 기대평이나 질문을 새로 작성할 수 없습니다.</p>`;
   }
   return `
@@ -1393,6 +1457,7 @@ function renderApplicationNoteForm(application, course = null) {
       <label>기대평 / 강사에게 하고 싶은 질문<textarea name="note" maxlength="1000" placeholder="교육에서 기대하는 점이나 강사에게 미리 묻고 싶은 내용을 적어주세요.">${escapeHtml(note)}</textarea></label>
       <div class="actions" style="margin-top: 10px;">
         <button class="btn small" type="submit">${note ? "수정 저장" : "작성 저장"}</button>
+        ${note ? `<button class="btn small danger" type="button" data-delete-application-note="${escapeHtml(application.id)}">삭제</button>` : ""}
         <span class="badge gray">선택 입력</span>
       </div>
     </form>
@@ -1507,6 +1572,7 @@ function render() {
   else if (state.activePage === "instructors") renderInstructorsPage();
   else if (state.activePage === "instructor") renderInstructorPage();
   else if (state.activePage === "reviews") renderReviewsPage();
+  else if (state.activePage === "expectations") renderExpectationsPage();
   else if (state.activePage === "archive") renderArchivePage();
   else renderCoursesPage();
 }
@@ -1520,8 +1586,24 @@ function renderReviews(course) {
     <li class="review-item">
       <strong>${escapeHtml(getMaskedEmailName(review.author_name))}님의 후기 <span class="badge green">후기</span></strong><br>
       ${escapeHtml(review.body)}
+      <div class="actions" style="margin-top: 8px;">${reportButtonHtml("review", review.id)}</div>
     </li>
   `).join("");
+}
+
+function renderCourseExpectations(course) {
+  if (!course.expectations?.length) return `<p class="muted">아직 공개된 기대평이나 질문이 없습니다.</p>`;
+  return `
+    <ul class="review-list">
+      ${course.expectations.map((expectation) => `
+        <li class="review-item">
+          <strong>${escapeHtml(getMaskedEmailName(expectation.author_name))}님의 기대평·질문 <span class="badge green">기대평·질문</span></strong><br>
+          ${escapeHtml(expectation.body)}
+          <div class="actions" style="margin-top: 8px;">${reportButtonHtml("expectation", expectation.id)}</div>
+        </li>
+      `).join("")}
+    </ul>
+  `;
 }
 
 function renderReviewForm(course) {
@@ -1731,6 +1813,10 @@ function openCourseDetail(courseId) {
         <h3>교육 신청</h3>
         ${renderApplicationForm(course)}
       </div>
+      <div class="section" style="grid-column: 1 / -1;">
+        <h3>기대평·질문</h3>
+        ${renderCourseExpectations(course)}
+      </div>
       ${postCourseContentHtml}
       ${reviewEditorHtml ? `<div class="section" style="grid-column: 1 / -1;">
         <h3>후기 작성</h3>
@@ -1879,7 +1965,59 @@ async function handleApplicationNoteSubmit(event) {
   }
 
   await loadApplicationState(supabase);
+  if (state.supplementaryLoaded) await loadSupplementaryData();
   showToast(note ? "기대평/질문을 저장했습니다." : "기대평/질문을 비웠습니다.");
+  if (elements.detailModal.classList.contains("open") && state.activeCourseId) openCourseDetail(state.activeCourseId);
+  if (elements.profileModal.classList.contains("open") && elements.profileEyebrow.textContent === "나의 정보") {
+    openMyInfo();
+  }
+}
+
+async function handleApplicationNoteDelete(button) {
+  if (!state.user) {
+    openModal(elements.loginModal);
+    return;
+  }
+
+  const applicationId = button.dataset.deleteApplicationNote;
+  const application = state.applications.find((item) => item.id === applicationId);
+  if (!canDeleteApplicationNote(application)) {
+    showToast("삭제할 기대평/질문을 찾지 못했습니다.");
+    return;
+  }
+
+  if (button.dataset.confirmDelete !== "true") {
+    const defaultDeleteLabel = button.dataset.defaultLabel || button.textContent;
+    button.dataset.defaultLabel = defaultDeleteLabel;
+    button.dataset.confirmDelete = "true";
+    button.textContent = "한 번 더 누르면 삭제";
+    window.setTimeout(() => {
+      if (button.dataset.confirmDelete === "true") {
+        button.dataset.confirmDelete = "false";
+        button.textContent = defaultDeleteLabel;
+      }
+    }, 3000);
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = "삭제 중...";
+  const supabase = await getSupabaseClient();
+  const { data, error } = await supabase.rpc("update_my_application_note", {
+    p_application_id: applicationId,
+    p_note: null,
+  });
+  if (error || data !== true) {
+    console.error("Application note delete failed", error);
+    showToast("기대평/질문을 삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    button.disabled = false;
+    button.textContent = button.dataset.defaultLabel || "삭제";
+    return;
+  }
+
+  await loadApplicationState(supabase);
+  if (state.supplementaryLoaded) await loadSupplementaryData();
+  showToast("기대평/질문을 삭제했습니다.");
   if (elements.detailModal.classList.contains("open") && state.activeCourseId) openCourseDetail(state.activeCourseId);
   if (elements.profileModal.classList.contains("open") && elements.profileEyebrow.textContent === "나의 정보") {
     openMyInfo();
@@ -2025,6 +2163,79 @@ async function handleReviewDelete(button) {
   }
 }
 
+function contentTypeLabel(contentType) {
+  if (contentType === "review") return "후기";
+  if (contentType === "expectation") return "기대평·질문";
+  return "콘텐츠";
+}
+
+function openReportModal(contentType, contentId) {
+  if (!state.user) {
+    showToast("신고하려면 이메일 인증이 필요합니다.");
+    openModal(elements.loginModal);
+    return;
+  }
+  if (!contentId || !["review", "expectation"].includes(contentType)) {
+    showToast("신고할 콘텐츠 정보를 찾지 못했습니다.");
+    return;
+  }
+
+  elements.reportForm.reset();
+  elements.reportForm.elements.content_type.value = contentType;
+  elements.reportForm.elements.content_id.value = contentId;
+  elements.reportTitle.textContent = `${contentTypeLabel(contentType)}를 신고하시겠습니까?`;
+  elements.reportDescription.textContent = "신고가 접수되면 관리자가 내용을 확인한 뒤 숨김, 삭제 등 필요한 조치를 합니다.";
+  openModal(elements.reportModal);
+}
+
+async function handleReportSubmit(event) {
+  event.preventDefault();
+  if (!state.user) {
+    openModal(elements.loginModal);
+    return;
+  }
+
+  const form = getSubmitForm(event);
+  if (!form) return;
+  const contentType = String(form.elements.content_type?.value || "");
+  const contentId = String(form.elements.content_id?.value || "");
+  const reason = String(form.elements.reason?.value || "").trim();
+  if (!contentType || !contentId) {
+    showToast("신고할 콘텐츠 정보를 찾지 못했습니다.");
+    return;
+  }
+  if (reason.length > 500) {
+    showToast("신고 사유는 500자 이내로 적어주세요.");
+    return;
+  }
+
+  const submitButton = form.querySelector("button[type='submit']");
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "신고 중...";
+  }
+
+  try {
+    const supabase = await getSupabaseClient();
+    const { error } = await supabase.rpc("submit_content_report", {
+      p_content_type: contentType,
+      p_content_id: contentId,
+      p_reason: reason || null,
+    });
+    if (error) throw error;
+    closeModal(elements.reportModal);
+    showToast("신고가 접수되었습니다.");
+  } catch (error) {
+    console.error("Content report failed", error);
+    showToast("신고를 접수하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+  } finally {
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.textContent = "신고하기";
+    }
+  }
+}
+
 function updateSessionUi(user) {
   state.user = user || null;
   elements.loginButton.textContent = state.user ? `${getReviewAuthorName(state.user)}님` : "로그인";
@@ -2132,6 +2343,8 @@ function bindEvents() {
     const cancelApplicationButton = event.target.closest("[data-cancel-application]");
     const archivePhotoButton = event.target.closest("[data-open-archive-photo]");
     const deleteReviewButton = event.target.closest("[data-delete-review]");
+    const deleteApplicationNoteButton = event.target.closest("[data-delete-application-note]");
+    const reportButton = event.target.closest("[data-report-content]");
     if (routeControl) {
       event.preventDefault();
       const route = routeControl.dataset.route;
@@ -2139,6 +2352,10 @@ function bindEvents() {
         await ensureFullDataLoaded({ waitForSupplementary: pageNeedsSupplementaryData(route) });
       }
       navigate(route);
+      return;
+    }
+    if (reportButton) {
+      openReportModal(reportButton.dataset.reportContent, reportButton.dataset.reportId);
       return;
     }
     if (organizationButton) {
@@ -2171,6 +2388,10 @@ function bindEvents() {
     }
     if (deleteReviewButton) {
       handleReviewDelete(deleteReviewButton).catch((error) => showToast(`후기 삭제 실패: ${error.message}`));
+      return;
+    }
+    if (deleteApplicationNoteButton) {
+      handleApplicationNoteDelete(deleteApplicationNoteButton).catch((error) => showToast(`기대평/질문 삭제 실패: ${error.message}`));
       return;
     }
     if (archivePhotoButton) {
@@ -2227,6 +2448,7 @@ function bindEvents() {
     if (event.target.id === "applicationForm") return handleApplicationSubmit(event);
     if (event.target.matches("[data-application-note-form]")) return handleApplicationNoteSubmit(event);
     if (event.target.id === "reviewForm") return handleReviewSubmit(event);
+    if (event.target.id === "reportForm") return handleReportSubmit(event);
   });
 
   document.querySelectorAll(".modal").forEach((modal) => {
