@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>모두의 인문학 교육 둘러보기</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
+  <link rel="stylesheet" href="./assets/styles.css">
+  <link rel="stylesheet" href="./assets/embed.css">
+</head>
+<body class="embed-page">
+  <main class="embed-shell">
+    <section class="embed-hero" aria-labelledby="embedTitle">
+      <div>
+        <span class="eyebrow">모두의 인문학 · 조회 전용</span>
+        <h1 id="embedTitle">가까운 인문학 교육을 둘러보세요</h1>
+        <p class="lead">이 화면에서는 교육 정보를 간단히 확인할 수 있습니다. 신청, 로그인, 후기 작성은 전체 서비스 페이지에서 진행됩니다.</p>
+      </div>
+      <a class="btn secondary" href="./index.html#courses" target="_top" rel="noreferrer">전체 페이지 열기</a>
+    </section>
+
+    <section class="embed-stats" aria-label="서비스 요약">
+      <div class="stat">
+        <strong id="embedCourseCount">-</strong>
+        <span>등록 교육</span>
+      </div>
+      <div class="stat">
+        <strong id="embedOrgCount">-</strong>
+        <span>참여 단체</span>
+      </div>
+      <div class="stat">
+        <strong id="embedInstructorCount">-</strong>
+        <span>강사</span>
+      </div>
+      <div class="stat">
+        <strong id="embedReviewCount">-</strong>
+        <span>후기</span>
+      </div>
+    </section>
+
+    <section class="panel embed-search-panel" aria-labelledby="embedSearchTitle">
+      <div class="section-heading">
+        <div>
+          <h2 id="embedSearchTitle">교육 검색</h2>
+          <p class="muted">교육명, 주제, 강사, 장소, 단체명으로 검색할 수 있습니다.</p>
+        </div>
+      </div>
+      <form class="filter-grid embed-filter-grid" id="embedSearchForm" role="search">
+        <label>통합 검색<input id="embedSearchInput" type="search" placeholder="예: 철학, 글쓰기, 강사명, 단체명"></label>
+        <label>시간대<select id="embedTimeFilter"><option value="">전체</option><option value="오전">오전</option><option value="오후">오후</option><option value="저녁">저녁</option></select></label>
+        <label>상태<select id="embedStatusFilter"><option value="">전체</option><option value="open">모집 중</option><option value="finished">종료</option><option value="cancelled">취소</option></select></label>
+        <div class="filter-actions">
+          <button class="btn small" type="submit">검색하기</button>
+          <button class="btn small secondary" type="button" id="embedResetButton">처음으로</button>
+        </div>
+      </form>
+      <p class="result-summary" id="embedSummary" aria-live="polite">교육 요약을 불러오는 중입니다.</p>
+    </section>
+
+    <section id="embedResults" class="course-grid embed-results" aria-live="polite"></section>
+  </main>
+
+  <div class="modal" id="embedDetailModal" role="dialog" aria-modal="true" aria-labelledby="embedDetailTitle">
+    <article class="modal-card">
+      <div class="modal-header">
+        <div>
+          <div class="badge-row" id="embedDetailBadges"></div>
+          <h2 id="embedDetailTitle">교육 상세</h2>
+        </div>
+        <button class="icon-btn" type="button" data-close-embed-modal aria-label="상세 닫기">×</button>
+      </div>
+      <div id="embedDetailBody"></div>
+    </article>
+  </div>
+
+  <div class="toast" id="embedToast" role="status" aria-live="polite"></div>
+  <script type="module" src="./assets/embed.js"></script>
+</body>
+</html>

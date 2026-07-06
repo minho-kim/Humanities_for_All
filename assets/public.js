@@ -591,6 +591,15 @@ function courseById(courseId) {
   return state.composedCourses.find((course) => course.id === courseId);
 }
 
+function requestedCourseIdFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const courseParam = params.get("course");
+  if (courseParam) return courseParam;
+  const hash = decodeURIComponent(window.location.hash.replace(/^#/, ""));
+  if (hash.startsWith("course/")) return hash.replace("course/", "");
+  return "";
+}
+
 function routeHash(page, slug = "") {
   if (page === "organization" && slug) return `#organization/${encodeURIComponent(slug)}`;
   if (page === "instructor" && slug) return `#instructor/${encodeURIComponent(slug)}`;
@@ -1634,6 +1643,22 @@ function openCourseDetail(courseId) {
   openModal(elements.detailModal);
 }
 
+async function openRequestedCourseFromUrl() {
+  const courseId = requestedCourseIdFromUrl();
+  if (!courseId) return;
+  state.activePage = "courses";
+  if (!courseById(courseId)) {
+    await ensureFullDataLoaded({ waitForSupplementary: true });
+  } else if (!state.supplementaryLoaded) {
+    loadSupplementaryData().catch((error) => console.warn("[모두의 인문학] 교육 상세 보조 데이터 확인 필요", error));
+  }
+  render();
+  window.setTimeout(() => {
+    if (courseById(courseId)) openCourseDetail(courseId);
+    else showToast("연결된 교육 정보를 찾지 못했습니다.");
+  }, 0);
+}
+
 async function handleApplicationSubmit(event) {
   event.preventDefault();
   if (!state.user) {
@@ -2098,6 +2123,7 @@ async function initialize() {
   if (state.activePage !== "courses") {
     await ensureFullDataLoaded({ waitForSupplementary: pageNeedsSupplementaryData(state.activePage) });
   }
+  await openRequestedCourseFromUrl();
   startAuthMonitor();
 }
 
