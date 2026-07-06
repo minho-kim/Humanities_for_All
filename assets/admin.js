@@ -672,7 +672,7 @@ function renderApplicationRow(application) {
       </div>
       <div class="muted">${escapeHtml(sourceLabel)}일 ${escapeHtml(shortDate(application.created_at))}</div>
       <p class="muted">이메일: ${escapeHtml(application.email || "없음")} · 전화: ${escapeHtml(application.phone || "없음")}</p>
-      ${application.note ? `<p>${escapeHtml(application.note)}</p>` : ""}
+      ${application.note ? `<p><strong>기대평 / 강사에게 하고 싶은 질문</strong><br>${escapeHtml(application.note)}</p>` : ""}
       <p class="muted">개인정보·문자 안내 동의 완료</p>
       <div class="actions">
         ${attendanceConfirmed

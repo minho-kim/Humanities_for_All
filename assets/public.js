@@ -976,13 +976,30 @@ function renderStats() {
   if (elements.reviewCount) elements.reviewCount.textContent = reviewCount.toLocaleString("ko-KR");
 }
 
+function canShowPostCourseContent(course) {
+  return course?.status === "finished";
+}
+
+function courseCardNoteHtml(course) {
+  if (canShowPostCourseContent(course)) {
+    const reviewCount = course.reviewCount ?? course.review_count ?? course.reviews.length;
+    const archiveCount = course.archiveCount ?? course.archive_count ?? course.archives.length;
+    return `<span class="review-note">후기 ${Number(reviewCount).toLocaleString("ko-KR")}개 · 기록 ${Number(archiveCount).toLocaleString("ko-KR")}개</span>`;
+  }
+  if (course.status === "cancelled") {
+    return `<span class="review-note">취소된 교육</span>`;
+  }
+  if (canApplyToCourse(course)) {
+    return `<span class="review-note">신청 가능 · 사전 질문 접수</span>`;
+  }
+  return `<span class="review-note">교육 종료 후 후기·기록 공개</span>`;
+}
+
 function courseCardHtml(course) {
   const firstSession = course.sessions[0];
   const orgSlug = course.organization?.slug || "";
   const orgName = course.organization?.name || "단체 미정";
   const instructorName = course.instructor?.name || "강사 미정";
-  const reviewCount = course.reviewCount ?? course.review_count ?? course.reviews.length;
-  const archiveCount = course.archiveCount ?? course.archive_count ?? course.archives.length;
   return `
       <article class="course-card">
         <div class="badge-row">
@@ -999,7 +1016,7 @@ function courseCardHtml(course) {
         </div>
         <p>${escapeHtml(course.summary || "")}</p>
         <div class="footer">
-          <span class="review-note">후기 ${Number(reviewCount).toLocaleString("ko-KR")}개 · 기록 ${Number(archiveCount).toLocaleString("ko-KR")}개</span>
+          ${courseCardNoteHtml(course)}
           <button class="btn small" type="button" data-open-course="${course.id}">상세 보기</button>
         </div>
       </article>
@@ -1336,7 +1353,7 @@ function renderApplicationHistory() {
             </div>
             <p class="muted">신청일 ${escapeHtml(shortDate(application.created_at))} · 신청자 ${escapeHtml(application.applicant_name || "")}</p>
             ${isAttendanceConfirmed(application) ? `<p class="muted">참석 인증: ${escapeHtml(shortDate(application.attendance_confirmed_at))}</p>` : ""}
-            ${application.note ? `<p>${escapeHtml(application.note)}</p>` : ""}
+            ${application.note ? `<p><strong>기대평 / 강사에게 하고 싶은 질문</strong><br>${escapeHtml(application.note)}</p>` : ""}
             ${course ? `<button class="btn small secondary" type="button" data-open-course="${course.id}">교육 보기</button>` : ""}
           </div>
         `;
@@ -1500,7 +1517,7 @@ function renderApplicationForm(course) {
           <span class="badge ${attendanceConfirmed ? "green" : "gray"}">${attendanceConfirmed ? "참석 인증" : "신청"}</span>
         </div>
         <p class="muted">신청자: ${escapeHtml(existingApplication.applicant_name)} · 연락처: ${escapeHtml(existingApplication.phone)}</p>
-        ${existingApplication.note ? `<p>${escapeHtml(existingApplication.note)}</p>` : ""}
+        ${existingApplication.note ? `<p><strong>기대평 / 강사에게 하고 싶은 질문</strong><br>${escapeHtml(existingApplication.note)}</p>` : ""}
         ${attendanceConfirmed
           ? `<p class="muted">참석 인증이 완료되어 후기를 작성할 수 있습니다.</p>`
           : canCancelApplication
@@ -1538,7 +1555,7 @@ function renderApplicationForm(course) {
         <label>휴대전화번호<input name="phone" value="${escapeHtml(defaultPhone)}" required inputmode="tel" autocomplete="tel" placeholder="010-0000-0000" maxlength="13"></label>
       </div>
       <label style="margin-top: 10px;">이메일<input value="${escapeHtml(state.user.email || "")}" readonly></label>
-      <label style="margin-top: 10px;">요청사항(선택)<textarea name="note" placeholder="접근성 지원, 문의사항 등이 있으면 적어주세요."></textarea></label>
+      <label style="margin-top: 10px;">기대평 / 강사에게 하고 싶은 질문(선택)<textarea name="note" placeholder="교육에서 기대하는 점이나 강사에게 미리 묻고 싶은 내용을 적어주세요."></textarea></label>
       <div class="section privacy-consent" style="margin-top: 12px;">
         <h3>개인정보 수집·이용 동의</h3>
         <p class="muted">교육 신청 접수와 운영 안내를 위해 필요한 최소한의 개인정보를 수집합니다.</p>
@@ -1547,7 +1564,7 @@ function renderApplicationForm(course) {
           <ul class="plain-list">
             <li><strong>관련 근거</strong><br>개인정보 보호법 제15조 제1항 제1호에 따른 정보주체의 동의</li>
             <li><strong>수집·이용 목적</strong><br>교육 신청 접수, 신청자 본인 확인, 일정·장소·변경·취소 안내, 신청 이력 확인, 운영 문의 응대</li>
-            <li><strong>수집 항목</strong><br>필수: 신청자명, 이메일, 휴대전화번호 · 선택: 요청사항</li>
+            <li><strong>수집 항목</strong><br>필수: 신청자명, 이메일, 휴대전화번호 · 선택: 기대평 또는 강사에게 하고 싶은 질문</li>
             <li><strong>보유·이용 기간</strong><br>교육 종료 후 6개월 또는 사업 정산·민원 응대 종료 시까지 보관한 뒤 파기합니다. 관련 법령에 따라 더 보관해야 하는 경우에는 해당 법령에서 정한 기간 동안 보관할 수 있습니다.</li>
             <li><strong>동의 거부권과 불이익</strong><br>개인정보 수집·이용에 동의하지 않을 권리가 있습니다. 다만 필수 항목 동의를 거부하면 교육 신청 접수와 운영 안내가 어려워 신청이 제한될 수 있습니다.</li>
             <li><strong>전화번호 안내</strong><br>휴대전화번호는 유료 본인 인증 없이 신청자가 입력한 값을 저장하며, 교육 운영 안내 연락에만 사용합니다.</li>
@@ -1578,6 +1595,25 @@ function openCourseDetail(courseId) {
   const canReview = canWriteReviewForCourse(course);
   const canAddCalendar = !["finished", "cancelled"].includes(course.status);
   const reviewEditorHtml = renderReviewForm(course);
+  const postCourseContentHtml = canShowPostCourseContent(course)
+    ? `
+      <div class="section">
+        <h3>후기 ${course.reviews.length}개</h3>
+        <ul class="review-list">${renderReviews(course)}</ul>
+      </div>
+      <div class="section">
+        <h3>사진·영상·자료</h3>
+        <div class="media-grid">
+          ${course.archives.length ? course.archives.map((item) => archiveMediaHtml(item)).join("") : `<p class="muted">등록된 사진·영상·자료가 없습니다.</p>`}
+        </div>
+      </div>
+    `
+    : `
+      <div class="section" style="grid-column: 1 / -1;">
+        <h3>교육 후 기록</h3>
+        <p class="muted">후기와 사진·영상·자료는 교육 종료 후 공개됩니다. 신청할 때 기대하는 점이나 강사에게 하고 싶은 질문을 남길 수 있습니다.</p>
+      </div>
+    `;
 
   elements.detailBadges.innerHTML = `
     <span class="badge ${getStatusClass(course.status)}">${escapeHtml(statusLabels[course.status] || course.status)}</span>
@@ -1632,16 +1668,7 @@ function openCourseDetail(courseId) {
         <h3>교육 신청</h3>
         ${renderApplicationForm(course)}
       </div>
-      <div class="section">
-        <h3>후기 ${course.reviews.length}개</h3>
-        <ul class="review-list">${renderReviews(course)}</ul>
-      </div>
-      <div class="section">
-        <h3>사진·영상·자료</h3>
-        <div class="media-grid">
-          ${course.archives.length ? course.archives.map((item) => archiveMediaHtml(item)).join("") : `<p class="muted">등록된 사진·영상·자료가 없습니다.</p>`}
-        </div>
-      </div>
+      ${postCourseContentHtml}
       ${reviewEditorHtml ? `<div class="section" style="grid-column: 1 / -1;">
         <h3>후기 작성</h3>
         ${reviewEditorHtml}

@@ -126,6 +126,11 @@ function courseEndAt(course) {
   return course?.ends_at || course?.sessions?.[course.sessions.length - 1]?.ends_at || "";
 }
 
+function hasCourseStarted(course) {
+  const startsAt = courseStartAt(course);
+  return startsAt ? new Date(startsAt).getTime() <= Date.now() : false;
+}
+
 function hasCourseEnded(course) {
   if (course?.status === "finished") return true;
   const startsAt = courseStartAt(course);
@@ -460,6 +465,27 @@ function renderStats() {
   elements.reviewCount.textContent = numberText(reviewCount);
 }
 
+function canShowPostCourseContent(course) {
+  return course?.status === "finished";
+}
+
+function canApplyToCourse(course) {
+  return course?.status === "open" && !hasCourseStarted(course);
+}
+
+function courseCardNoteHtml(course) {
+  if (canShowPostCourseContent(course)) {
+    return `<span class="review-note">후기 ${numberText(course.reviewCount)}개 · 기록 ${numberText(course.archiveCount)}개</span>`;
+  }
+  if (course.status === "cancelled") {
+    return `<span class="review-note">취소된 교육</span>`;
+  }
+  if (canApplyToCourse(course)) {
+    return `<span class="review-note">신청 가능 · 사전 질문 접수</span>`;
+  }
+  return `<span class="review-note">교육 종료 후 후기·기록 공개</span>`;
+}
+
 function courseCardHtml(course) {
   const firstSession = course.sessions[0];
   const orgName = course.organization?.name || "단체 미정";
@@ -480,10 +506,10 @@ function courseCardHtml(course) {
       </div>
       <p>${escapeHtml(course.summary || "")}</p>
       <div class="footer">
-        <span class="review-note">후기 ${numberText(course.reviewCount)}개 · 기록 ${numberText(course.archiveCount)}개</span>
+        ${courseCardNoteHtml(course)}
         <div class="embed-course-actions">
           <button class="btn small secondary" type="button" data-open-embed-course="${escapeHtml(course.id)}">상세 보기</button>
-          <button class="btn small" type="button" data-go-full-course="${escapeHtml(course.id)}">${course.status === "open" ? "신청하러 가기" : "전체 페이지에서 보기"}</button>
+          <button class="btn small" type="button" data-go-full-course="${escapeHtml(course.id)}">${canApplyToCourse(course) ? "신청하러 가기" : "전체 페이지에서 보기"}</button>
         </div>
       </div>
     </article>
@@ -551,6 +577,19 @@ function openCourseDetail(courseId) {
   const instructorProfileUrl = normalizeSafeUrl(course.instructor?.profile_url, URL_RULES.external);
   const kakaoUrl = normalizeSafeUrl(course.venue?.kakao_map_url, URL_RULES.kakaoMap);
   const naverUrl = normalizeSafeUrl(course.venue?.naver_place_url, URL_RULES.naverPlace);
+  const reviewSectionHtml = canShowPostCourseContent(course)
+    ? `
+      <div class="section">
+        <h3>후기 ${numberText(course.reviews.length)}개</h3>
+        <ul class="review-list">${reviewListHtml(course)}</ul>
+      </div>
+    `
+    : `
+      <div class="section">
+        <h3>교육 후 기록</h3>
+        <p class="embed-detail-note">후기와 사진·영상·자료는 교육 종료 후 공개됩니다. 신청할 때 기대하는 점이나 강사에게 하고 싶은 질문을 남길 수 있습니다.</p>
+      </div>
+    `;
 
   elements.detailBadges.innerHTML = `
     <span class="badge ${getStatusClass(course.status)}">${escapeHtml(statusLabels[course.status] || course.status)}</span>
@@ -565,7 +604,7 @@ function openCourseDetail(courseId) {
         <p>${escapeHtml(course.description || course.summary || "")}</p>
         <ul class="session-list">${sessionListHtml(course)}</ul>
         <div class="actions" style="margin-top: 14px;">
-          <button class="btn small" type="button" data-go-full-course="${escapeHtml(course.id)}">${course.status === "open" ? "전체 페이지에서 신청하기" : "전체 페이지에서 보기"}</button>
+          <button class="btn small" type="button" data-go-full-course="${escapeHtml(course.id)}">${canApplyToCourse(course) ? "전체 페이지에서 신청하기" : "전체 페이지에서 보기"}</button>
         </div>
       </div>
       <aside class="section">
@@ -591,10 +630,7 @@ function openCourseDetail(courseId) {
         ${course.organization?.contact_email ? `<p class="muted">연락처: ${escapeHtml(course.organization.contact_email)}</p>` : ""}
         ${orgWebsiteUrl ? `<a class="btn small secondary" href="${escapeHtml(orgWebsiteUrl)}" target="_blank" rel="noreferrer">홈페이지</a>` : ""}
       </div>
-      <div class="section">
-        <h3>후기 ${numberText(course.reviews.length)}개</h3>
-        <ul class="review-list">${reviewListHtml(course)}</ul>
-      </div>
+      ${reviewSectionHtml}
       <div class="section">
         <h3>안내</h3>
         <p class="embed-detail-note">이 화면은 워드프레스 페이지 안에서 보는 조회 전용 화면입니다. 교육 신청, 로그인, 후기 작성은 전체 서비스 페이지에서 진행됩니다.</p>
