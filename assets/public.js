@@ -591,6 +591,14 @@ function courseById(courseId) {
   return state.composedCourses.find((course) => course.id === courseId);
 }
 
+function latestCoursesFirst(courses) {
+  return courses.slice().sort((a, b) => {
+    const aTime = new Date(courseStartAt(a) || 0).getTime() || 0;
+    const bTime = new Date(courseStartAt(b) || 0).getTime() || 0;
+    return bTime - aTime;
+  });
+}
+
 function requestedCourseIdFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const courseParam = params.get("course");
@@ -1101,7 +1109,7 @@ function renderCalendar(courses) {
 }
 
 function renderLandingCoursesPage() {
-  const featured = state.landingCourses;
+  const featured = latestCoursesFirst(state.landingCourses);
   const hasFeatured = featured.length > 0;
   const featuredLabel = state.featuredMode === "reviewed" ? "후기가 많은 종료 교육" : "곧 진행될 교육";
   setPageHeader({

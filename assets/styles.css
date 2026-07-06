@@ -78,6 +78,20 @@ a { color: inherit; }
   font-weight: 800;
 }
 
+.eyebrow.home-link {
+  position: relative;
+  z-index: 1;
+  text-decoration: none;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.eyebrow.home-link:hover,
+.eyebrow.home-link:focus-visible {
+  border-color: rgba(13, 110, 253, 0.32);
+  background: #e7f1ff;
+  color: var(--brand);
+}
+
 h1, h2, h3 { letter-spacing: -0.04em; }
 h1 {
   position: relative;
