@@ -3,7 +3,7 @@ export const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_rXN3xjZ2aJGeb00QMEs1KQ_b
 export const ARCHIVE_BUCKET = "archive-media";
 export const SITE_MEDIA_BUCKET = "site-media";
 export const ATTENDANCE_DOCUMENT_BUCKET = "attendance-documents";
-export const APP_VERSION = "2026.07.06.0838";
+export const APP_VERSION = "2026.07.06.0847";
 
 export const URL_RULES = Object.freeze({
   external: Object.freeze({ protocols: ["https:"] }),
@@ -26,10 +26,10 @@ export const statusLabels = {
 };
 
 export const verificationLabels = {
-  none: "일반 후기",
-  pending: "참여 확인 대기",
-  verified: "참여 확인",
-  rejected: "확인 반려",
+  none: "후기",
+  pending: "후기",
+  verified: "후기",
+  rejected: "후기",
 };
 
 export function escapeHtml(value) {

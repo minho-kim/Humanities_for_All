@@ -12,7 +12,6 @@ import {
   statusLabels,
   supabase,
   URL_RULES,
-  verificationLabels,
 } from "./supabaseClient.js";
 
 const state = {
@@ -335,7 +334,19 @@ function activeApplications() {
 }
 
 function visibleReviews() {
-  return state.reviews.filter((review) => review.is_hidden !== true);
+  return state.reviews.filter(isReviewPublic);
+}
+
+function isReviewPublic(review) {
+  return review?.is_hidden !== true && review?.verification_status !== "rejected";
+}
+
+function reviewVisibilityLabel(review) {
+  return isReviewPublic(review) ? "공개" : "숨김";
+}
+
+function reviewVisibilityClass(review) {
+  return isReviewPublic(review) ? "green" : "red";
 }
 
 function formatNumber(value) {
@@ -1647,8 +1658,8 @@ async function syncFinishedCourseStatuses() {
 }
 
 function renderDashboard() {
-  const verified = state.reviews.filter((review) => review.verification_status === "verified").length;
-  const pending = state.reviews.filter((review) => review.verification_status === "pending").length;
+  const publicReviews = visibleReviews().length;
+  const hiddenReviews = state.reviews.length - publicReviews;
   const applications = activeApplications();
   elements.adminContent.innerHTML = `
     <h2>운영 현황</h2>
@@ -1661,7 +1672,7 @@ function renderDashboard() {
     </div>
     <div class="admin-grid">
       <div class="section"><h3>교육 신청</h3><p>현재 신청 ${applications.length}건</p></div>
-      <div class="section"><h3>후기 검수</h3><p>참여 확인 ${verified}개 · 확인 대기 ${pending}개</p></div>
+      <div class="section"><h3>후기 관리</h3><p>공개 후기 ${publicReviews}개 · 숨김 ${hiddenReviews}개</p></div>
       <div class="section"><h3>관리자 전용 추첨</h3><p>추첨 기록 ${state.draws.length}건 · 당첨 이력 ${state.winners.length}건</p></div>
     </div>
     ${renderDashboardMetricSection("organization")}
@@ -1952,22 +1963,20 @@ function renderArchive() {
 
 function renderReviews() {
   elements.adminContent.innerHTML = `
-    <h2>후기 검수</h2>
-    <p class="muted">후기 작성은 신청 관리에서 참석 확인이 완료된 참여자에게만 열립니다.</p>
+    <h2>후기 관리</h2>
+    <p class="muted">후기 작성은 신청 관리에서 참석 확인이 완료된 참여자에게만 열립니다. 문제가 있는 후기는 숨기거나 삭제하세요.</p>
     <div class="table-list">
       ${state.reviews.map((review) => `
         <div class="table-row">
           <div class="row-top">
             <strong>${escapeHtml(review.author_name || "참여자")}</strong>
-            <span class="badge ${review.verification_status === "verified" ? "green" : review.verification_status === "rejected" ? "red" : "gray"}">${escapeHtml(verificationLabels[review.verification_status] || review.verification_status)}</span>
+            <span class="badge ${reviewVisibilityClass(review)}">${reviewVisibilityLabel(review)}</span>
           </div>
           <div class="muted">${escapeHtml(courseName(review.course_id))} · ${escapeHtml(shortDate(review.created_at))}</div>
           <p>${escapeHtml(review.body)}</p>
-          <p class="muted">공개 상태: ${review.is_hidden ? "숨김" : "공개"}</p>
           <div class="actions">
-            <button class="btn small" type="button" data-review-action="verify" data-review-id="${review.id}">참여 확인</button>
-            <button class="btn small secondary" type="button" data-review-action="reject" data-review-id="${review.id}">반려</button>
-            <button class="btn small ${review.is_hidden ? "secondary" : "danger"}" type="button" data-review-action="${review.is_hidden ? "show" : "hide"}" data-review-id="${review.id}">${review.is_hidden ? "공개" : "숨김"}</button>
+            <button class="btn small ${isReviewPublic(review) ? "danger" : "secondary"}" type="button" data-review-action="${isReviewPublic(review) ? "hide" : "show"}" data-review-id="${review.id}">${isReviewPublic(review) ? "숨김" : "공개"}</button>
+            <button class="btn small danger" type="button" data-delete-review-admin="${escapeHtml(review.id)}">삭제</button>
           </div>
         </div>
       `).join("") || `<div class="empty">아직 후기가 없습니다.</div>`}
@@ -2123,7 +2132,7 @@ function renderApplications() {
 }
 
 function renderDraws() {
-  const eligible = state.reviews.filter((review) => review.verification_status === "verified" && !review.is_hidden);
+  const eligible = visibleReviews();
   elements.adminContent.innerHTML = `
     <h2>관리자 전용 후기 추첨</h2>
     <p class="muted">이 화면은 관리자만 볼 수 있습니다. 시민 공개 페이지에는 추첨 기능이나 당첨자 목록이 노출되지 않습니다.</p>
@@ -2734,14 +2743,32 @@ async function openAttendanceDocument(documentId) {
 
 async function updateReview(reviewId, action) {
   const payload = {};
-  if (action === "verify") payload.verification_status = "verified";
-  if (action === "reject") payload.verification_status = "rejected";
-  if (action === "hide") payload.is_hidden = true;
-  if (action === "show") payload.is_hidden = false;
+  if (action === "hide") {
+    payload.is_hidden = true;
+    payload.verification_status = "none";
+  }
+  if (action === "show") {
+    payload.is_hidden = false;
+    payload.verification_status = "none";
+  }
+  if (!Object.keys(payload).length) {
+    showToast("알 수 없는 후기 작업입니다.");
+    return;
+  }
 
   const { error } = await supabase.from("reviews").update(payload).eq("id", reviewId);
   if (error) throw error;
   showToast("후기 상태를 변경했습니다.");
+  await reload();
+  state.tab = "reviews";
+  render();
+}
+
+async function deleteReview(reviewId) {
+  await deleteRowsByColumn("review_draw_winners", "review_id", reviewId);
+  const { error } = await supabase.from("reviews").delete().eq("id", reviewId);
+  if (error) throw error;
+  showToast("후기를 삭제했습니다.");
   await reload();
   state.tab = "reviews";
   render();
@@ -2848,7 +2875,7 @@ async function runDraw(event) {
   if (!form) return;
   const formData = new FormData(form);
   const targetCourseId = formData.get("target_course_id") || null;
-  const eligible = state.reviews.filter((review) => review.verification_status === "verified" && !review.is_hidden && (!targetCourseId || review.course_id === targetCourseId));
+  const eligible = visibleReviews().filter((review) => !targetCourseId || review.course_id === targetCourseId);
   const winnerCount = Math.min(Number(formData.get("winner_count") || 1), eligible.length);
   const winners = randomPick(eligible, winnerCount);
 
@@ -2906,6 +2933,7 @@ function bindEvents() {
     const openCourseTemplateButton = event.target.closest("[data-open-course-template]");
     const loadCourseTemplateButton = event.target.closest("[data-load-course-template]");
     const reviewButton = event.target.closest("[data-review-action]");
+    const deleteReviewButton = event.target.closest("[data-delete-review-admin]");
     const attendanceButton = event.target.closest("[data-confirm-attendance]");
     const unconfirmAttendanceButton = event.target.closest("[data-unconfirm-attendance]");
     const rosterButton = event.target.closest("[data-print-roster]");
@@ -3002,6 +3030,32 @@ function bindEvents() {
         await updateReview(reviewButton.dataset.reviewId, reviewButton.dataset.reviewAction);
       } catch (error) {
         showToast(`후기 변경 실패: ${error.message}`);
+      }
+      return;
+    }
+    if (deleteReviewButton) {
+      const defaultDeleteLabel = deleteReviewButton.dataset.defaultLabel || deleteReviewButton.textContent;
+      deleteReviewButton.dataset.defaultLabel = defaultDeleteLabel;
+      if (deleteReviewButton.dataset.confirmDelete !== "true") {
+        deleteReviewButton.dataset.confirmDelete = "true";
+        deleteReviewButton.textContent = "한 번 더 누르면 삭제";
+        window.setTimeout(() => {
+          if (deleteReviewButton.dataset.confirmDelete === "true") {
+            deleteReviewButton.dataset.confirmDelete = "false";
+            deleteReviewButton.textContent = defaultDeleteLabel;
+          }
+        }, 3000);
+        return;
+      }
+      try {
+        deleteReviewButton.disabled = true;
+        deleteReviewButton.textContent = "삭제 중...";
+        await deleteReview(deleteReviewButton.dataset.deleteReviewAdmin);
+      } catch (error) {
+        showToast(`후기 삭제 실패: ${error.message}`);
+        deleteReviewButton.disabled = false;
+        deleteReviewButton.dataset.confirmDelete = "false";
+        deleteReviewButton.textContent = defaultDeleteLabel;
       }
       return;
     }

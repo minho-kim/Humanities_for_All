@@ -14,7 +14,6 @@ import {
   SUPABASE_URL,
   statusLabels,
   URL_RULES,
-  verificationLabels,
 } from "./shared.js";
 
 const state = {
@@ -487,16 +486,18 @@ function archiveMediaHtml(item, className = "media") {
   `;
 }
 
+function isPublicReview(review) {
+  return review?.is_hidden !== true && review?.verification_status !== "rejected";
+}
+
 function reviewStatusLabel(review) {
-  if (review.is_hidden) return "비공개";
-  return verificationLabels[review.verification_status] || "후기";
+  if (!isPublicReview(review)) return "비공개";
+  return "후기";
 }
 
 function reviewStatusClass(review) {
-  if (review.is_hidden) return "red";
-  if (review.verification_status === "verified") return "green";
-  if (review.verification_status === "rejected") return "red";
-  return "gray";
+  if (!isPublicReview(review)) return "red";
+  return "green";
 }
 
 function applicationStatusLabel(application) {
@@ -795,7 +796,7 @@ async function loadSupplementaryData() {
   const dataByKey = await resolveDataRequests(supplementaryRequestMap);
   if (sequence !== supplementaryLoadSequence) return;
   state.archives = dataByKey.get("archives") || [];
-  state.reviews = dataByKey.get("reviews") || [];
+  state.reviews = (dataByKey.get("reviews") || []).filter(isPublicReview);
   state.supplementaryLoaded = true;
 
   composeCourses();
@@ -1246,7 +1247,7 @@ function renderReviewsPage() {
           <article class="review-card">
             <div class="row-top">
               <strong>${escapeHtml(getMaskedEmailName(review.author_name))}님의 후기</strong>
-              <span class="badge ${review.verification_status === "verified" ? "green" : "gray"}">${review.verification_status === "verified" ? "참여 확인" : "후기"}</span>
+              <span class="badge green">후기</span>
             </div>
             <p>${escapeHtml(review.body)}</p>
             <div class="footer">
@@ -1420,7 +1421,7 @@ function renderReviews(course) {
   }
   return course.reviews.map((review) => `
     <li class="review-item">
-      <strong>${escapeHtml(getMaskedEmailName(review.author_name))}님의 후기 <span class="badge ${review.verification_status === "verified" ? "green" : "gray"}">${review.verification_status === "verified" ? "참여 확인" : "후기"}</span></strong><br>
+      <strong>${escapeHtml(getMaskedEmailName(review.author_name))}님의 후기 <span class="badge green">후기</span></strong><br>
       ${escapeHtml(review.body)}
     </li>
   `).join("");
