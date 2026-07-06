@@ -23,6 +23,9 @@ const state = {
   applicationFilters: {
     courseId: "",
   },
+  expectationFilters: {
+    courseId: "",
+  },
   walkInSearch: {
     courseId: "",
     query: "",
@@ -680,6 +683,41 @@ function renderApplicationRow(application) {
              <button class="btn small secondary" type="button" data-unconfirm-attendance="${escapeHtml(application.id)}">참석 확인 취소</button>`
           : `<button class="btn small" type="button" data-confirm-attendance="${escapeHtml(application.id)}" ${canConfirmAttendance ? "" : "disabled"}>${canConfirmAttendance ? "참석 확인" : "교육일 전"}</button>`}
       </div>
+    </div>
+  `;
+}
+
+function applicationsWithNotes() {
+  return activeApplications()
+    .filter((application) => String(application.note || "").trim())
+    .slice()
+    .sort((a, b) => {
+      const aCourse = courseById(a.course_id);
+      const bCourse = courseById(b.course_id);
+      const aCourseTime = aCourse?.starts_at ? new Date(aCourse.starts_at).getTime() : Number.MAX_SAFE_INTEGER;
+      const bCourseTime = bCourse?.starts_at ? new Date(bCourse.starts_at).getTime() : Number.MAX_SAFE_INTEGER;
+      if (aCourseTime !== bCourseTime) return aCourseTime - bCourseTime;
+      return new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0);
+    });
+}
+
+function filteredExpectationApplications() {
+  return applicationsWithNotes().filter((application) => (
+    !state.expectationFilters.courseId || application.course_id === state.expectationFilters.courseId
+  ));
+}
+
+function renderExpectationRow(application) {
+  const course = courseById(application.course_id);
+  return `
+    <div class="table-row">
+      <div class="row-top">
+        <strong>${escapeHtml(course?.title || "교육 정보")}</strong>
+        <span class="badge gray">${escapeHtml(course?.starts_at ? shortDate(course.starts_at) : "일정 미정")}</span>
+      </div>
+      <p><strong>${escapeHtml(application.applicant_name || "신청자")}</strong> · ${escapeHtml(application.email || "이메일 없음")} · ${escapeHtml(application.phone || "전화 없음")}</p>
+      <p><strong>기대평 / 강사에게 하고 싶은 질문</strong><br>${escapeHtml(application.note)}</p>
+      <p class="muted">신청일 ${escapeHtml(shortDate(application.created_at))}${application.updated_at ? ` · 마지막 수정 ${escapeHtml(shortDate(application.updated_at))}` : ""}</p>
     </div>
   `;
 }
@@ -2131,6 +2169,30 @@ function renderApplications() {
   `;
 }
 
+function renderExpectations() {
+  const applications = filteredExpectationApplications();
+  elements.adminContent.innerHTML = `
+    <h2>기대평·문의 관리</h2>
+    <p class="muted">교육 신청자가 남긴 기대평과 강사에게 하고 싶은 질문을 모아봅니다. 공개 페이지에는 이 항목의 숫자를 노출하지 않습니다.</p>
+    <div class="section" style="margin: 12px 0 14px;">
+      <div class="admin-grid">
+        <label>교육별 보기
+          <select id="expectationCourseFilter">
+            <option value="">전체 교육</option>
+            ${optionList(state.courses, state.expectationFilters.courseId)}
+          </select>
+        </label>
+      </div>
+      <div class="actions" style="margin-top: 12px;">
+        <span class="badge green">작성 ${applications.length.toLocaleString("ko-KR")}건</span>
+      </div>
+    </div>
+    <div class="table-list">
+      ${applications.map(renderExpectationRow).join("") || `<div class="empty">아직 작성된 기대평이나 문의가 없습니다.</div>`}
+    </div>
+  `;
+}
+
 function renderDraws() {
   const eligible = visibleReviews();
   elements.adminContent.innerHTML = `
@@ -2173,6 +2235,7 @@ function render() {
   else if (state.tab === "venues") renderVenues();
   else if (state.tab === "courses") renderCourses();
   else if (state.tab === "applications") renderApplications();
+  else if (state.tab === "expectations") renderExpectations();
   else if (state.tab === "archive") renderArchive();
   else if (state.tab === "reviews") renderReviews();
   else if (state.tab === "draws") renderDraws();
@@ -3250,6 +3313,10 @@ function bindEvents() {
     if (event.target.id === "applicationCourseFilter") {
       state.applicationFilters.courseId = event.target.value;
       renderApplications();
+    }
+    if (event.target.id === "expectationCourseFilter") {
+      state.expectationFilters.courseId = event.target.value;
+      renderExpectations();
     }
   });
 

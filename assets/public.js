@@ -524,6 +524,10 @@ function isAttendanceConfirmed(application) {
   return Boolean(application?.attendance_confirmed_at);
 }
 
+function activeApplications() {
+  return state.applications.filter((application) => !isCancelledApplication(application));
+}
+
 function activeApplicationForCourse(courseId) {
   return state.applications.find((application) => application.course_id === courseId && !isCancelledApplication(application));
 }
@@ -1362,6 +1366,61 @@ function renderApplicationHistory() {
   `;
 }
 
+function canEditApplicationNote(application, course = null) {
+  const targetCourse = course || courseById(application?.course_id);
+  return Boolean(
+    application
+    && targetCourse
+    && !isCancelledApplication(application)
+    && !isAttendanceConfirmed(application)
+    && canApplyToCourse(targetCourse)
+  );
+}
+
+function renderApplicationNoteForm(application, course = null) {
+  const targetCourse = course || courseById(application?.course_id);
+  const note = String(application?.note || "");
+  const canEdit = canEditApplicationNote(application, targetCourse);
+  if (!application) return "";
+  if (!canEdit) {
+    return note
+      ? `<p><strong>기대평 / 강사에게 하고 싶은 질문</strong><br>${escapeHtml(note)}</p>`
+      : `<p class="muted">교육 시작 후에는 기대평이나 질문을 새로 작성할 수 없습니다.</p>`;
+  }
+  return `
+    <form data-application-note-form>
+      <input type="hidden" name="application_id" value="${escapeHtml(application.id)}">
+      <label>기대평 / 강사에게 하고 싶은 질문<textarea name="note" maxlength="1000" placeholder="교육에서 기대하는 점이나 강사에게 미리 묻고 싶은 내용을 적어주세요.">${escapeHtml(note)}</textarea></label>
+      <div class="actions" style="margin-top: 10px;">
+        <button class="btn small" type="submit">${note ? "수정 저장" : "작성 저장"}</button>
+        <span class="badge gray">선택 입력</span>
+      </div>
+    </form>
+  `;
+}
+
+function renderApplicationNoteHistory() {
+  const applications = activeApplications();
+  if (!applications.length) return `<div class="empty">아직 신청한 교육이 없습니다.</div>`;
+  return `
+    <div class="table-list">
+      ${applications.map((application) => {
+        const course = courseById(application.course_id);
+        return `
+          <div class="table-row">
+            <div class="row-top">
+              <strong>${escapeHtml(course?.title || "교육 정보")}</strong>
+              <span class="badge ${application.note ? "green" : "gray"}">${application.note ? "작성" : "미작성"}</span>
+            </div>
+            <p class="muted">신청일 ${escapeHtml(shortDate(application.created_at))}</p>
+            ${renderApplicationNoteForm(application, course)}
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
 function renderMyReviewHistory() {
   if (!state.myReviews.length) return `<div class="empty">아직 작성한 후기가 없습니다.</div>`;
   return `
@@ -1414,6 +1473,10 @@ function openMyInfo() {
     <section class="section" style="margin-top: 14px;">
       <h3>교육 신청 현황</h3>
       ${renderApplicationHistory()}
+    </section>
+    <section class="section" style="margin-top: 14px;">
+      <h3>기대평·질문 작성 현황</h3>
+      ${renderApplicationNoteHistory()}
     </section>
     <section class="section" style="margin-top: 14px;">
       <h3>후기 작성 현황</h3>
@@ -1517,7 +1580,7 @@ function renderApplicationForm(course) {
           <span class="badge ${attendanceConfirmed ? "green" : "gray"}">${attendanceConfirmed ? "참석 인증" : "신청"}</span>
         </div>
         <p class="muted">신청자: ${escapeHtml(existingApplication.applicant_name)} · 연락처: ${escapeHtml(existingApplication.phone)}</p>
-        ${existingApplication.note ? `<p><strong>기대평 / 강사에게 하고 싶은 질문</strong><br>${escapeHtml(existingApplication.note)}</p>` : ""}
+        ${renderApplicationNoteForm(existingApplication, course)}
         ${attendanceConfirmed
           ? `<p class="muted">참석 인증이 완료되어 후기를 작성할 수 있습니다.</p>`
           : canCancelApplication
@@ -1782,6 +1845,45 @@ async function handleApplicationSubmit(event) {
   await loadApplicationState(supabase);
   showToast("교육 신청이 접수되었습니다.");
   openCourseDetail(course.id);
+}
+
+async function handleApplicationNoteSubmit(event) {
+  event.preventDefault();
+  if (!state.user) {
+    openModal(elements.loginModal);
+    return;
+  }
+  const form = getSubmitForm(event);
+  if (!form) return;
+  const applicationId = String(form.elements.application_id?.value || "");
+  const note = String(form.elements.note?.value || "").trim();
+  if (note.length > 1000) {
+    showToast("기대평/질문은 1000자 이내로 적어주세요.");
+    return;
+  }
+  const application = state.applications.find((item) => item.id === applicationId);
+  if (!canEditApplicationNote(application)) {
+    showToast("현재 이 신청에는 기대평/질문을 수정할 수 없습니다.");
+    return;
+  }
+
+  const supabase = await getSupabaseClient();
+  const { data, error } = await supabase.rpc("update_my_application_note", {
+    p_application_id: applicationId,
+    p_note: note || null,
+  });
+  if (error || data !== true) {
+    console.error("Application note update failed", error);
+    showToast("기대평/질문을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    return;
+  }
+
+  await loadApplicationState(supabase);
+  showToast(note ? "기대평/질문을 저장했습니다." : "기대평/질문을 비웠습니다.");
+  if (elements.detailModal.classList.contains("open") && state.activeCourseId) openCourseDetail(state.activeCourseId);
+  if (elements.profileModal.classList.contains("open") && elements.profileEyebrow.textContent === "나의 정보") {
+    openMyInfo();
+  }
 }
 
 async function handleCancelApplication(button) {
@@ -2123,6 +2225,7 @@ function bindEvents() {
 
   document.body.addEventListener("submit", (event) => {
     if (event.target.id === "applicationForm") return handleApplicationSubmit(event);
+    if (event.target.matches("[data-application-note-form]")) return handleApplicationNoteSubmit(event);
     if (event.target.id === "reviewForm") return handleReviewSubmit(event);
   });
 
