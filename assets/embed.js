@@ -159,14 +159,6 @@ function courseById(courseId) {
   return state.composedCourses.find((course) => course.id === courseId);
 }
 
-function latestCoursesFirst(courses) {
-  return courses.slice().sort((a, b) => {
-    const aTime = new Date(courseStartAt(a) || 0).getTime() || 0;
-    const bTime = new Date(courseStartAt(b) || 0).getTime() || 0;
-    return bTime - aTime;
-  });
-}
-
 function isPublicReview(review) {
   return review?.verification_status !== "rejected";
 }
@@ -529,7 +521,7 @@ function renderResults() {
 
   const sorted = state.searchActivated
     ? source.slice().sort((a, b) => new Date(courseStartAt(a) || 0) - new Date(courseStartAt(b) || 0))
-    : latestCoursesFirst(source);
+    : source.slice();
   elements.results.innerHTML = sorted.map(courseCardHtml).join("");
   if (state.searchActivated) {
     elements.summary.textContent = `${source.length.toLocaleString("ko-KR")}개 교육을 찾았습니다. 신청과 로그인은 전체 서비스 페이지에서 진행됩니다.`;
