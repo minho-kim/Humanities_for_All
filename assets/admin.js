@@ -20,6 +20,10 @@ const state = {
   user: null,
   adminProfile: null,
   adminProfileError: null,
+  organizationAdminLinks: [],
+  organizationAdmins: [],
+  organizationAdminsError: "",
+  organizationAdminsLoading: false,
   isLoggingIn: false,
   isPasswordRecovery: false,
   applicationFilters: {
@@ -85,6 +89,7 @@ const elements = {
   adminEmail: document.getElementById("adminEmail"),
   adminPassword: document.getElementById("adminPassword"),
   adminPasswordResetButton: document.getElementById("adminPasswordResetButton"),
+  adminEmailHelp: document.getElementById("adminEmailHelp"),
   adminPasswordUpdateForm: document.getElementById("adminPasswordUpdateForm"),
   adminNewPassword: document.getElementById("adminNewPassword"),
   adminNewPasswordConfirm: document.getElementById("adminNewPasswordConfirm"),
@@ -171,18 +176,40 @@ function updateAdminLoginFormVisibility() {
     element.classList.toggle("hidden", isSignedIn);
   });
   elements.adminPasswordResetButton?.classList.toggle("hidden", isSignedIn);
+  elements.adminEmailHelp?.classList.toggle("hidden", isSignedIn);
   elements.adminLogoutButton.classList.toggle("hidden", !isSignedIn);
   elements.adminPasswordUpdateForm?.classList.toggle("hidden", !state.isPasswordRecovery);
 }
 
 function isAdmin() {
-  return Boolean(state.user && state.adminProfile);
+  return Boolean(state.user && (isOwner() || state.organizationAdminLinks.length));
 }
 
-function isPasswordRecoveryUrl() {
+function isOwner() {
+  return state.adminProfile?.role === "owner";
+}
+
+function managedOrganizationIds() {
+  return new Set(state.organizationAdminLinks.map((link) => link.organization_id).filter(Boolean));
+}
+
+function canAccessAdminTab(tab) {
+  if (isOwner()) return true;
+  return ["dashboard", "courses", "applications", "expectations", "archive", "reviews", "reports"].includes(tab);
+}
+
+function updateAdminNavigationVisibility() {
+  document.querySelectorAll("[data-owner-only]").forEach((element) => {
+    element.classList.toggle("hidden", !isOwner());
+  });
+  if (!canAccessAdminTab(state.tab)) state.tab = "dashboard";
+}
+
+function isPasswordSetupUrl() {
   const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
   const queryParams = new URLSearchParams(window.location.search);
-  return hashParams.get("type") === "recovery" || queryParams.get("type") === "recovery";
+  const authType = hashParams.get("type") || queryParams.get("type");
+  return authType === "recovery" || authType === "invite";
 }
 
 function optionList(items, selectedId = "") {
@@ -440,7 +467,7 @@ function organizationStats() {
 }
 
 function instructorStats() {
-  return state.instructors.map((instructor) => {
+  const rows = state.instructors.map((instructor) => {
     const courses = state.courses.filter((course) => course.instructor_id === instructor.id);
     const courseIds = courseIdsSet(courses);
     const applications = applicationsForCourseIds(courseIds);
@@ -457,7 +484,9 @@ function instructorStats() {
       averageReviews: courses.length ? reviews.length / courses.length : 0,
       connectedOrganizationCount,
     };
-  }).sort((a, b) => b.courseCount - a.courseCount || b.applicationCount - a.applicationCount || a.name.localeCompare(b.name, "ko"));
+  });
+  return (isOwner() ? rows : rows.filter((item) => item.courseCount > 0))
+    .sort((a, b) => b.courseCount - a.courseCount || b.applicationCount - a.applicationCount || a.name.localeCompare(b.name, "ko"));
 }
 
 function organizationMetricRows(items = organizationStats()) {
@@ -1795,25 +1824,35 @@ async function refreshSession() {
   state.user = data.session?.user || null;
   state.adminProfile = null;
   state.adminProfileError = null;
+  state.organizationAdminLinks = [];
 
   if (state.user) {
-    const { data: profile, error } = await supabase
-      .from("admin_profiles")
-      .select("*")
-      .eq("user_id", state.user.id)
-      .maybeSingle();
-    if (error) {
-      state.adminProfileError = error;
-      console.error("[모두의 인문학] 관리자 권한 조회 실패", error);
-    } else {
-      state.adminProfile = profile;
+    const [profileResult, organizationLinksResult] = await Promise.all([
+      supabase
+        .from("admin_profiles")
+        .select("*")
+        .eq("user_id", state.user.id)
+        .maybeSingle(),
+      supabase
+        .from("organization_admins")
+        .select("id,organization_id,user_id,role,created_at")
+        .eq("user_id", state.user.id),
+    ]);
+
+    if (profileResult.error || organizationLinksResult.error) {
+      state.adminProfileError = profileResult.error || organizationLinksResult.error;
+      console.error("[모두의 인문학] 관리자 권한 조회 실패", state.adminProfileError);
     }
+    state.adminProfile = profileResult.data || null;
+    state.organizationAdminLinks = organizationLinksResult.data || [];
   }
 
+  updateAdminNavigationVisibility();
   console.info("[모두의 인문학] 관리자 세션 상태", {
     signedIn: Boolean(state.user),
     email: state.user?.email || null,
-    isAdmin: Boolean(state.adminProfile),
+    isOwner: isOwner(),
+    managedOrganizationCount: managedOrganizationIds().size,
     adminProfileError: state.adminProfileError?.message || null,
   });
   renderAuthStatus();
@@ -1827,7 +1866,11 @@ function renderAuthStatus() {
     return;
   }
 
-  const role = state.adminProfile ? `${state.adminProfile.role} 권한` : "관리자 권한 없음";
+  const role = isOwner()
+    ? "전체 관리자"
+    : state.organizationAdminLinks.length
+      ? `단체 관리자 · 연결 단체 ${managedOrganizationIds().size}곳`
+      : "관리자 권한 없음";
   elements.adminStatus.innerHTML = `
     <p><strong>${escapeHtml(state.user.email || getDisplayName(state.user))}</strong></p>
     <p class="muted">${escapeHtml(role)}</p>
@@ -1840,13 +1883,17 @@ function renderAuthStatus() {
       <p>로그인은 되었지만 권한 정보를 불러오지 못했습니다. 페이지를 새로고침하거나 잠시 후 다시 시도해 주세요.</p>
       <p class="muted">${escapeHtml(state.adminProfileError.message)}</p>
     `;
-  } else if (!state.adminProfile) {
-    elements.permissionNotice.classList.remove("hidden");
-    elements.permissionNotice.innerHTML = `
-      <h3>최초 관리자 등록이 필요합니다</h3>
-      <p>Supabase 콘솔의 Authentication > Users에서 현재 로그인한 이메일 계정을 확인한 뒤, 해당 계정을 관리자 프로필에 등록해 주세요.</p>
-      <p class="muted">관리자 등록 전까지 이 계정은 관리자 데이터를 열람하거나 수정할 수 없습니다.</p>
-    `;
+  } else if (!isAdmin()) {
+    if (state.organizationAdminLinks.length) {
+      elements.permissionNotice.classList.add("hidden");
+    } else {
+      elements.permissionNotice.classList.remove("hidden");
+      elements.permissionNotice.innerHTML = `
+        <h3>관리자 권한이 없습니다</h3>
+        <p>메인 관리자에게 단체 관리자 초대와 단체 연결을 요청해 주세요.</p>
+        <p class="muted">권한이 연결되기 전에는 관리자 데이터를 열람하거나 수정할 수 없습니다.</p>
+      `;
+    }
   } else {
     elements.permissionNotice.classList.add("hidden");
   }
@@ -1871,21 +1918,57 @@ async function loadAdminData() {
   const error = requests.find((result) => result.error)?.error;
   if (error && isAdmin()) throw error;
 
-  [
-    state.organizations,
-    state.instructors,
-    state.venues,
-    state.courses,
-    state.sessions,
-    state.archives,
-    state.applications,
-    state.attendanceDocuments,
-    state.reviews,
-    state.contentReports,
-    state.draws,
-    state.winners,
+  const [
+    organizations,
+    instructors,
+    venues,
+    courses,
+    sessions,
+    archives,
+    applications,
+    attendanceDocuments,
+    reviews,
+    contentReports,
+    draws,
+    winners,
   ] = requests.map((result) => result.data || []);
 
+  if (isOwner()) {
+    state.organizations = organizations;
+    state.courses = courses;
+    state.sessions = sessions;
+    state.archives = archives;
+    state.applications = applications;
+    state.attendanceDocuments = attendanceDocuments;
+    state.reviews = reviews;
+    state.contentReports = contentReports;
+    state.draws = draws;
+    state.winners = winners;
+  } else {
+    const organizationIds = managedOrganizationIds();
+    const scopedCourses = courses.filter((course) => organizationIds.has(course.organization_id));
+    const courseIds = courseIdsSet(scopedCourses);
+    state.organizations = organizations.filter((organization) => organizationIds.has(organization.id));
+    state.courses = scopedCourses;
+    state.sessions = sessions.filter((session) => courseIds.has(session.course_id));
+    state.archives = archives.filter((archive) => courseIds.has(archive.course_id));
+    state.applications = applications.filter((application) => courseIds.has(application.course_id));
+    state.attendanceDocuments = attendanceDocuments.filter((document) => courseIds.has(document.course_id));
+    state.reviews = reviews.filter((review) => courseIds.has(review.course_id));
+    state.contentReports = contentReports.filter((report) => courseIds.has(report.course_id));
+    state.draws = [];
+    state.winners = [];
+  }
+  state.instructors = instructors;
+  state.venues = venues;
+
+  if (isOwner()) await loadOrganizationAdmins();
+  else {
+    state.organizationAdmins = [];
+    state.organizationAdminsError = "";
+  }
+
+  renderAuthStatus();
   render();
 }
 
@@ -1894,6 +1977,125 @@ async function syncFinishedCourseStatuses() {
   if (error) {
     console.warn("[모두의 인문학] 교육 종료 상태 동기화 실패", error);
   }
+}
+
+async function invokeOrganizationAdminFunction(action, payload = {}) {
+  const { data, error } = await supabase.functions.invoke("manage-organization-admins", {
+    body: { action, ...payload },
+  });
+  if (error) {
+    let message = error.message || "단체 관리자 작업을 처리하지 못했습니다.";
+    try {
+      const response = error.context;
+      if (response instanceof Response) {
+        const body = await response.clone().json();
+        if (body?.error) message = body.error;
+      }
+    } catch {
+      // The generic SDK error is kept when the response body is unavailable.
+    }
+    throw new Error(message);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data || {};
+}
+
+async function loadOrganizationAdmins() {
+  if (!isOwner()) return;
+  state.organizationAdminsLoading = true;
+  state.organizationAdminsError = "";
+  try {
+    const data = await invokeOrganizationAdminFunction("list");
+    state.organizationAdmins = data.admins || [];
+  } catch (error) {
+    state.organizationAdmins = [];
+    state.organizationAdminsError = error.message;
+    console.error("[모두의 인문학] 단체 관리자 목록 조회 실패", error);
+  } finally {
+    state.organizationAdminsLoading = false;
+  }
+}
+
+function renderOrganizationAdmins() {
+  if (!isOwner()) {
+    elements.adminContent.innerHTML = `<div class="empty">전체 관리자만 단체 관리자를 관리할 수 있습니다.</div>`;
+    return;
+  }
+
+  elements.adminContent.innerHTML = `
+    <h2>단체 관리자</h2>
+    <p class="muted">이메일로 관리자를 초대하고 담당 단체를 연결합니다. 초대받은 관리자는 연결된 단체의 교육·신청·후기·아카이브만 관리할 수 있습니다.</p>
+    <form id="organizationAdminForm" class="section">
+      <div class="admin-grid">
+        <label>관리자 이메일<input name="email" type="email" placeholder="manager@example.com" autocomplete="off" required maxlength="320"></label>
+        <label>담당 단체<select name="organization_id" required><option value="">단체 선택</option>${optionList(state.organizations)}</select></label>
+      </div>
+      <div class="actions" style="margin-top: 14px;">
+        <button class="btn" type="submit" ${state.organizations.length ? "" : "disabled"}>관리자 초대·연결</button>
+        <span class="badge gray">권한: 단체 관리자</span>
+      </div>
+      <p class="muted" style="margin-top: 10px;">기존 회원 이메일이면 바로 연결하고, 가입하지 않은 이메일이면 관리자 초대 메일을 발송합니다.</p>
+    </form>
+    <div class="row-top" style="margin: 18px 0 10px;">
+      <h3>연결된 관리자</h3>
+      <span class="badge gray">${state.organizationAdmins.length.toLocaleString("ko-KR")}건</span>
+    </div>
+    ${state.organizationAdminsError ? `<div class="empty">목록 조회 실패: ${escapeHtml(state.organizationAdminsError)}</div>` : ""}
+    <div class="table-list">
+      ${state.organizationAdminsLoading
+        ? `<div class="empty">단체 관리자 목록을 불러오는 중입니다.</div>`
+        : state.organizationAdmins.map((admin) => `
+          <div class="table-row">
+            <div class="row-top">
+              <strong>${escapeHtml(admin.email)}</strong>
+              <span class="badge ${admin.is_confirmed ? "green" : "gray"}">${admin.is_confirmed ? "이메일 확인" : "초대 대기"}</span>
+            </div>
+            <p class="muted">담당 단체: ${escapeHtml(admin.organization_name)}</p>
+            <div class="actions">
+              <button class="btn small danger" type="button" data-remove-organization-admin="${escapeHtml(admin.id)}">연결 해제</button>
+            </div>
+          </div>
+        `).join("") || `<div class="empty">연결된 단체 관리자가 없습니다.</div>`}
+    </div>
+  `;
+}
+
+async function inviteOrganizationAdmin(event) {
+  event.preventDefault();
+  const form = getSubmitForm(event);
+  if (!form || !isOwner()) return;
+  const formData = new FormData(form);
+  const email = String(formData.get("email") || "").trim();
+  const organizationId = String(formData.get("organization_id") || "");
+  if (!email || !organizationId) return;
+
+  const button = form.querySelector("button[type='submit']");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "처리 중...";
+  }
+  try {
+    const data = await invokeOrganizationAdminFunction("invite", {
+      email,
+      organization_id: organizationId,
+    });
+    await loadOrganizationAdmins();
+    renderOrganizationAdmins();
+    showToast(data.invited ? "관리자 초대 메일을 보내고 단체를 연결했습니다." : "기존 계정에 단체 관리자 권한을 연결했습니다.");
+  } finally {
+    if (button && document.body.contains(button)) {
+      button.disabled = false;
+      button.textContent = "관리자 초대·연결";
+    }
+  }
+}
+
+async function removeOrganizationAdmin(linkId) {
+  if (!isOwner()) return;
+  await invokeOrganizationAdminFunction("remove", { link_id: linkId });
+  await loadOrganizationAdmins();
+  renderOrganizationAdmins();
+  showToast("단체 관리자 연결을 해제했습니다. 사용자 계정은 삭제하지 않았습니다.");
 }
 
 function renderDashboard() {
@@ -1912,7 +2114,7 @@ function renderDashboard() {
     <div class="admin-grid">
       <div class="section"><h3>교육 신청</h3><p>현재 신청 ${applications.length}건</p></div>
       <div class="section"><h3>후기 관리</h3><p>공개 후기 ${publicReviews}개 · 숨김 ${hiddenReviews}개</p></div>
-      <div class="section"><h3>관리자 전용 추첨</h3><p>추첨 기록 ${state.draws.length}건 · 당첨 이력 ${state.winners.length}건</p></div>
+      ${isOwner() ? `<div class="section"><h3>관리자 전용 추첨</h3><p>추첨 기록 ${state.draws.length}건 · 당첨 이력 ${state.winners.length}건</p></div>` : ""}
     </div>
     ${renderDashboardMetricSection("organization")}
     ${renderDashboardMetricSection("instructor")}
@@ -2316,12 +2518,14 @@ function renderWalkInAttendeeSection(courseId) {
   return `
     <div class="section" style="margin-top: 12px;">
       <h3>현장 참석자 등록</h3>
-      <p class="muted">사전 신청 없이 참여한 사람은 교육 종료 후 기존 신청자·인증 사용자 정보에서 이름 또는 이메일로 찾아 참석자로 등록할 수 있습니다.</p>
+      <p class="muted">${isOwner()
+        ? "사전 신청 없이 참여한 사람은 교육 종료 후 기존 신청자·인증 사용자 정보에서 이름 또는 이메일로 찾아 참석자로 등록할 수 있습니다."
+        : "사전 신청 없이 참여한 사람은 교육 종료 후 본인에게 확인한 전체 이메일 주소로 찾아 참석자로 등록할 수 있습니다."}</p>
       ${courseEnded
         ? `<form data-walk-in-search-form>
             <input type="hidden" name="course_id" value="${escapeHtml(courseId)}">
             <div class="admin-grid">
-              <label>이름 또는 이메일 검색<input name="query" value="${state.walkInSearch.courseId === courseId ? escapeHtml(state.walkInSearch.query) : ""}" placeholder="예: 홍길동 또는 user@example.com" minlength="2" required></label>
+              <label>${isOwner() ? "이름 또는 이메일 검색" : "참여자 전체 이메일"}<input name="query" ${isOwner() ? "" : "type=\"email\""} value="${state.walkInSearch.courseId === courseId ? escapeHtml(state.walkInSearch.query) : ""}" placeholder="${isOwner() ? "예: 홍길동 또는 user@example.com" : "user@example.com"}" minlength="${isOwner() ? "2" : "5"}" required></label>
             </div>
             <div class="actions" style="margin-top: 12px;">
               <button class="btn small" type="submit">검색</button>
@@ -2424,6 +2628,7 @@ function renderDraws() {
 }
 
 function render() {
+  updateAdminNavigationVisibility();
   document.querySelectorAll("[data-admin-tab]").forEach((button) => {
     button.classList.toggle("active", button.dataset.adminTab === state.tab);
   });
@@ -2434,11 +2639,14 @@ function render() {
   }
 
   if (!isAdmin()) {
-    elements.adminContent.innerHTML = `<div class="empty">로그인은 되었지만 관리자 권한이 없습니다. 왼쪽 안내에 따라 최초 관리자 등록을 완료하세요.</div>`;
+    elements.adminContent.innerHTML = `<div class="empty">로그인은 되었지만 관리자 권한이 없습니다. 메인 관리자에게 단체 관리자 연결을 요청해 주세요.</div>`;
     return;
   }
 
+  if (!canAccessAdminTab(state.tab)) state.tab = "dashboard";
+
   if (state.tab === "organizations") renderOrganizations();
+  else if (state.tab === "admins") renderOrganizationAdmins();
   else if (state.tab === "instructors") renderInstructors();
   else if (state.tab === "venues") renderVenues();
   else if (state.tab === "courses") renderCourses();
@@ -2543,6 +2751,7 @@ async function handlePasswordUpdate(event) {
     elements.adminNewPassword.value = "";
     elements.adminNewPasswordConfirm.value = "";
     state.isPasswordRecovery = false;
+    window.history.replaceState({}, document.title, `${window.location.origin}${window.location.pathname}`);
     updateAdminLoginFormVisibility();
     await reload();
     showToast("새 비밀번호를 저장했습니다.");
@@ -3106,11 +3315,11 @@ async function deleteReview(reviewId) {
 }
 
 async function clearApplicationNoteAdmin(applicationId, nextTab = state.tab) {
-  const { error } = await supabase
-    .from("course_applications")
-    .update({ note: null })
-    .eq("id", applicationId);
+  const { data, error } = await supabase.rpc("clear_course_application_note", {
+    p_application_id: applicationId,
+  });
   if (error) throw error;
+  if (data !== true) throw new Error("삭제할 기대평/질문을 찾지 못했거나 관리 권한이 없습니다.");
 
   showToast("기대평/질문을 삭제했습니다.");
   await reload();
@@ -3173,8 +3382,8 @@ async function searchWalkInCandidates(event) {
   const formData = new FormData(form);
   const courseId = String(formData.get("course_id") || "");
   const query = String(formData.get("query") || "").trim();
-  if (query.length < 2) {
-    showToast("이름 또는 이메일을 2글자 이상 입력해 주세요.");
+  if ((isOwner() && query.length < 2) || (!isOwner() && (!query.includes("@") || query.length < 5))) {
+    showToast(isOwner() ? "이름 또는 이메일을 2글자 이상 입력해 주세요." : "참여자의 전체 이메일 주소를 입력해 주세요.");
     return;
   }
 
@@ -3187,7 +3396,8 @@ async function searchWalkInCandidates(event) {
   };
   renderApplications();
 
-  const { data, error } = await supabase.rpc("search_applicant_candidates", {
+  const { data, error } = await supabase.rpc("search_applicant_candidates_for_course", {
+    p_course_id: courseId,
     p_query: query,
   });
 
@@ -3309,6 +3519,7 @@ function bindEvents() {
     const deleteArchiveButton = event.target.closest("[data-delete-archive]");
     const deleteCourseButton = event.target.closest("[data-delete-course]");
     const deleteEntityButton = event.target.closest("[data-delete-entity]");
+    const removeOrganizationAdminButton = event.target.closest("[data-remove-organization-admin]");
     const downloadDashboardStatsButton = event.target.closest("[data-download-dashboard-stats]");
     const closeAdminNoticeButton = event.target.closest("[data-close-admin-notice]");
     if (closeAdminNoticeButton || event.target === elements.adminNoticeModal) {
@@ -3317,6 +3528,31 @@ function bindEvents() {
     }
     if (downloadDashboardStatsButton) {
       downloadDashboardStats(downloadDashboardStatsButton.dataset.downloadDashboardStats);
+      return;
+    }
+    if (removeOrganizationAdminButton) {
+      const defaultLabel = "연결 해제";
+      if (removeOrganizationAdminButton.dataset.confirmRemove !== "true") {
+        removeOrganizationAdminButton.dataset.confirmRemove = "true";
+        removeOrganizationAdminButton.textContent = "한 번 더 누르면 해제";
+        window.setTimeout(() => {
+          if (removeOrganizationAdminButton.dataset.confirmRemove === "true") {
+            removeOrganizationAdminButton.dataset.confirmRemove = "false";
+            removeOrganizationAdminButton.textContent = defaultLabel;
+          }
+        }, 3000);
+        return;
+      }
+      try {
+        removeOrganizationAdminButton.disabled = true;
+        removeOrganizationAdminButton.textContent = "해제 중...";
+        await removeOrganizationAdmin(removeOrganizationAdminButton.dataset.removeOrganizationAdmin);
+      } catch (error) {
+        showToast(`관리자 연결 해제 실패: ${error.message}`);
+        removeOrganizationAdminButton.disabled = false;
+        removeOrganizationAdminButton.dataset.confirmRemove = "false";
+        removeOrganizationAdminButton.textContent = defaultLabel;
+      }
       return;
     }
     if (openCourseTemplateButton) {
@@ -3717,6 +3953,7 @@ function bindEvents() {
       if (event.target.id === "venueForm") return await saveVenue(event);
       if (event.target.id === "courseForm") return await saveCourse(event);
       if (event.target.id === "archiveForm") return await saveArchive(event);
+      if (event.target.id === "organizationAdminForm") return await inviteOrganizationAdmin(event);
       if (event.target.matches("[data-attendance-document-form]")) return await saveAttendanceDocument(event);
       if (event.target.matches("[data-walk-in-search-form]")) return await searchWalkInCandidates(event);
       if (event.target.id === "drawForm") return await runDraw(event);
@@ -3743,7 +3980,7 @@ function bindEvents() {
 }
 
 async function initialize() {
-  state.isPasswordRecovery = isPasswordRecoveryUrl();
+  state.isPasswordRecovery = isPasswordSetupUrl();
   bindEvents();
   await reload();
 }
