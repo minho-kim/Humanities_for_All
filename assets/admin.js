@@ -4,6 +4,7 @@ import {
   SITE_MEDIA_BUCKET,
   escapeHtml,
   formatDateTime,
+  getCurrentUrlWithoutHash,
   getDisplayName,
   normalizeSafeUrl,
   randomPick,
@@ -20,6 +21,7 @@ const state = {
   adminProfile: null,
   adminProfileError: null,
   isLoggingIn: false,
+  isPasswordRecovery: false,
   applicationFilters: {
     courseId: "",
   },
@@ -47,6 +49,10 @@ const state = {
   },
   coursePicker: {
     kind: "",
+    query: "",
+  },
+  courseFilterPicker: {
+    target: "",
     query: "",
   },
   courseTemplate: {
@@ -78,6 +84,10 @@ const elements = {
   adminLoginForm: document.getElementById("adminLoginForm"),
   adminEmail: document.getElementById("adminEmail"),
   adminPassword: document.getElementById("adminPassword"),
+  adminPasswordResetButton: document.getElementById("adminPasswordResetButton"),
+  adminPasswordUpdateForm: document.getElementById("adminPasswordUpdateForm"),
+  adminNewPassword: document.getElementById("adminNewPassword"),
+  adminNewPasswordConfirm: document.getElementById("adminNewPasswordConfirm"),
   adminLogoutButton: document.getElementById("adminLogoutButton"),
   adminStatus: document.getElementById("adminStatus"),
   permissionNotice: document.getElementById("permissionNotice"),
@@ -160,11 +170,19 @@ function updateAdminLoginFormVisibility() {
   elements.adminLoginForm.querySelectorAll("label, button[type='submit']").forEach((element) => {
     element.classList.toggle("hidden", isSignedIn);
   });
+  elements.adminPasswordResetButton?.classList.toggle("hidden", isSignedIn);
   elements.adminLogoutButton.classList.toggle("hidden", !isSignedIn);
+  elements.adminPasswordUpdateForm?.classList.toggle("hidden", !state.isPasswordRecovery);
 }
 
 function isAdmin() {
   return Boolean(state.user && state.adminProfile);
+}
+
+function isPasswordRecoveryUrl() {
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  const queryParams = new URLSearchParams(window.location.search);
+  return hashParams.get("type") === "recovery" || queryParams.get("type") === "recovery";
 }
 
 function optionList(items, selectedId = "") {
@@ -1202,6 +1220,127 @@ function courseResultHtml(course, selectedId = "") {
   `;
 }
 
+function courseFilterTargetLabel(target) {
+  return {
+    application: "신청 관리 교육",
+    expectation: "기대평·문의 교육",
+    archive: "아카이브 교육",
+  }[target] || "교육";
+}
+
+function currentCourseFilterSelectedId(target) {
+  if (target === "application") return state.applicationFilters.courseId || "";
+  if (target === "expectation") return state.expectationFilters.courseId || "";
+  if (target === "archive") return document.querySelector("#archiveForm input[name='course_id']")?.value || "";
+  return "";
+}
+
+function selectedCourseSummaryHtml(courseId, emptyLabel = "전체 교육") {
+  const course = courseById(courseId);
+  if (!course) return `<span class="muted">${escapeHtml(emptyLabel)}</span>`;
+  return `
+    <span>
+      선택한 교육: <strong>${escapeHtml(course.title || "교육명 없음")}</strong>
+      <br><span class="muted">${escapeHtml(shortDate(course.starts_at))} · ${escapeHtml(statusLabels[effectiveCourseStatus(course)] || effectiveCourseStatus(course))}</span>
+    </span>
+  `;
+}
+
+function renderCourseFilterControl(target, selectedId = "", { emptyLabel = "전체 교육", required = false } = {}) {
+  return `
+    <div class="admin-search-selected">
+      ${target === "archive" ? `<input type="hidden" name="course_id" value="${escapeHtml(selectedId || "")}" ${required ? "required" : ""}>` : ""}
+      <span id="courseFilterSelected-${escapeHtml(target)}">${selectedCourseSummaryHtml(selectedId, emptyLabel)}</span>
+      <span class="actions">
+        <button class="btn small secondary" type="button" data-open-course-filter-picker="${escapeHtml(target)}">교육 검색</button>
+        ${selectedId ? `<button class="btn small secondary" type="button" data-clear-course-filter="${escapeHtml(target)}">${target === "archive" ? "선택 해제" : "전체 보기"}</button>` : ""}
+      </span>
+    </div>
+  `;
+}
+
+function courseFilterResultsHtml(target) {
+  const query = state.courseFilterPicker.target === target ? state.courseFilterPicker.query : "";
+  if (!normalizeSearchText(query)) {
+    return `<p class="muted">교육명, 주제, 단체, 강사, 장소, 상태 중 하나를 입력하면 검색 결과가 표시됩니다.</p>`;
+  }
+  const selectedId = currentCourseFilterSelectedId(target);
+  const results = searchItems(state.courses, query, courseSearchText, COURSE_PICKER_LIMIT);
+  return `
+    <div class="admin-search-results">
+      ${results.map((course) => courseFilterResultHtml(target, course, selectedId)).join("") || `<div class="empty">검색어에 맞는 교육이 없습니다.</div>`}
+    </div>
+  `;
+}
+
+function courseFilterResultHtml(target, course, selectedId = "") {
+  const organization = organizationById(course.organization_id);
+  const instructor = instructorById(course.instructor_id);
+  const venue = venueById(course.venue_id);
+  const status = effectiveCourseStatus(course);
+  return `
+    <button class="admin-search-result ${course.id === selectedId ? "selected" : ""}" type="button" data-course-filter-select="${escapeHtml(target)}" data-course-id="${escapeHtml(course.id)}">
+      <span class="admin-search-title">
+        <strong>${escapeHtml(course.title || "교육명 없음")}</strong>
+        ${statusBadge(status)}
+      </span>
+      <span class="muted">${escapeHtml(shortDate(course.starts_at))} · ${escapeHtml(course.topic || "주제 없음")} · ${escapeHtml(organization?.name || "단체 미정")} · ${escapeHtml(instructor?.name || "강사 미정")} ${instructor?.title ? `(${escapeHtml(instructor.title)})` : ""} · ${escapeHtml(venue?.name || "장소 미정")}</span>
+    </button>
+  `;
+}
+
+function renderCourseFilterModalBody(target) {
+  const query = state.courseFilterPicker.target === target ? state.courseFilterPicker.query : "";
+  return `
+    <div class="admin-search-picker">
+      <label>${escapeHtml(courseFilterTargetLabel(target))} 검색<input type="search" data-course-filter-search="${escapeHtml(target)}" value="${escapeHtml(query)}" placeholder="교육명, 주제, 단체, 강사, 장소, 상태로 검색" autocomplete="off"></label>
+      <div data-course-filter-results="${escapeHtml(target)}">${courseFilterResultsHtml(target)}</div>
+    </div>
+  `;
+}
+
+function openCourseFilterPicker(target) {
+  state.courseFilterPicker.target = target;
+  state.courseFilterPicker.query = "";
+  openAdminNotice(`${courseFilterTargetLabel(target)} 선택`, renderCourseFilterModalBody(target));
+  window.requestAnimationFrame(() => {
+    document.querySelector(`[data-course-filter-search="${target}"]`)?.focus();
+  });
+}
+
+function updateCourseFilterResults(target) {
+  const resultsContainer = document.querySelector(`[data-course-filter-results="${target}"]`);
+  if (!resultsContainer) return;
+  resultsContainer.innerHTML = courseFilterResultsHtml(target);
+}
+
+function updateArchiveCourseFilterSelected() {
+  const selectedContainer = document.getElementById("courseFilterSelected-archive");
+  if (!selectedContainer) return;
+  selectedContainer.innerHTML = selectedCourseSummaryHtml(currentCourseFilterSelectedId("archive"), "교육을 선택하지 않았습니다.");
+}
+
+function setCourseFilterSelection(target, courseId = "") {
+  if (target === "application") {
+    state.applicationFilters.courseId = courseId;
+    closeModal(elements.adminNoticeModal);
+    renderApplications();
+    return;
+  }
+  if (target === "expectation") {
+    state.expectationFilters.courseId = courseId;
+    closeModal(elements.adminNoticeModal);
+    renderExpectations();
+    return;
+  }
+  if (target === "archive") {
+    const hiddenInput = document.querySelector("#archiveForm input[name='course_id']");
+    if (hiddenInput) hiddenInput.value = courseId;
+    updateArchiveCourseFilterSelected();
+    closeModal(elements.adminNoticeModal);
+  }
+}
+
 function courseTemplateResultHtml(course) {
   const organization = organizationById(course.organization_id);
   const instructor = instructorById(course.instructor_id);
@@ -2026,7 +2165,10 @@ function renderArchive() {
     <label>수정할 아카이브 선택<select id="archivePicker"><option value="">새 아카이브</option>${state.archives.map((item) => `<option value="${item.id}" ${item.id === selectedArchive.id ? "selected" : ""}>${escapeHtml(item.title)} · ${escapeHtml(courseName(item.course_id))}</option>`).join("")}</select></label>
     <form id="archiveForm" class="section">
       <input type="hidden" name="archive_id" value="${escapeHtml(selectedArchive.id || "")}">
-      <label>교육<select name="course_id" required><option value="">선택</option>${optionList(state.courses, selectedArchive.course_id)}</select></label>
+      <div>
+        <span class="course-picker-label">교육 *</span>
+        ${renderCourseFilterControl("archive", selectedArchive.course_id || "", { emptyLabel: "교육을 선택하지 않았습니다.", required: true })}
+      </div>
       <div class="admin-grid" style="margin-top: 10px;">
         <label>자료 유형<select name="type"><option value="photo" ${selectedArchive.type === "photo" ? "selected" : ""}>사진</option><option value="video" ${selectedArchive.type === "video" ? "selected" : ""}>영상</option><option value="file" ${selectedArchive.type === "file" ? "selected" : ""}>파일</option><option value="link" ${selectedArchive.type === "link" ? "selected" : ""}>링크</option></select></label>
         <label>제목<input name="title" value="${escapeHtml(selectedArchive.title || "")}" required></label>
@@ -2209,14 +2351,8 @@ function renderApplications() {
     <h2>교육 신청 관리</h2>
     <p class="muted">신청자 이름, 이메일, 전화번호는 교육 접수와 안내 목적으로만 사용하세요. 전화번호는 별도 인증 없이 신청자가 입력한 값입니다.</p>
     <div class="section" style="margin: 12px 0 14px;">
-      <div class="admin-grid">
-        <label>교육별 보기
-          <select id="applicationCourseFilter">
-            <option value="">전체 교육</option>
-            ${optionList(state.courses, state.applicationFilters.courseId)}
-          </select>
-        </label>
-      </div>
+      <h3>교육별 보기</h3>
+      ${renderCourseFilterControl("application", state.applicationFilters.courseId, { emptyLabel: "전체 교육" })}
       <div class="actions" style="margin-top: 12px;">
         ${applicationCountBadges(applications)}
       </div>
@@ -2253,14 +2389,8 @@ function renderExpectations() {
     <h2>기대평·문의 관리</h2>
     <p class="muted">교육 신청자가 남긴 기대평과 강사에게 하고 싶은 질문을 모아봅니다. 공개 페이지에는 이 항목의 숫자를 노출하지 않습니다.</p>
     <div class="section" style="margin: 12px 0 14px;">
-      <div class="admin-grid">
-        <label>교육별 보기
-          <select id="expectationCourseFilter">
-            <option value="">전체 교육</option>
-            ${optionList(state.courses, state.expectationFilters.courseId)}
-          </select>
-        </label>
-      </div>
+      <h3>교육별 보기</h3>
+      ${renderCourseFilterControl("expectation", state.expectationFilters.courseId, { emptyLabel: "전체 교육" })}
       <div class="actions" style="margin-top: 12px;">
         <span class="badge green">작성 ${applications.length.toLocaleString("ko-KR")}건</span>
       </div>
@@ -2363,6 +2493,65 @@ async function handleLogin(event) {
   } finally {
     state.isLoggingIn = false;
     setLoginBusy(false);
+  }
+}
+
+async function requestAdminPasswordReset() {
+  const email = elements.adminEmail.value.trim();
+  if (!email) {
+    showToast("비밀번호 재설정 메일을 받을 관리자 이메일을 입력해 주세요.");
+    elements.adminEmail.focus();
+    return;
+  }
+
+  elements.adminPasswordResetButton.disabled = true;
+  elements.adminPasswordResetButton.textContent = "메일 발송 중...";
+  try {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: getCurrentUrlWithoutHash(),
+    });
+    if (error) throw error;
+    showToast("비밀번호 재설정 메일을 보냈습니다. 메일의 링크를 열어 새 비밀번호를 설정하세요.");
+  } catch (error) {
+    console.error("[모두의 인문학] 비밀번호 재설정 메일 발송 실패", error);
+    showToast(`비밀번호 재설정 메일 발송 실패: ${error.message}`);
+  } finally {
+    elements.adminPasswordResetButton.disabled = false;
+    elements.adminPasswordResetButton.textContent = "비밀번호 재설정";
+  }
+}
+
+async function handlePasswordUpdate(event) {
+  event.preventDefault();
+  const password = elements.adminNewPassword.value;
+  const confirmPassword = elements.adminNewPasswordConfirm.value;
+  if (password.length < 8) {
+    showToast("새 비밀번호는 8자 이상이어야 합니다.");
+    return;
+  }
+  if (password !== confirmPassword) {
+    showToast("새 비밀번호 확인이 일치하지 않습니다.");
+    return;
+  }
+
+  const button = elements.adminPasswordUpdateForm.querySelector("button[type='submit']");
+  button.disabled = true;
+  button.textContent = "저장 중...";
+  try {
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error) throw error;
+    elements.adminNewPassword.value = "";
+    elements.adminNewPasswordConfirm.value = "";
+    state.isPasswordRecovery = false;
+    updateAdminLoginFormVisibility();
+    await reload();
+    showToast("새 비밀번호를 저장했습니다.");
+  } catch (error) {
+    console.error("[모두의 인문학] 새 비밀번호 저장 실패", error);
+    showToast(`새 비밀번호 저장 실패: ${error.message}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = "새 비밀번호 저장";
   }
 }
 
@@ -3087,6 +3276,8 @@ async function reload() {
 
 function bindEvents() {
   elements.adminLoginForm.addEventListener("submit", handleLogin);
+  elements.adminPasswordResetButton.addEventListener("click", requestAdminPasswordReset);
+  elements.adminPasswordUpdateForm.addEventListener("submit", handlePasswordUpdate);
   elements.adminLogoutButton.addEventListener("click", handleLogout);
   elements.refreshButton.addEventListener("click", async () => {
     await reload();
@@ -3100,6 +3291,9 @@ function bindEvents() {
     const openCoursePickerButton = event.target.closest("[data-open-course-picker]");
     const clearCoursePickerButton = event.target.closest("[data-clear-course-picker]");
     const coursePickerSelectButton = event.target.closest("[data-course-picker-select]");
+    const openCourseFilterPickerButton = event.target.closest("[data-open-course-filter-picker]");
+    const clearCourseFilterButton = event.target.closest("[data-clear-course-filter]");
+    const courseFilterSelectButton = event.target.closest("[data-course-filter-select]");
     const openCourseTemplateButton = event.target.closest("[data-open-course-template]");
     const loadCourseTemplateButton = event.target.closest("[data-load-course-template]");
     const reviewButton = event.target.closest("[data-review-action]");
@@ -3143,6 +3337,18 @@ function bindEvents() {
     }
     if (coursePickerSelectButton) {
       setCoursePickerSelection(coursePickerSelectButton.dataset.coursePickerSelect, coursePickerSelectButton.dataset.entityId || "");
+      return;
+    }
+    if (openCourseFilterPickerButton) {
+      openCourseFilterPicker(openCourseFilterPickerButton.dataset.openCourseFilterPicker);
+      return;
+    }
+    if (clearCourseFilterButton) {
+      setCourseFilterSelection(clearCourseFilterButton.dataset.clearCourseFilter, "");
+      return;
+    }
+    if (courseFilterSelectButton) {
+      setCourseFilterSelection(courseFilterSelectButton.dataset.courseFilterSelect, courseFilterSelectButton.dataset.courseId || "");
       return;
     }
     if (adminSelectButton) {
@@ -3457,14 +3663,6 @@ function bindEvents() {
       state.selectedArchiveId = event.target.value;
       renderArchive();
     }
-    if (event.target.id === "applicationCourseFilter") {
-      state.applicationFilters.courseId = event.target.value;
-      renderApplications();
-    }
-    if (event.target.id === "expectationCourseFilter") {
-      state.expectationFilters.courseId = event.target.value;
-      renderExpectations();
-    }
   });
 
   document.body.addEventListener("input", (event) => {
@@ -3486,6 +3684,13 @@ function bindEvents() {
       state.coursePicker.kind = kind;
       state.coursePicker.query = event.target.value;
       updateCoursePickerModalResults(kind);
+      return;
+    }
+    if (event.target.matches("[data-course-filter-search]")) {
+      const target = event.target.dataset.courseFilterSearch;
+      state.courseFilterPicker.target = target;
+      state.courseFilterPicker.query = event.target.value;
+      updateCourseFilterResults(target);
       return;
     }
     if (event.target.matches("[data-course-template-search]")) {
@@ -3522,6 +3727,11 @@ function bindEvents() {
 
   supabase.auth.onAuthStateChange((event) => {
     console.info("[모두의 인문학] 인증 상태 변경", event);
+    if (event === "PASSWORD_RECOVERY") {
+      state.isPasswordRecovery = true;
+      updateAdminLoginFormVisibility();
+      showToast("새 비밀번호를 입력해 주세요.");
+    }
     if (state.isLoggingIn) return;
     window.setTimeout(() => {
       reload().catch((error) => {
@@ -3533,6 +3743,7 @@ function bindEvents() {
 }
 
 async function initialize() {
+  state.isPasswordRecovery = isPasswordRecoveryUrl();
   bindEvents();
   await reload();
 }
