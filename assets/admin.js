@@ -195,7 +195,7 @@ function managedOrganizationIds() {
 
 function canAccessAdminTab(tab) {
   if (isOwner()) return true;
-  return ["dashboard", "courses", "applications", "expectations", "archive", "reviews", "reports"].includes(tab);
+  return ["dashboard", "organizations", "courses", "applications", "expectations", "archive", "reviews", "reports"].includes(tab);
 }
 
 function updateAdminNavigationVisibility() {
@@ -2129,13 +2129,19 @@ function renderDashboard() {
 function renderOrganizationForm(organization = {}) {
   const logoUrl = normalizeSafeUrl(organization.logo_url, URL_RULES.image);
   const isEditing = Boolean(organization.id);
+  const canManageStructure = isOwner();
+  if (!canManageStructure && !isEditing) {
+    return `<div class="section empty">연결된 단체가 없습니다. 전체 관리자에게 단체 연결을 요청해 주세요.</div>`;
+  }
   return `
     <form id="organizationForm" class="section">
       <input type="hidden" name="organization_id" value="${escapeHtml(organization.id || "")}">
       <div class="admin-grid">
-        <label>단체명<input name="name" value="${escapeHtml(organization.name || "")}" required></label>
-        <label>주소 이름(선택)<input name="slug" value="${escapeHtml(organization.slug || "")}" placeholder="비워두면 자동 생성"></label>
-        <label>정렬 순서<input name="sort_order" type="number" value="${escapeHtml(organization.sort_order ?? 0)}"></label>
+        ${canManageStructure
+          ? `<label>단체명<input name="name" value="${escapeHtml(organization.name || "")}" required></label>
+             <label>주소 이름(선택)<input name="slug" value="${escapeHtml(organization.slug || "")}" placeholder="비워두면 자동 생성"></label>
+             <label>정렬 순서<input name="sort_order" type="number" value="${escapeHtml(organization.sort_order ?? 0)}"></label>`
+          : `<label>단체명<input value="${escapeHtml(organization.name || "")}" readonly></label>`}
         <label>홈페이지<input name="website_url" value="${escapeHtml(organization.website_url || "")}" placeholder="https://"></label>
       </div>
       <label style="margin-top: 10px;">단체 소개<textarea name="description" placeholder="공개 페이지에 표시할 단체 소개를 입력하세요.">${escapeHtml(organization.description || "")}</textarea></label>
@@ -2144,22 +2150,33 @@ function renderOrganizationForm(organization = {}) {
       <p class="media-upload-note">JPG, PNG, WEBP, GIF 형식 · 5MB 이하. 파일을 선택하면 저장할 때 Supabase Storage에 업로드됩니다.</p>
       <label style="margin-top: 10px;">로고 이미지 URL<input name="logo_url" value="${escapeHtml(organization.logo_url || "")}" placeholder="https://"></label>
       <label style="margin-top: 10px;">연락처<input name="contact_email" value="${escapeHtml(organization.contact_email || "")}" placeholder="이메일, 전화번호, 담당자 연락처 등"></label>
-      <label style="margin-top: 10px;"><span><input name="is_active" type="checkbox" ${organization.is_active !== false ? "checked" : ""} style="width:auto;min-height:auto;"> 공개 페이지에 표시</span></label>
+      ${canManageStructure
+        ? `<label style="margin-top: 10px;"><span><input name="is_active" type="checkbox" ${organization.is_active !== false ? "checked" : ""} style="width:auto;min-height:auto;"> 공개 페이지에 표시</span></label>`
+        : `<p class="muted" style="margin-top: 10px;">단체명, 주소 이름, 정렬 순서와 공개 여부는 전체 관리자가 관리합니다.</p>`}
       <div class="actions" style="margin-top: 14px;">
-        <button class="btn" type="submit">${isEditing ? "단체 수정" : "단체 추가"}</button>
-        <button class="btn secondary" type="button" id="newOrganizationButton">새 단체 입력</button>
-        ${isEditing ? `<button class="btn danger" type="button" data-delete-entity="organization" data-entity-id="${escapeHtml(organization.id)}">단체 삭제</button>` : ""}
+        <button class="btn" type="submit">${canManageStructure ? (isEditing ? "단체 수정" : "단체 추가") : "단체 정보 저장"}</button>
+        ${canManageStructure ? `<button class="btn secondary" type="button" id="newOrganizationButton">새 단체 입력</button>` : ""}
+        ${canManageStructure && isEditing ? `<button class="btn danger" type="button" data-delete-entity="organization" data-entity-id="${escapeHtml(organization.id)}">단체 삭제</button>` : ""}
       </div>
     </form>
   `;
 }
 
 function renderOrganizations() {
-  const selectedId = state.adminSelections.organizationId || "";
+  const defaultManagedId = isOwner() ? "" : (state.organizations[0]?.id || "");
+  const requestedId = state.adminSelections.organizationId || "";
+  const selectedId = state.organizations.some((organization) => organization.id === requestedId)
+    ? requestedId
+    : defaultManagedId;
+  if (state.adminSelections.organizationId !== selectedId) {
+    state.adminSelections.organizationId = selectedId;
+  }
   const selectedOrganization = state.organizations.find((organization) => organization.id === selectedId) || {};
   elements.adminContent.innerHTML = `
     <h2>단체 관리</h2>
-    <p class="muted">공개 페이지의 참여 단체 소개와 단체별 교육 모아보기에 사용됩니다.</p>
+    <p class="muted">${isOwner()
+      ? "공개 페이지의 참여 단체 소개와 단체별 교육 모아보기에 사용됩니다."
+      : "연결된 단체의 소개, 홈페이지, 연락처와 로고를 보완할 수 있습니다."}</p>
     ${renderAdminSearchPicker({
       kind: "organization",
       label: "수정할 단체 검색",
@@ -2776,45 +2793,74 @@ async function saveOrganization(event) {
   const form = getSubmitForm(event);
   if (!form) return;
   const formData = new FormData(form);
-  const organizationId = formData.get("organization_id");
+  const organizationId = String(formData.get("organization_id") || "").trim();
+  const canManageStructure = isOwner();
   const isNewOrganization = !organizationId;
-  const sortOrder = Number(formData.get("sort_order") || 0);
   const logoFile = formData.get("logo_file");
-  const organizationName = String(formData.get("name") || "").trim();
-  const requestedSlug = String(formData.get("slug") || "").trim();
   const existingOrganization = organizationById(organizationId);
   const payload = {
-    name: organizationName,
-    slug: makeUniqueOrganizationSlug(requestedSlug || existingOrganization?.slug || "", organizationName, organizationId),
     description: String(formData.get("description") || "").trim() || null,
     website_url: requireSafeUrl(formData.get("website_url"), "홈페이지 URL", URL_RULES.external),
     contact_email: String(formData.get("contact_email") || "").trim() || null,
     logo_url: requireSafeUrl(formData.get("logo_url"), "로고 이미지 URL", URL_RULES.image),
-    sort_order: Number.isFinite(sortOrder) ? sortOrder : 0,
-    is_active: formData.get("is_active") === "on",
   };
 
-  if (!payload.name) {
-    showToast("단체명을 입력해 주세요.");
+  if (!canManageStructure && (!organizationId || !managedOrganizationIds().has(organizationId))) {
+    showToast("연결된 단체 정보만 수정할 수 있습니다.");
     return;
+  }
+
+  if (canManageStructure) {
+    const organizationName = String(formData.get("name") || "").trim();
+    const requestedSlug = String(formData.get("slug") || "").trim();
+    const sortOrder = Number(formData.get("sort_order") || 0);
+    payload.name = organizationName;
+    payload.slug = makeUniqueOrganizationSlug(requestedSlug || existingOrganization?.slug || "", organizationName, organizationId);
+    payload.sort_order = Number.isFinite(sortOrder) ? sortOrder : 0;
+    payload.is_active = formData.get("is_active") === "on";
+    if (!payload.name) {
+      showToast("단체명을 입력해 주세요.");
+      return;
+    }
   }
 
   let uploadedLogoPath = "";
   if (hasSelectedFile(logoFile)) {
     showToast("로고 이미지를 업로드하는 중입니다.");
-    const uploaded = await uploadSiteImage(logoFile, "organization-logos", payload.slug || payload.name);
+    const logoFolder = organizationId ? `organization-logos/${organizationId}` : "organization-logos";
+    const logoBaseName = payload.slug || payload.name || existingOrganization?.slug || existingOrganization?.name || organizationId;
+    const uploaded = await uploadSiteImage(logoFile, logoFolder, logoBaseName);
     payload.logo_url = uploaded.publicUrl;
     uploadedLogoPath = uploaded.path;
   }
 
-  const request = organizationId
-    ? supabase.from("organizations").update(payload).eq("id", organizationId)
-    : supabase.from("organizations").insert(payload);
-
-  const { data: savedOrganization, error } = await request.select().single();
+  let savedOrganization;
+  let error;
+  if (canManageStructure) {
+    const request = organizationId
+      ? supabase.from("organizations").update(payload).eq("id", organizationId)
+      : supabase.from("organizations").insert(payload);
+    ({ data: savedOrganization, error } = await request.select().single());
+  } else {
+    ({ data: savedOrganization, error } = await supabase.rpc("update_managed_organization_profile", {
+      p_organization_id: organizationId,
+      p_description: payload.description,
+      p_website_url: payload.website_url,
+      p_contact_email: payload.contact_email,
+      p_logo_url: payload.logo_url,
+    }).single());
+  }
   if (error) {
     await removeUploadedSiteImage(uploadedLogoPath);
     throw error;
+  }
+
+  const previousLogoPath = siteMediaStoragePathFromUrl(existingOrganization?.logo_url);
+  const logoChanged = (payload.logo_url || "") !== (existingOrganization?.logo_url || "");
+  const canRemovePreviousLogo = canManageStructure
+    || previousLogoPath.startsWith(`organization-logos/${organizationId}/`);
+  if (logoChanged && previousLogoPath && previousLogoPath !== uploadedLogoPath && canRemovePreviousLogo) {
+    await removeUploadedSiteImage(previousLogoPath);
   }
 
   showToast("단체 정보를 저장했습니다.");
