@@ -1129,7 +1129,31 @@ function renderCalendar(courses) {
   }
 
   const sorted = courses.slice().sort((a, b) => new Date(a.starts_at || 0) - new Date(b.starts_at || 0));
-  elements.courseResults.innerHTML = sorted.map((course) => {
+  const coursesByMonth = new Map();
+  sorted.forEach((course) => {
+    const firstSession = course.sessions[0];
+    const startsAt = firstSession?.starts_at || course.starts_at;
+    const date = new Date(startsAt || 0);
+    const monthParts = Number.isNaN(date.getTime())
+      ? null
+      : new Intl.DateTimeFormat("ko-KR", {
+          timeZone: "Asia/Seoul",
+          year: "numeric",
+          month: "2-digit",
+        }).formatToParts(date);
+    const year = monthParts?.find((part) => part.type === "year")?.value || "";
+    const month = monthParts?.find((part) => part.type === "month")?.value || "";
+    const key = year && month ? `${year}-${month}` : "undated";
+    if (!coursesByMonth.has(key)) {
+      coursesByMonth.set(key, {
+        label: year && month ? `${year}년 ${Number(month)}월` : "일정 미정",
+        courses: [],
+      });
+    }
+    coursesByMonth.get(key).courses.push(course);
+  });
+
+  const calendarItemHtml = (course) => {
     const firstSession = course.sessions[0];
     const orgSlug = course.organization?.slug || "";
     const orgName = course.organization?.name || "";
@@ -1147,7 +1171,16 @@ function renderCalendar(courses) {
         <button class="btn small" type="button" data-open-course="${course.id}">상세 보기</button>
       </article>
     `;
-  }).join("");
+  };
+
+  elements.courseResults.innerHTML = [...coursesByMonth.entries()].map(([key, group]) => `
+    <section class="calendar-month" aria-labelledby="calendar-month-${escapeHtml(key)}">
+      <h3 class="calendar-month-heading" id="calendar-month-${escapeHtml(key)}">${escapeHtml(group.label)}</h3>
+      <div class="calendar-month-list">
+        ${group.courses.map(calendarItemHtml).join("")}
+      </div>
+    </section>
+  `).join("");
 }
 
 function renderLandingCoursesPage() {
@@ -1162,10 +1195,13 @@ function renderLandingCoursesPage() {
       ? `${featuredLabel} ${featured.length.toLocaleString("ko-KR")}개를 먼저 보여드립니다. 더 보려면 검색하기를 눌러 주세요.`
       : "검색어를 입력하거나 필터를 선택한 뒤 검색하기를 눌러 주세요.",
   });
-  elements.courseResults.className = hasFeatured ? "course-grid" : "content-stack";
-  elements.courseResults.innerHTML = hasFeatured
-    ? featured.map(courseCardHtml).join("")
-    : `<div class="empty">아직 추천할 교육이 없습니다. 검색하기를 누르면 등록된 교육을 확인할 수 있습니다.</div>`;
+  if (hasFeatured) {
+    if (state.activeView === "calendar") renderCalendar(featured);
+    else renderCards(featured);
+    return;
+  }
+  elements.courseResults.className = "content-stack";
+  elements.courseResults.innerHTML = `<div class="empty">아직 추천할 교육이 없습니다. 검색하기를 누르면 등록된 교육을 확인할 수 있습니다.</div>`;
 }
 
 function renderCoursesPage() {
@@ -2314,8 +2350,11 @@ async function handleLogout() {
 }
 
 function startAuthMonitor() {
-  async function syncAuth(supabase) {
-    const user = await refreshSession(supabase);
+  let authSyncQueue = Promise.resolve();
+
+  async function syncAuth(supabase, session) {
+    const user = session?.user || null;
+    updateSessionUi(user);
     if (user) await loadApplicationState(supabase);
     else clearApplicationState();
     render();
@@ -2329,10 +2368,18 @@ function startAuthMonitor() {
 
   getSupabaseClient()
     .then((supabase) => {
-      supabase.auth.onAuthStateChange(() => {
-        syncAuth(supabase);
+      supabase.auth.onAuthStateChange((_event, session) => {
+        window.setTimeout(() => {
+          authSyncQueue = authSyncQueue
+            .then(() => syncAuth(supabase, session))
+            .catch((error) => {
+              console.warn("[모두의 인문학] 로그인 상태 반영 지연", error);
+              updateSessionUi(null);
+              clearApplicationState();
+              render();
+            });
+        }, 0);
       });
-      syncAuth(supabase);
     })
     .catch((error) => {
       console.warn("[모두의 인문학] 로그인 모듈 준비 지연", error);

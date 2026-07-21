@@ -337,6 +337,18 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 .badge-link { text-decoration: none; }
 
 .calendar-list { display: grid; gap: 12px; margin-bottom: 22px; }
+.calendar-month { display: grid; gap: 12px; }
+.calendar-month + .calendar-month { margin-top: 12px; }
+.calendar-month-heading {
+  margin: 0;
+  padding: 10px 14px;
+  border-left: 4px solid var(--brand);
+  border-radius: 0 14px 14px 0;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink);
+  font-size: 1.12rem;
+}
+.calendar-month-list { display: grid; gap: 12px; }
 .calendar-item { display: grid; grid-template-columns: 110px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 16px; border-radius: 22px; background: rgba(255, 255, 255, 0.9); border: 1px solid var(--line); }
 .date-box { padding: 10px; border-radius: 18px; background: #e7f1ff; color: var(--brand); text-align: center; font-weight: 900; }
 .date-box small { display: block; color: var(--muted); }
