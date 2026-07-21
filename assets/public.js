@@ -1677,34 +1677,32 @@ function renderApplicationForm(course) {
     `;
   }
 
-  const cancelledApplication = cancelledApplicationForCourse(course.id);
-  if (cancelledApplication) {
-    return `
-      <div class="table-row">
-        <div class="row-top">
-          <strong>신청을 취소한 교육입니다.</strong>
-          <span class="badge red">취소</span>
-        </div>
-        <p class="muted">취소된 신청은 현재 신청 명단에서 제외됩니다. 다시 신청해야 한다면 운영자에게 문의해 주세요.</p>
-      </div>
-    `;
-  }
-
   if (!canApplyToCourse(course)) {
     return `<p>현재 이 교육은 신청을 받지 않습니다. 상태: <strong>${escapeHtml(statusLabels[course.status] || course.status)}</strong></p>`;
   }
 
-  const defaultName = state.applicantProfile?.applicant_name || "";
-  const defaultPhone = formatPhoneNumber(state.applicantProfile?.phone || "");
+  const cancelledApplication = cancelledApplicationForCourse(course.id);
+  const defaultName = state.applicantProfile?.applicant_name || cancelledApplication?.applicant_name || "";
+  const defaultPhone = formatPhoneNumber(state.applicantProfile?.phone || cancelledApplication?.phone || "");
+  const defaultNote = cancelledApplication?.note || "";
   return `
     <form id="applicationForm">
       <input type="hidden" name="course_id" value="${escapeHtml(course.id)}">
+      ${cancelledApplication ? `
+        <div class="table-row" style="margin-bottom: 12px;">
+          <div class="row-top">
+            <strong>이전에 신청을 취소한 교육입니다.</strong>
+            <span class="badge gray">재신청 가능</span>
+          </div>
+          <p class="muted">아래 정보를 확인하고 다시 신청하면 현재 신청자 명단에 등록됩니다.</p>
+        </div>
+      ` : ""}
       <div class="admin-grid">
         <label>신청자명<input name="applicant_name" value="${escapeHtml(defaultName)}" required maxlength="80" autocomplete="name"></label>
         <label>휴대전화번호<input name="phone" value="${escapeHtml(defaultPhone)}" required inputmode="tel" autocomplete="tel" placeholder="010-0000-0000" maxlength="13"></label>
       </div>
       <label style="margin-top: 10px;">이메일<input value="${escapeHtml(state.user.email || "")}" readonly></label>
-      <label style="margin-top: 10px;">기대평 / 강사에게 하고 싶은 질문(선택)<textarea name="note" placeholder="교육에서 기대하는 점이나 강사에게 미리 묻고 싶은 내용을 적어주세요."></textarea></label>
+      <label style="margin-top: 10px;">기대평 / 강사에게 하고 싶은 질문(선택)<textarea name="note" placeholder="교육에서 기대하는 점이나 강사에게 미리 묻고 싶은 내용을 적어주세요.">${escapeHtml(defaultNote)}</textarea></label>
       <div class="section privacy-consent" style="margin-top: 12px;">
         <h3>개인정보 수집·이용 동의</h3>
         <p class="muted">교육 신청 접수와 이메일·문자(카카오톡 포함) 운영 안내를 위해 필요한 최소한의 개인정보를 수집합니다.</p>
@@ -1724,7 +1722,7 @@ function renderApplicationForm(course) {
         <label style="margin-top: 8px;"><span><input name="sms_notice_agreement" type="checkbox" required style="width:auto;min-height:auto;"> 신청 확인과 교육 운영 안내를 이메일·문자(카카오톡 포함)로 받을 수 있음에 동의합니다.</span></label>
       </div>
       <div class="actions" style="margin-top: 12px;">
-        <button class="btn" type="submit">교육 신청하기</button>
+        <button class="btn" type="submit">${cancelledApplication ? "교육 다시 신청하기" : "교육 신청하기"}</button>
         <span class="badge green">다음 신청 때 이름과 전화번호가 자동 입력됩니다</span>
       </div>
     </form>
@@ -1868,10 +1866,7 @@ async function handleApplicationSubmit(event) {
     showToast("이미 이 교육을 신청했습니다.");
     return;
   }
-  if (cancelledApplicationForCourse(courseId)) {
-    showToast("취소한 신청을 다시 열려면 운영자에게 문의해 주세요.");
-    return;
-  }
+  const cancelledApplication = cancelledApplicationForCourse(courseId);
 
   const applicantName = String(formData.get("applicant_name") || "").trim();
   const phone = normalizePhone(formData.get("phone"));
@@ -1910,27 +1905,45 @@ async function handleApplicationSubmit(event) {
     return;
   }
 
-  const { data: createdApplication, error } = await supabase
-    .from("course_applications")
-    .insert({
-      course_id: course.id,
-      user_id: state.user.id,
-      applicant_name: applicantName,
-      email,
-      phone,
-      note: note || null,
-      privacy_agreed_at: now,
-      sms_notice_agreed_at: now,
-      terms_version: APPLICATION_TERMS_VERSION,
-    })
-    .select("id")
-    .single();
+  let createdApplication = null;
+  let error = null;
+  if (cancelledApplication) {
+    const result = await supabase.rpc("reapply_my_course_application", {
+      p_course_id: course.id,
+      p_applicant_name: applicantName,
+      p_phone: phone,
+      p_note: note || null,
+      p_terms_version: APPLICATION_TERMS_VERSION,
+    });
+    createdApplication = result.data ? { id: result.data } : null;
+    error = result.error;
+  } else {
+    const result = await supabase
+      .from("course_applications")
+      .insert({
+        course_id: course.id,
+        user_id: state.user.id,
+        applicant_name: applicantName,
+        email,
+        phone,
+        note: note || null,
+        privacy_agreed_at: now,
+        sms_notice_agreed_at: now,
+        terms_version: APPLICATION_TERMS_VERSION,
+      })
+      .select("id")
+      .single();
+    createdApplication = result.data;
+    error = result.error;
+  }
 
   if (error) {
     if (error.code === "23505") showToast("이미 이 교육을 신청했습니다.");
     else {
       console.error("Course application failed", error);
-      showToast("교육 신청을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+      showToast(cancelledApplication
+        ? "교육 재신청을 저장하지 못했습니다. 신청 가능 시간을 확인한 뒤 다시 시도해 주세요."
+        : "교육 신청을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.");
     }
     await loadApplicationState(supabase);
     openCourseDetail(course.id);
@@ -1939,7 +1952,9 @@ async function handleApplicationSubmit(event) {
 
   await loadApplicationState(supabase);
   void requestNotificationDispatch(supabase, "course_application", createdApplication?.id);
-  showToast("교육 신청이 접수되었습니다. 확인 메일을 보내드립니다.");
+  showToast(cancelledApplication
+    ? "교육을 다시 신청했습니다. 확인 메일을 보내드립니다."
+    : "교육 신청이 접수되었습니다. 확인 메일을 보내드립니다.");
   openCourseDetail(course.id);
 }
 
@@ -2076,8 +2091,9 @@ async function handleCancelApplication(button) {
     return;
   }
 
+  void requestNotificationDispatch(supabase, "course_application", applicationId);
   await loadApplicationState(supabase);
-  showToast("교육 신청을 취소했습니다.");
+  showToast("교육 신청을 취소했습니다. 취소 완료 메일을 보내드립니다.");
   if (state.activeCourseId) openCourseDetail(state.activeCourseId);
   if (elements.profileModal.classList.contains("open") && elements.profileEyebrow.textContent === "나의 정보") {
     openMyInfo();
