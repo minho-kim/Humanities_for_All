@@ -576,6 +576,22 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 .series-admin-list { margin-top: 10px; }
 .series-admin-list li { display: flex; justify-content: space-between; gap: 12px; padding: 9px 10px; border-radius: 0.7rem; background: #fff; }
 .series-admin-list li.current { background: #ede7f6; }
+.course-management-tabs { flex-shrink: 0; }
+.series-management-panel { margin-top: 18px; padding: 18px; border: 1px solid #c9d8ee; border-radius: 18px; background: #f7faff; }
+.series-management-panel .section-heading { margin-bottom: 10px; }
+.series-management-panel h3 { margin: 0 0 4px; }
+.series-management-list { display: grid; gap: 10px; margin: 16px 0 0; padding: 0; list-style: none; }
+.series-management-list li { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
+.series-management-order { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: #e7f1ff; color: var(--brand); font-weight: 900; }
+.series-management-copy { display: grid; gap: 3px; min-width: 0; }
+.series-management-copy strong, .series-management-copy span { word-break: keep-all; overflow-wrap: break-word; }
+.series-management-copy span, .series-management-copy small { color: var(--muted); }
+.series-management-status { justify-self: end; }
+.series-create-selected { display: grid; gap: 10px; margin-top: 8px; padding-top: 14px; border-top: 1px solid var(--line); }
+.series-create-selected-header { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.series-create-selected-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.series-create-selected-list li { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
+.compact-empty { padding: 18px; border-radius: 16px; }
 .table-list { display: grid; gap: 10px; }
 .table-row { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 18px; background: #fff; }
 .row-top { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
@@ -744,6 +760,10 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
   .series-course-list button { grid-template-columns: 34px minmax(0, 1fr); }
   .series-course-list button > .badge { grid-column: 2; justify-self: start; }
   .series-admin-list li { align-items: flex-start; flex-direction: column; }
+  .series-management-list li { grid-template-columns: 38px minmax(0, 1fr); align-items: start; }
+  .series-management-status, .series-management-list li > .actions { grid-column: 2; justify-self: start; }
+  .series-create-selected-list li { grid-template-columns: 38px minmax(0, 1fr); align-items: start; }
+  .series-create-selected-list li > button { grid-column: 2; justify-self: start; }
   .footer { align-items: stretch; flex-direction: column; }
   .site-footer { width: min(100% - 20px, 1180px); margin-bottom: 22px; }
   .site-footer-inner { align-items: flex-start; flex-direction: column; }

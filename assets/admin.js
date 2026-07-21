@@ -65,6 +65,14 @@ const state = {
     sourceTitle: "",
     draft: null,
   },
+  courseManagement: {
+    mode: "courses",
+    seriesQuery: "",
+    selectedSeriesId: "",
+    draftPreviousCourseId: "",
+    createQuery: "",
+    createCourseIds: [],
+  },
   dashboardStatsSearch: {
     organization: "",
     instructor: "",
@@ -263,6 +271,41 @@ function courseSeriesPosition(course) {
 function isLastSeriesCourse(course) {
   if (!course?.series_id) return true;
   return coursesInSeries(course.series_id).at(-1)?.id === course.id;
+}
+
+function courseSeriesGroups() {
+  const groups = new Map();
+  state.courses.forEach((course) => {
+    if (!course.series_id) return;
+    if (!groups.has(course.series_id)) groups.set(course.series_id, []);
+    groups.get(course.series_id).push(course);
+  });
+
+  return [...groups.entries()]
+    .map(([id, courses]) => ({
+      id,
+      courses: courses.slice().sort((a, b) => {
+        const orderDifference = Number(a.series_order || 0) - Number(b.series_order || 0);
+        if (orderDifference) return orderDifference;
+        return new Date(a.starts_at || 0) - new Date(b.starts_at || 0);
+      }),
+    }))
+    .filter((series) => series.courses.length >= 2)
+    .sort((a, b) => new Date(a.courses[0]?.starts_at || 0) - new Date(b.courses[0]?.starts_at || 0));
+}
+
+function courseSeriesSearchText(series) {
+  return [
+    "연강",
+    ...series.courses.flatMap((course) => [courseSearchText(course), course.series_order]),
+  ].join(" ");
+}
+
+function courseSeriesOrganizationLabel(series) {
+  const names = [...new Set(series.courses
+    .map((course) => organizationById(course.organization_id)?.name)
+    .filter(Boolean))];
+  return names.join(" · ") || "단체 미정";
 }
 
 function organizationById(organizationId) {
@@ -2382,8 +2425,239 @@ function renderCourseSeriesAdmin(course = {}) {
   `;
 }
 
+function courseSeriesDateLabel(series) {
+  const firstCourse = series.courses[0];
+  const lastCourse = series.courses.at(-1);
+  const firstDate = shortDate(firstCourse?.starts_at);
+  const lastDate = shortDate(lastCourse?.starts_at);
+  return firstDate === lastDate ? firstDate : `${firstDate} ~ ${lastDate}`;
+}
+
+function courseSeriesManagementResultHtml(series, selectedSeriesId = "") {
+  const firstCourse = series.courses[0];
+  return `
+    <button class="admin-search-result ${series.id === selectedSeriesId ? "selected" : ""}" type="button" data-select-course-series="${escapeHtml(series.id)}">
+      <span class="admin-search-title">
+        <strong>${escapeHtml(firstCourse?.title || "교육명 없음")} 외 ${Math.max(0, series.courses.length - 1)}개</strong>
+        <span class="badge">연강 ${series.courses.length}회</span>
+      </span>
+      ${firstCourse?.subtitle ? `<span>${escapeHtml(firstCourse.subtitle)}</span>` : ""}
+      <span class="muted">${escapeHtml(courseSeriesDateLabel(series))} · ${escapeHtml(courseSeriesOrganizationLabel(series))}</span>
+    </button>
+  `;
+}
+
+function courseSeriesManagementResultsHtml() {
+  const groups = courseSeriesGroups();
+  if (!groups.length) {
+    return `<div class="empty">현재 연결된 연강이 없습니다. 개별 교육 등록에서 후속 교육의 앞 교육을 선택하면 연강이 만들어집니다.</div>`;
+  }
+
+  const query = state.courseManagement.seriesQuery;
+  if (!normalizeSearchText(query)) {
+    return `<p class="muted">교육명, 부제, 주제, 단체, 강사, 장소 중 하나를 입력하면 연강 검색 결과가 표시됩니다.</p>`;
+  }
+
+  const results = searchItems(groups, query, courseSeriesSearchText, COURSE_PICKER_LIMIT);
+  return `
+    <div class="admin-search-results">
+      ${results.map((series) => courseSeriesManagementResultHtml(series, state.courseManagement.selectedSeriesId)).join("") || `<div class="empty">검색어에 맞는 연강이 없습니다.</div>`}
+    </div>
+  `;
+}
+
+function renderSelectedCourseSeries(series) {
+  if (!series) return "";
+  const lastCourse = series.courses.at(-1);
+  return `
+    <section class="series-management-panel">
+      <div class="section-heading">
+        <div>
+          <h3>${escapeHtml(series.courses[0]?.title || "교육명 없음")} 연강</h3>
+          <p class="muted">${escapeHtml(courseSeriesDateLabel(series))} · ${escapeHtml(courseSeriesOrganizationLabel(series))} · 총 ${series.courses.length}회</p>
+        </div>
+        <div class="actions">
+          <button class="btn small" type="button" data-add-course-to-series="${escapeHtml(lastCourse?.id || "")}">후속 교육 추가</button>
+          <button class="btn small danger" type="button" data-dissolve-course-series="${escapeHtml(series.id)}">연강 전체 해제</button>
+        </div>
+      </div>
+      <p class="muted">교육 내용과 일정은 각 교육에서 수정합니다. 교육을 분리하거나 연강 전체를 해제해도 교육·신청·참석·후기·아카이브는 삭제되지 않습니다.</p>
+      <ol class="series-management-list">
+        ${series.courses.map((course, index) => `
+          <li>
+            <span class="series-management-order">${index + 1}</span>
+            <span class="series-management-copy">
+              <strong>${escapeHtml(course.title || "교육명 없음")}</strong>
+              ${course.subtitle ? `<span>${escapeHtml(course.subtitle)}</span>` : ""}
+              <small>${escapeHtml(shortDate(course.starts_at))} · ${escapeHtml(organizationById(course.organization_id)?.name || "단체 미정")}</small>
+            </span>
+            <span class="series-management-status">${statusBadge(effectiveCourseStatus(course))}</span>
+            <span class="actions">
+              <button class="btn small secondary" type="button" data-edit-series-course="${escapeHtml(course.id)}">교육 수정</button>
+              <button class="btn small secondary" type="button" data-detach-course-series="${escapeHtml(course.id)}">이 교육 분리</button>
+            </span>
+          </li>
+        `).join("")}
+      </ol>
+    </section>
+  `;
+}
+
+function standaloneCoursesForSeriesCreation() {
+  return state.courses
+    .filter((course) => !course.series_id && course.status !== "cancelled")
+    .slice()
+    .sort((a, b) => {
+      const timeDifference = new Date(a.starts_at || 0) - new Date(b.starts_at || 0);
+      if (timeDifference) return timeDifference;
+      return (a.title || "").localeCompare(b.title || "", "ko");
+    });
+}
+
+function selectedCoursesForSeriesCreation() {
+  const selectedIds = new Set(state.courseManagement.createCourseIds);
+  return standaloneCoursesForSeriesCreation().filter((course) => selectedIds.has(course.id));
+}
+
+function courseSeriesCreateResultHtml(course) {
+  const isSelected = state.courseManagement.createCourseIds.includes(course.id);
+  const organization = organizationById(course.organization_id);
+  const instructor = instructorById(course.instructor_id);
+  return `
+    <button class="admin-search-result ${isSelected ? "selected" : ""}" type="button" data-add-course-series-selection="${escapeHtml(course.id)}" ${isSelected ? "disabled" : ""}>
+      <span class="admin-search-title">
+        <strong>${escapeHtml(course.title || "교육명 없음")}</strong>
+        ${isSelected ? `<span class="badge green">선택됨</span>` : statusBadge(effectiveCourseStatus(course))}
+      </span>
+      ${course.subtitle ? `<span>${escapeHtml(course.subtitle)}</span>` : ""}
+      <span class="muted">${escapeHtml(formatDateTime(course.starts_at))} · ${escapeHtml(organization?.name || "단체 미정")} · ${escapeHtml(instructor?.name || "강사 미정")}</span>
+    </button>
+  `;
+}
+
+function courseSeriesCreateResultsHtml() {
+  const query = state.courseManagement.createQuery;
+  if (!normalizeSearchText(query)) {
+    return `<p class="muted">교육명, 부제, 주제, 단체, 강사, 장소 중 하나를 입력하면 아직 연강에 속하지 않은 교육이 표시됩니다.</p>`;
+  }
+  const results = searchItems(standaloneCoursesForSeriesCreation(), query, courseSearchText, COURSE_PICKER_LIMIT);
+  return `
+    <div class="admin-search-results compact">
+      ${results.map(courseSeriesCreateResultHtml).join("") || `<div class="empty">검색어에 맞는 단독 교육이 없습니다.</div>`}
+    </div>
+  `;
+}
+
+function courseSeriesCreateSelectedHtml() {
+  const courses = selectedCoursesForSeriesCreation();
+  return `
+    <div class="series-create-selected-header">
+      <strong>선택한 교육 ${courses.length}개</strong>
+      <span class="muted">교육 시작일 기준으로 자동 정렬됩니다.</span>
+    </div>
+    ${courses.length ? `
+      <ol class="series-create-selected-list">
+        ${courses.map((course, index) => `
+          <li>
+            <span class="series-management-order">${index + 1}</span>
+            <span class="series-management-copy">
+              <strong>${escapeHtml(course.title || "교육명 없음")}</strong>
+              ${course.subtitle ? `<span>${escapeHtml(course.subtitle)}</span>` : ""}
+              <small>${escapeHtml(formatDateTime(course.starts_at))} · ${escapeHtml(organizationById(course.organization_id)?.name || "단체 미정")}</small>
+            </span>
+            <button class="btn small secondary" type="button" data-remove-course-series-selection="${escapeHtml(course.id)}">선택 해제</button>
+          </li>
+        `).join("")}
+      </ol>
+    ` : `<div class="empty compact-empty">연강으로 묶을 교육을 2개 이상 선택해 주세요.</div>`}
+    <div class="actions" style="margin-top: 14px;">
+      <button class="btn" type="button" data-create-course-series-batch ${courses.length >= 2 ? "" : "disabled"}>선택한 교육으로 연강 만들기</button>
+      <button class="btn secondary" type="button" data-close-admin-notice>취소</button>
+    </div>
+  `;
+}
+
+function renderCourseSeriesCreateModalBody() {
+  return `
+    <div class="admin-search-picker">
+      <p class="muted">기존 단독 교육을 여러 개 선택한 뒤 한 번만 저장합니다. 교육·신청·후기 데이터는 그대로 두고 연강 연결과 순서만 추가합니다.</p>
+      <label>연강에 넣을 교육 검색<input type="search" data-course-series-create-search value="${escapeHtml(state.courseManagement.createQuery)}" placeholder="교육명, 부제, 주제, 단체, 강사, 장소로 검색" autocomplete="off"></label>
+      <div data-course-series-create-results>${courseSeriesCreateResultsHtml()}</div>
+      <div class="series-create-selected" data-course-series-create-selected>${courseSeriesCreateSelectedHtml()}</div>
+    </div>
+  `;
+}
+
+function openCourseSeriesCreateModal() {
+  state.courseManagement.createQuery = "";
+  state.courseManagement.createCourseIds = [];
+  openAdminNotice("새 연강 만들기", renderCourseSeriesCreateModalBody());
+  window.requestAnimationFrame(() => document.querySelector("[data-course-series-create-search]")?.focus());
+}
+
+function updateCourseSeriesCreateModal() {
+  const resultsContainer = document.querySelector("[data-course-series-create-results]");
+  if (resultsContainer) resultsContainer.innerHTML = courseSeriesCreateResultsHtml();
+  const selectedContainer = document.querySelector("[data-course-series-create-selected]");
+  if (selectedContainer) selectedContainer.innerHTML = courseSeriesCreateSelectedHtml();
+}
+
+function addCourseSeriesCreateSelection(courseId) {
+  const course = standaloneCoursesForSeriesCreation().find((item) => item.id === courseId);
+  if (!course || state.courseManagement.createCourseIds.includes(course.id)) return;
+  state.courseManagement.createCourseIds.push(course.id);
+  updateCourseSeriesCreateModal();
+}
+
+function removeCourseSeriesCreateSelection(courseId) {
+  state.courseManagement.createCourseIds = state.courseManagement.createCourseIds.filter((id) => id !== courseId);
+  updateCourseSeriesCreateModal();
+}
+
+async function createCourseSeriesBatch() {
+  const courses = selectedCoursesForSeriesCreation();
+  if (courses.length < 2) throw new Error("연강으로 묶을 교육을 2개 이상 선택해 주세요.");
+  const startTimes = courses.map((course) => new Date(course.starts_at).getTime());
+  if (new Set(startTimes).size !== startTimes.length) {
+    throw new Error("시작 일시가 같은 교육은 연강 순서를 정할 수 없습니다. 교육 일시를 먼저 조정해 주세요.");
+  }
+
+  const { data, error } = await supabase.rpc("create_course_series", {
+    p_course_ids: courses.map((course) => course.id),
+  });
+  if (error) throw error;
+  if (!data) throw new Error("생성된 연강 정보를 확인하지 못했습니다.");
+
+  closeModal(elements.adminNoticeModal);
+  state.courseManagement.createQuery = "";
+  state.courseManagement.createCourseIds = [];
+  await reload();
+  state.tab = "courses";
+  state.courseManagement.mode = "series";
+  state.courseManagement.selectedSeriesId = String(data);
+  render();
+  showToast(`교육 ${courses.length}개를 한 번에 연강으로 만들었습니다.`);
+}
+
+function renderCourseSeriesManagement() {
+  const groups = courseSeriesGroups();
+  const selectedSeries = groups.find((series) => series.id === state.courseManagement.selectedSeriesId);
+  return `
+    <div class="row-top">
+      <p class="muted">연결된 연강을 검색해 구성 교육을 수정하거나 분리할 수 있습니다. 연강 전체 해제는 연결만 지우며 교육 자체는 보존합니다.</p>
+      <button class="btn" type="button" data-open-course-series-create>새 연강 만들기</button>
+    </div>
+    <div class="admin-search-picker" style="margin-top: 14px;">
+      <label>관리할 연강 검색<input type="search" data-course-series-search value="${escapeHtml(state.courseManagement.seriesQuery)}" placeholder="교육명, 부제, 주제, 단체, 강사, 장소로 검색" autocomplete="off"></label>
+      <div data-course-series-results>${courseSeriesManagementResultsHtml()}</div>
+    </div>
+    ${renderSelectedCourseSeries(selectedSeries)}
+  `;
+}
+
 function renderCourseForm(course = {}) {
   const isEditing = Boolean(course.id);
+  const seriesPreviousCourseId = isEditing ? "" : state.courseManagement.draftPreviousCourseId;
   const isDeleteAllowed = canDeleteCourse(course);
   const firstSession = state.sessions.find((session) => session.course_id === course.id) || {};
   const startValue = localDateTimeValue(course.starts_at || firstSession.starts_at);
@@ -2416,7 +2690,7 @@ function renderCourseForm(course = {}) {
         ${renderCoursePickerField("venue", course.venue_id || "")}
         <label>시작 일시<input name="starts_at" type="datetime-local" value="${escapeHtml(startValue)}" min="${escapeHtml(startMinValue)}" required></label>
         <label>종료 일시(선택)<input name="ends_at" type="datetime-local" value="${escapeHtml(endValue)}" min="${escapeHtml(endMinValue)}"></label>
-        ${renderCoursePickerField("series", "")}
+        ${renderCoursePickerField("series", seriesPreviousCourseId)}
       </div>
       ${renderCourseSeriesAdmin(course)}
       ${autoStatusNote}
@@ -2447,22 +2721,33 @@ function renderCourses() {
     ? state.courses.find((course) => course.id === selectedId) || {}
     : state.courseTemplate.draft || {};
   elements.adminContent.innerHTML = `
-    <h2>교육 관리</h2>
-    <p class="muted">새 교육을 등록하거나 기존 교육을 수정합니다. 일정은 교육별로 관리하며, 후속 교육은 앞 교육을 선택해 연강으로 연결할 수 있습니다.</p>
-    ${renderAdminSearchPicker({
-      kind: "course",
-      label: "수정할 교육 검색",
-      placeholder: "교육명, 부제, 주제, 단체, 강사, 장소, 상태로 검색",
-      query: state.adminSearch.course,
-      selectedItem: selectedCourse,
-      items: state.courses,
-      textBuilder: courseSearchText,
-      resultBuilder: courseResultHtml,
-      emptyText: "검색어에 맞는 교육이 없습니다.",
-      hideResultsUntilQuery: true,
-      emptyQueryText: "교육명, 부제, 주제, 단체, 강사, 장소, 상태 중 하나를 입력하면 검색 결과가 표시됩니다.",
-    })}
-    <div style="margin-top: 14px;">${renderCourseForm(selectedCourse)}</div>
+    <div class="section-heading">
+      <div>
+        <h2>교육 관리</h2>
+        <p class="muted">개별 교육 정보와 여러 교육을 묶은 연강 연결을 나누어 관리합니다.</p>
+      </div>
+      <div class="page-tabs course-management-tabs" aria-label="교육 관리 구분">
+        <button class="btn small ${state.courseManagement.mode === "courses" ? "" : "secondary"}" type="button" data-course-management-mode="courses">개별 교육</button>
+        <button class="btn small ${state.courseManagement.mode === "series" ? "" : "secondary"}" type="button" data-course-management-mode="series">연강 관리 ${courseSeriesGroups().length ? `(${courseSeriesGroups().length})` : ""}</button>
+      </div>
+    </div>
+    ${state.courseManagement.mode === "series" ? renderCourseSeriesManagement() : `
+      <p class="muted">새 교육을 등록하거나 기존 교육을 수정합니다. 후속 교육은 앞 교육을 선택해 연강으로 연결할 수 있습니다.</p>
+      ${renderAdminSearchPicker({
+        kind: "course",
+        label: "수정할 교육 검색",
+        placeholder: "교육명, 부제, 주제, 단체, 강사, 장소, 상태로 검색",
+        query: state.adminSearch.course,
+        selectedItem: selectedCourse,
+        items: state.courses,
+        textBuilder: courseSearchText,
+        resultBuilder: courseResultHtml,
+        emptyText: "검색어에 맞는 교육이 없습니다.",
+        hideResultsUntilQuery: true,
+        emptyQueryText: "교육명, 부제, 주제, 단체, 강사, 장소, 상태 중 하나를 입력하면 검색 결과가 표시됩니다.",
+      })}
+      <div style="margin-top: 14px;">${renderCourseForm(selectedCourse)}</div>
+    `}
   `;
 }
 
@@ -3125,6 +3410,7 @@ async function saveCourse(event) {
   }
 
   let savedCourse;
+  let linkedSeriesId = "";
   if (courseId) {
     const { data, error } = await supabase.from("courses").update(payload).eq("id", courseId).select().single();
     if (error) throw error;
@@ -3141,7 +3427,7 @@ async function saveCourse(event) {
       if (isNewCourse) await supabase.from("courses").delete().eq("id", savedCourse.id);
       throw new Error("연강으로 연결할 앞 교육을 찾지 못했습니다.");
     }
-    const { error: seriesError } = await supabase.rpc("append_course_to_series", {
+    const { data: seriesData, error: seriesError } = await supabase.rpc("append_course_to_series", {
       p_course_id: savedCourse.id,
       p_previous_course_id: seriesPreviousCourseId,
     });
@@ -3149,6 +3435,7 @@ async function saveCourse(event) {
       if (isNewCourse) await supabase.from("courses").delete().eq("id", savedCourse.id);
       throw seriesError;
     }
+    linkedSeriesId = Array.isArray(seriesData) ? seriesData[0]?.series_id || "" : seriesData?.series_id || "";
   }
 
   if (payload.starts_at) {
@@ -3189,6 +3476,8 @@ async function saveCourse(event) {
   await reload();
   state.tab = "courses";
   clearCourseTemplateDraft();
+  state.courseManagement.draftPreviousCourseId = "";
+  if (linkedSeriesId) state.courseManagement.selectedSeriesId = linkedSeriesId;
   if (isNewCourse) {
     state.adminSelections.courseId = "";
     state.adminSearch.course = "";
@@ -3221,7 +3510,87 @@ function openCourseSeriesDetachNotice(courseId) {
   `);
 }
 
+function updateCourseSeriesManagementResults() {
+  const resultsContainer = document.querySelector("[data-course-series-results]");
+  if (!resultsContainer) return;
+  resultsContainer.innerHTML = courseSeriesManagementResultsHtml();
+}
+
+function selectCourseSeries(seriesId) {
+  const series = courseSeriesGroups().find((item) => item.id === seriesId);
+  if (!series) {
+    showToast("관리할 연강을 찾지 못했습니다.");
+    return;
+  }
+  state.courseManagement.selectedSeriesId = series.id;
+  renderCourses();
+}
+
+function editCourseFromSeries(courseId) {
+  const course = courseById(courseId);
+  if (!course) {
+    showToast("수정할 교육을 찾지 못했습니다.");
+    return;
+  }
+  clearCourseTemplateDraft();
+  state.courseManagement.mode = "courses";
+  state.courseManagement.draftPreviousCourseId = "";
+  state.adminSelections.courseId = course.id;
+  state.adminSearch.course = course.title || "";
+  renderCourses();
+}
+
+function addCourseToSeries(previousCourseId) {
+  const previousCourse = courseById(previousCourseId);
+  if (!previousCourse || !isLastSeriesCourse(previousCourse)) {
+    showToast("연강의 마지막 교육을 찾지 못했습니다.");
+    return;
+  }
+  clearCourseTemplateDraft();
+  state.courseManagement.mode = "courses";
+  state.courseManagement.draftPreviousCourseId = previousCourse.id;
+  state.adminSelections.courseId = "";
+  state.adminSearch.course = "";
+  renderCourses();
+  showToast("앞 교육을 선택했습니다. 후속 교육 정보를 입력해 주세요.");
+}
+
+function openCourseSeriesDissolveNotice(seriesId) {
+  const series = courseSeriesGroups().find((item) => item.id === seriesId);
+  if (!series) {
+    showToast("해제할 연강을 찾지 못했습니다.");
+    return;
+  }
+  openAdminNotice("연강 전체 해제", `
+    <p><strong>${escapeHtml(series.courses[0]?.title || "교육")}</strong> 외 ${Math.max(0, series.courses.length - 1)}개 교육의 연강 연결을 모두 해제할까요?</p>
+    <p class="muted">교육 ${series.courses.length}개와 신청자, 참석 확인, 기대평·질문, 후기, 아카이브는 그대로 보존됩니다. 연강 연결과 순서만 삭제됩니다.</p>
+    <div class="actions" style="margin-top: 14px;">
+      <button class="btn danger" type="button" data-confirm-dissolve-course-series="${escapeHtml(series.id)}">연강 전체 해제</button>
+      <button class="btn secondary" type="button" data-close-admin-notice>취소</button>
+    </div>
+  `);
+}
+
+async function dissolveCourseSeries(seriesId) {
+  const { data, error } = await supabase.rpc("dissolve_course_series", {
+    p_series_id: seriesId,
+  });
+  if (error) throw error;
+  if (!Number(data)) throw new Error("해제된 연강 교육이 없습니다.");
+
+  closeModal(elements.adminNoticeModal);
+  showToast(`연강 연결을 전체 해제했습니다. 교육 ${Number(data)}개는 그대로 보존됩니다.`);
+  state.courseManagement.selectedSeriesId = "";
+  await reload();
+  state.tab = "courses";
+  state.courseManagement.mode = "series";
+  render();
+}
+
 async function detachCourseFromSeries(courseId) {
+  const course = courseById(courseId);
+  const previousSeriesId = course?.series_id || "";
+  const keepSeriesManagementOpen = state.courseManagement.mode === "series";
   const { data, error } = await supabase.rpc("detach_course_from_series", {
     p_course_id: courseId,
   });
@@ -3232,7 +3601,11 @@ async function detachCourseFromSeries(courseId) {
   showToast("연강 연결을 해제했습니다.");
   await reload();
   state.tab = "courses";
-  state.adminSelections.courseId = courseId;
+  if (keepSeriesManagementOpen) {
+    state.courseManagement.selectedSeriesId = courseSeriesGroups().some((series) => series.id === previousSeriesId) ? previousSeriesId : "";
+  } else {
+    state.adminSelections.courseId = courseId;
+  }
   render();
 }
 
@@ -3709,6 +4082,16 @@ function bindEvents() {
     const editArchiveButton = event.target.closest("[data-edit-archive]");
     const deleteArchiveButton = event.target.closest("[data-delete-archive]");
     const deleteCourseButton = event.target.closest("[data-delete-course]");
+    const courseManagementModeButton = event.target.closest("[data-course-management-mode]");
+    const selectCourseSeriesButton = event.target.closest("[data-select-course-series]");
+    const editSeriesCourseButton = event.target.closest("[data-edit-series-course]");
+    const addCourseToSeriesButton = event.target.closest("[data-add-course-to-series]");
+    const openCourseSeriesCreateButton = event.target.closest("[data-open-course-series-create]");
+    const addCourseSeriesSelectionButton = event.target.closest("[data-add-course-series-selection]");
+    const removeCourseSeriesSelectionButton = event.target.closest("[data-remove-course-series-selection]");
+    const createCourseSeriesBatchButton = event.target.closest("[data-create-course-series-batch]");
+    const dissolveCourseSeriesButton = event.target.closest("[data-dissolve-course-series]");
+    const confirmDissolveCourseSeriesButton = event.target.closest("[data-confirm-dissolve-course-series]");
     const detachCourseSeriesButton = event.target.closest("[data-detach-course-series]");
     const confirmDetachCourseSeriesButton = event.target.closest("[data-confirm-detach-course-series]");
     const deleteEntityButton = event.target.closest("[data-delete-entity]");
@@ -3721,6 +4104,63 @@ function bindEvents() {
     }
     if (downloadDashboardStatsButton) {
       downloadDashboardStats(downloadDashboardStatsButton.dataset.downloadDashboardStats);
+      return;
+    }
+    if (createCourseSeriesBatchButton) {
+      try {
+        createCourseSeriesBatchButton.disabled = true;
+        createCourseSeriesBatchButton.textContent = "연강 만드는 중...";
+        await createCourseSeriesBatch();
+      } catch (error) {
+        showToast(`연강 만들기 실패: ${error.message}`);
+        createCourseSeriesBatchButton.disabled = false;
+        createCourseSeriesBatchButton.textContent = "선택한 교육으로 연강 만들기";
+      }
+      return;
+    }
+    if (removeCourseSeriesSelectionButton) {
+      removeCourseSeriesCreateSelection(removeCourseSeriesSelectionButton.dataset.removeCourseSeriesSelection);
+      return;
+    }
+    if (addCourseSeriesSelectionButton) {
+      addCourseSeriesCreateSelection(addCourseSeriesSelectionButton.dataset.addCourseSeriesSelection);
+      return;
+    }
+    if (openCourseSeriesCreateButton) {
+      openCourseSeriesCreateModal();
+      return;
+    }
+    if (confirmDissolveCourseSeriesButton) {
+      try {
+        confirmDissolveCourseSeriesButton.disabled = true;
+        confirmDissolveCourseSeriesButton.textContent = "전체 해제 중...";
+        await dissolveCourseSeries(confirmDissolveCourseSeriesButton.dataset.confirmDissolveCourseSeries);
+      } catch (error) {
+        showToast(`연강 전체 해제 실패: ${error.message}`);
+        confirmDissolveCourseSeriesButton.disabled = false;
+        confirmDissolveCourseSeriesButton.textContent = "연강 전체 해제";
+      }
+      return;
+    }
+    if (dissolveCourseSeriesButton) {
+      openCourseSeriesDissolveNotice(dissolveCourseSeriesButton.dataset.dissolveCourseSeries);
+      return;
+    }
+    if (addCourseToSeriesButton) {
+      addCourseToSeries(addCourseToSeriesButton.dataset.addCourseToSeries);
+      return;
+    }
+    if (editSeriesCourseButton) {
+      editCourseFromSeries(editSeriesCourseButton.dataset.editSeriesCourse);
+      return;
+    }
+    if (selectCourseSeriesButton) {
+      selectCourseSeries(selectCourseSeriesButton.dataset.selectCourseSeries);
+      return;
+    }
+    if (courseManagementModeButton) {
+      state.courseManagement.mode = courseManagementModeButton.dataset.courseManagementMode === "series" ? "series" : "courses";
+      renderCourses();
       return;
     }
     if (confirmDetachCourseSeriesButton) {
@@ -3813,6 +4253,7 @@ function bindEvents() {
       }
       if (kind === "course") {
         clearCourseTemplateDraft();
+        state.courseManagement.draftPreviousCourseId = "";
         state.adminSelections.courseId = entityId;
         renderCourses();
       }
@@ -3837,6 +4278,7 @@ function bindEvents() {
       }
       if (kind === "course") {
         clearCourseTemplateDraft();
+        state.courseManagement.draftPreviousCourseId = "";
         state.adminSelections.courseId = "";
         state.adminSearch.course = "";
         renderCourses();
@@ -4076,6 +4518,7 @@ function bindEvents() {
     }
     if (event.target.id === "newCourseButton") {
       clearCourseTemplateDraft();
+      state.courseManagement.draftPreviousCourseId = "";
       state.adminSelections.courseId = "";
       state.adminSearch.course = "";
       renderCourses();
@@ -4141,6 +4584,17 @@ function bindEvents() {
     if (event.target.matches("[data-course-template-search]")) {
       state.courseTemplate.query = event.target.value;
       updateCourseTemplateResults();
+      return;
+    }
+    if (event.target.matches("[data-course-series-search]")) {
+      state.courseManagement.seriesQuery = event.target.value;
+      updateCourseSeriesManagementResults();
+      return;
+    }
+    if (event.target.matches("[data-course-series-create-search]")) {
+      state.courseManagement.createQuery = event.target.value;
+      const resultsContainer = document.querySelector("[data-course-series-create-results]");
+      if (resultsContainer) resultsContainer.innerHTML = courseSeriesCreateResultsHtml();
       return;
     }
     if (event.target.matches("#courseForm input[name='starts_at']")) {
