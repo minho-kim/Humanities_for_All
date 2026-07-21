@@ -2,6 +2,8 @@ import {
   escapeHtml,
   formatDate,
   formatDateTime,
+  formatSchedule,
+  formatTimeRange,
   getCurrentUrlWithoutHash,
   getDisplayName,
   getMaskedEmailName,
@@ -198,10 +200,22 @@ function effectiveCourseStatus(course) {
 function getTimeLabel(course) {
   const first = course.sessions[0];
   if (!first?.starts_at) return "";
-  const hour = new Date(first.starts_at).getHours();
+  const hour = Number(new Intl.DateTimeFormat("en", {
+    timeZone: "Asia/Seoul",
+    hour: "2-digit",
+    hourCycle: "h23",
+  }).format(new Date(first.starts_at)));
   if (hour < 12) return "오전";
   if (hour < 18) return "오후";
   return "저녁";
+}
+
+function courseScheduleStart(course) {
+  return course?.sessions?.[0]?.starts_at || course?.starts_at || "";
+}
+
+function courseScheduleEnd(course) {
+  return course?.sessions?.[0]?.ends_at || course?.ends_at || "";
 }
 
 function mapQuery(venue) {
@@ -701,6 +715,7 @@ function composeCourses() {
   const archivesByCourse = groupBy(state.archives, "course_id");
   const reviewsByCourse = groupBy(state.reviews, "course_id");
   const expectationsByCourse = groupBy(state.expectations, "course_id");
+  const coursesBySeries = groupBy(state.courses.filter((course) => course.series_id), "series_id");
 
   state.composedCourses = state.courses.map((course) => {
     const sessions = (sessionsByCourse.get(course.id) || []).slice().sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
@@ -714,6 +729,10 @@ function composeCourses() {
       ...course,
       sessions,
     };
+    const seriesCourses = (coursesBySeries.get(course.series_id) || [])
+      .slice()
+      .sort((a, b) => Number(a.series_order || 0) - Number(b.series_order || 0));
+    const computedSeriesPosition = seriesCourses.findIndex((item) => item.id === course.id) + 1;
     return {
       ...course,
       originalStatus: course.status,
@@ -728,6 +747,8 @@ function composeCourses() {
       reviewCount: Number(course.review_count ?? reviews.length),
       archiveCount: Number(course.archive_count ?? archives.length),
       timeLabel: getTimeLabel({ ...course, sessions }),
+      seriesPosition: Number(course.series_position || computedSeriesPosition || 0),
+      seriesTotal: Number(course.series_total || seriesCourses.length || 0),
     };
   });
 }
@@ -972,6 +993,7 @@ function filteredCourses() {
   return state.composedCourses.filter((course) => {
     const haystack = [
       course.title,
+      course.subtitle,
       course.topic,
       course.summary,
       course.description,
@@ -1020,26 +1042,31 @@ function courseCardNoteHtml(course) {
   return `<span class="review-note">교육 종료 후 후기·기록 공개</span>`;
 }
 
+function courseSeriesBadgeHtml(course) {
+  if (!course?.series_id || course.seriesTotal < 2 || course.seriesPosition < 1) return "";
+  return `<span class="badge series-badge">연강 ${course.seriesPosition}/${course.seriesTotal}</span>`;
+}
+
 function courseCardHtml(course) {
-  const firstSession = course.sessions[0];
   const orgSlug = course.organization?.slug || "";
   const orgName = course.organization?.name || "단체 미정";
   const instructorName = course.instructor?.name || "강사 미정";
   return `
-      <article class="course-card">
+      <article class="course-card status-${escapeHtml(course.status)}">
         <div class="badge-row">
           <span class="badge ${getStatusClass(course.status)}">${escapeHtml(statusLabels[course.status] || course.status)}</span>
-          <span class="badge">${escapeHtml(course.topic)}</span>
-          <span class="badge gray">${escapeHtml(course.timeLabel || "시간 미정")}</span>
+          ${course.topic ? `<span class="badge">${escapeHtml(course.topic)}</span>` : ""}
+          ${courseSeriesBadgeHtml(course)}
         </div>
+        <div class="course-schedule"><span aria-hidden="true">📅</span><strong>${escapeHtml(formatSchedule(courseScheduleStart(course), courseScheduleEnd(course)))}</strong></div>
         <h3>${escapeHtml(course.title)}</h3>
+        ${course.subtitle ? `<p class="course-subtitle">${escapeHtml(course.subtitle)}</p>` : ""}
         <div class="meta">
           <span>🏛️ ${orgSlug ? `<button class="text-link" type="button" data-open-organization="${escapeHtml(orgSlug)}">${escapeHtml(orgName)}</button>` : escapeHtml(orgName)}</span>
           <span>🎙️ ${course.instructor?.id ? `<button class="text-link" type="button" data-open-instructor="${course.instructor.id}">${escapeHtml(instructorName)}</button>` : escapeHtml(instructorName)} 강사</span>
           <span>📍 ${escapeHtml(course.venue?.name || "장소 미정")}</span>
-          <span>🗓️ ${escapeHtml(formatDate(firstSession?.starts_at || course.starts_at))}</span>
         </div>
-        <p>${escapeHtml(course.summary || "")}</p>
+        ${course.summary ? `<p class="course-summary">${escapeHtml(course.summary)}</p>` : ""}
         <div class="footer">
           ${courseCardNoteHtml(course)}
           <button class="btn small" type="button" data-open-course="${course.id}">상세 보기</button>
@@ -1128,7 +1155,7 @@ function renderCalendar(courses) {
     return;
   }
 
-  const sorted = courses.slice().sort((a, b) => new Date(a.starts_at || 0) - new Date(b.starts_at || 0));
+  const sorted = courses.slice().sort((a, b) => new Date(courseScheduleStart(a) || 0) - new Date(courseScheduleStart(b) || 0));
   const coursesByMonth = new Map();
   sorted.forEach((course) => {
     const firstSession = course.sessions[0];
@@ -1154,18 +1181,21 @@ function renderCalendar(courses) {
   });
 
   const calendarItemHtml = (course) => {
-    const firstSession = course.sessions[0];
     const orgSlug = course.organization?.slug || "";
     const orgName = course.organization?.name || "";
+    const startsAt = courseScheduleStart(course);
+    const endsAt = courseScheduleEnd(course);
     return `
-      <article class="calendar-item">
-        <div class="date-box">${escapeHtml(formatDate(firstSession?.starts_at || course.starts_at))}<small>${escapeHtml(course.timeLabel || "")}</small></div>
-        <div>
+      <article class="calendar-item status-${escapeHtml(course.status)}">
+        <div class="date-box"><span>${escapeHtml(formatDate(startsAt))}</span><small>${escapeHtml(formatTimeRange(startsAt, endsAt))}</small></div>
+        <div class="calendar-content">
           <div class="badge-row">
             <span class="badge ${getStatusClass(course.status)}">${escapeHtml(statusLabels[course.status] || course.status)}</span>
             <span class="badge">${orgSlug ? `<button class="badge-link" type="button" data-open-organization="${escapeHtml(orgSlug)}">${escapeHtml(orgName)}</button>` : escapeHtml(orgName)}</span>
+            ${courseSeriesBadgeHtml(course)}
           </div>
           <h3>${escapeHtml(course.title)}</h3>
+          ${course.subtitle ? `<p class="calendar-subtitle">${escapeHtml(course.subtitle)}</p>` : ""}
           <p>${escapeHtml(course.instructor?.name || "강사 미정")} 강사 · ${escapeHtml(course.venue?.name || "장소 미정")}</p>
         </div>
         <button class="btn small" type="button" data-open-course="${course.id}">상세 보기</button>
@@ -1213,7 +1243,7 @@ function renderCoursesPage() {
   const organizations = publicOrganizations();
   setPageHeader({
     title: "교육 검색",
-    description: "관심 있는 교육을 교육명, 주제, 강사, 장소, 단체명으로 찾아보세요.",
+    description: "관심 있는 교육을 교육명, 부제, 주제, 강사, 장소, 단체명으로 찾아보세요.",
     showCourseTools: true,
     summary: state.courses.length
       ? `${courses.length.toLocaleString("ko-KR")}개 교육이 표시됩니다.`
@@ -1765,6 +1795,59 @@ function renderApplicationForm(course) {
   `;
 }
 
+function isGenericSessionTitle(value) {
+  return /^\s*(?:\d+\s*강|교육)\s*$/u.test(String(value || ""));
+}
+
+function courseSessionListHtml(course) {
+  const sessions = course.sessions.length
+    ? course.sessions
+    : [{ starts_at: course.starts_at, ends_at: course.ends_at, room: course.venue?.name || "" }];
+  return sessions.map((session, index) => {
+    const title = !isGenericSessionTitle(session.title) ? String(session.title || "").trim() : "";
+    const endsAt = session.ends_at || (index === 0 ? course.ends_at : "");
+    return `
+      <li>
+        ${title ? `<strong class="session-title">${escapeHtml(title)}</strong>` : ""}
+        <strong class="session-schedule">${escapeHtml(formatSchedule(session.starts_at, endsAt, { includeYear: true }))}</strong>
+        ${session.room || course.venue?.name ? `<span class="session-room">${escapeHtml(session.room || course.venue?.name || "")}</span>` : ""}
+      </li>
+    `;
+  }).join("");
+}
+
+function courseSeriesSectionHtml(course) {
+  if (!course?.series_id || course.seriesTotal < 2) return "";
+  const linkedCourses = state.composedCourses
+    .filter((item) => item.series_id === course.series_id)
+    .slice()
+    .sort((a, b) => Number(a.series_order || 0) - Number(b.series_order || 0));
+  if (linkedCourses.length < 2) return "";
+  return `
+    <div class="section series-section" style="grid-column: 1 / -1;">
+      <div class="row-top">
+        <h3>연강 교육</h3>
+        <span class="badge series-badge">현재 ${course.seriesPosition}/${course.seriesTotal}</span>
+      </div>
+      <ol class="series-course-list">
+        ${linkedCourses.map((linkedCourse, index) => `
+          <li class="${linkedCourse.id === course.id ? "current" : ""}">
+            <button type="button" data-open-course="${escapeHtml(linkedCourse.id)}" ${linkedCourse.id === course.id ? "aria-current=\"true\"" : ""}>
+              <span class="series-course-number">${index + 1}</span>
+              <span class="series-course-copy">
+                <strong>${escapeHtml(linkedCourse.title || "교육명 없음")}</strong>
+                ${linkedCourse.subtitle ? `<small>${escapeHtml(linkedCourse.subtitle)}</small>` : ""}
+                <small>${escapeHtml(formatSchedule(courseScheduleStart(linkedCourse), courseScheduleEnd(linkedCourse)))}</small>
+              </span>
+              <span class="badge ${getStatusClass(linkedCourse.status)}">${linkedCourse.id === course.id ? "현재" : escapeHtml(statusLabels[linkedCourse.status] || linkedCourse.status)}</span>
+            </button>
+          </li>
+        `).join("")}
+      </ol>
+    </div>
+  `;
+}
+
 function openCourseDetail(courseId) {
   const course = state.composedCourses.find((item) => item.id === courseId);
   if (!course) return;
@@ -1792,26 +1875,23 @@ function openCourseDetail(courseId) {
         </div>
       </div>
     `
-    : `
-      <div class="section" style="grid-column: 1 / -1;">
-        <h3>교육 후 기록</h3>
-        <p class="muted">후기와 사진·영상·자료는 교육 종료 후 공개됩니다. 신청할 때 기대하는 점이나 강사에게 하고 싶은 질문을 남길 수 있습니다.</p>
-      </div>
-    `;
+    : "";
 
   elements.detailBadges.innerHTML = `
     <span class="badge ${getStatusClass(course.status)}">${escapeHtml(statusLabels[course.status] || course.status)}</span>
-    <span class="badge">${escapeHtml(course.topic)}</span>
+    ${course.topic ? `<span class="badge">${escapeHtml(course.topic)}</span>` : ""}
+    ${courseSeriesBadgeHtml(course)}
     <span class="badge gray">${orgSlug ? `<button class="badge-link" type="button" data-open-organization="${escapeHtml(orgSlug)}">${escapeHtml(orgName)}</button>` : escapeHtml(orgName)}</span>
   `;
   elements.detailTitle.textContent = course.title;
   elements.detailBody.innerHTML = `
+    ${course.subtitle ? `<p class="detail-subtitle">${escapeHtml(course.subtitle)}</p>` : ""}
     <div class="detail-grid">
       <div class="section">
         <h3>교육 정보</h3>
         <p>${escapeHtml(course.description || course.summary || "")}</p>
         <ul class="session-list">
-          ${course.sessions.map((session) => `<li><strong>${escapeHtml(session.title)} · ${escapeHtml(formatDateTime(session.starts_at))}</strong><br>${escapeHtml(session.room || course.venue?.name || "")}</li>`).join("")}
+          ${courseSessionListHtml(course)}
         </ul>
         <div class="actions" style="margin-top: 14px;">
           ${canApply ? `<button class="btn small" type="button" data-apply-course="${course.id}">신청하기</button>` : `<button class="btn small secondary" type="button" disabled>신청 마감</button>`}
@@ -1848,6 +1928,7 @@ function openCourseDetail(courseId) {
           ${orgWebsiteUrl ? `<a class="btn small secondary" href="${escapeHtml(orgWebsiteUrl)}" target="_blank" rel="noreferrer">홈페이지</a>` : ""}
         </div>
       </div>
+      ${courseSeriesSectionHtml(course)}
       <div class="section" id="applicationSection" style="grid-column: 1 / -1;">
         <h3>교육 신청</h3>
         ${renderApplicationForm(course)}

@@ -7,6 +7,7 @@ import {
   escapeHtml,
   formatDate,
   formatDateTime,
+  formatSchedule,
   groupBy,
   normalizeSafeUrl,
   statusLabels,
@@ -149,10 +150,22 @@ function effectiveCourseStatus(course) {
 function getTimeLabel(course) {
   const first = course.sessions?.[0];
   if (!first?.starts_at) return "";
-  const hour = new Date(first.starts_at).getHours();
+  const hour = Number(new Intl.DateTimeFormat("en", {
+    timeZone: "Asia/Seoul",
+    hour: "2-digit",
+    hourCycle: "h23",
+  }).format(new Date(first.starts_at)));
   if (hour < 12) return "오전";
   if (hour < 18) return "오후";
   return "저녁";
+}
+
+function courseScheduleStart(course) {
+  return course?.sessions?.[0]?.starts_at || course?.starts_at || "";
+}
+
+function courseScheduleEnd(course) {
+  return course?.sessions?.[0]?.ends_at || course?.ends_at || "";
 }
 
 function courseById(courseId) {
@@ -318,11 +331,16 @@ function composeCourses() {
   const venues = byId(state.venues);
   const sessionsByCourse = groupBy(state.sessions, "course_id");
   const reviewsByCourse = groupBy(state.reviews.filter(isPublicReview), "course_id");
+  const coursesBySeries = groupBy(state.courses.filter((course) => course.series_id), "series_id");
 
   state.composedCourses = state.courses.map((course) => {
     const sessions = (sessionsByCourse.get(course.id) || []).slice().sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
     const reviews = (reviewsByCourse.get(course.id) || []).slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     const composedCourse = { ...course, sessions };
+    const seriesCourses = (coursesBySeries.get(course.series_id) || [])
+      .slice()
+      .sort((a, b) => Number(a.series_order || 0) - Number(b.series_order || 0));
+    const computedSeriesPosition = seriesCourses.findIndex((item) => item.id === course.id) + 1;
     return {
       ...course,
       status: effectiveCourseStatus(composedCourse),
@@ -334,6 +352,8 @@ function composeCourses() {
       reviewCount: Number(course.review_count ?? reviews.length),
       archiveCount: Number(course.archive_count ?? 0),
       timeLabel: getTimeLabel({ ...course, sessions }),
+      seriesPosition: Number(course.series_position || computedSeriesPosition || 0),
+      seriesTotal: Number(course.series_total || seriesCourses.length || 0),
     };
   });
 }
@@ -429,6 +449,7 @@ function filteredCourses() {
   return state.composedCourses.filter((course) => {
     const haystack = [
       course.title,
+      course.subtitle,
       course.topic,
       course.summary,
       course.description,
@@ -478,25 +499,30 @@ function courseCardNoteHtml(course) {
   return `<span class="review-note">교육 종료 후 후기·기록 공개</span>`;
 }
 
+function courseSeriesBadgeHtml(course) {
+  if (!course?.series_id || course.seriesTotal < 2 || course.seriesPosition < 1) return "";
+  return `<span class="badge series-badge">연강 ${course.seriesPosition}/${course.seriesTotal}</span>`;
+}
+
 function courseCardHtml(course) {
-  const firstSession = course.sessions[0];
   const orgName = course.organization?.name || "단체 미정";
   const instructorName = course.instructor?.name || "강사 미정";
   return `
-    <article class="course-card">
+    <article class="course-card status-${escapeHtml(course.status)}">
       <div class="badge-row">
         <span class="badge ${getStatusClass(course.status)}">${escapeHtml(statusLabels[course.status] || course.status)}</span>
         ${course.topic ? `<span class="badge">${escapeHtml(course.topic)}</span>` : ""}
-        <span class="badge gray">${escapeHtml(course.timeLabel || "시간 미정")}</span>
+        ${courseSeriesBadgeHtml(course)}
       </div>
+      <div class="course-schedule"><span aria-hidden="true">📅</span><strong>${escapeHtml(formatSchedule(courseScheduleStart(course), courseScheduleEnd(course)))}</strong></div>
       <h3>${escapeHtml(course.title || "교육명 없음")}</h3>
+      ${course.subtitle ? `<p class="course-subtitle">${escapeHtml(course.subtitle)}</p>` : ""}
       <div class="meta">
         <span>🏛️ ${escapeHtml(orgName)}</span>
         <span>🎙️ ${escapeHtml(instructorName)}${course.instructor?.title ? ` · ${escapeHtml(course.instructor.title)}` : ""}</span>
         <span>📍 ${escapeHtml(course.venue?.name || "장소 미정")}</span>
-        <span>🗓️ ${escapeHtml(formatDate(firstSession?.starts_at || course.starts_at))}</span>
       </div>
-      <p>${escapeHtml(course.summary || "")}</p>
+      ${course.summary ? `<p class="course-summary">${escapeHtml(course.summary)}</p>` : ""}
       <div class="footer">
         ${courseCardNoteHtml(course)}
         <div class="embed-course-actions">
@@ -549,13 +575,47 @@ function reviewListHtml(course) {
 }
 
 function sessionListHtml(course) {
-  const sessions = course.sessions.length ? course.sessions : [{ title: "교육", starts_at: course.starts_at, ends_at: course.ends_at, room: course.venue?.name || "" }];
-  return sessions.map((session) => `
+  const sessions = course.sessions.length ? course.sessions : [{ starts_at: course.starts_at, ends_at: course.ends_at, room: course.venue?.name || "" }];
+  return sessions.map((session, index) => {
+    const genericTitle = /^\s*(?:\d+\s*강|교육)\s*$/u.test(String(session.title || ""));
+    const title = genericTitle ? "" : String(session.title || "").trim();
+    return `
     <li>
-      <strong>${escapeHtml(session.title || "교육")} · ${escapeHtml(formatDateTime(session.starts_at))}</strong><br>
-      ${escapeHtml(session.room || course.venue?.name || "")}
+      ${title ? `<strong class="session-title">${escapeHtml(title)}</strong>` : ""}
+      <strong class="session-schedule">${escapeHtml(formatSchedule(session.starts_at, session.ends_at || (index === 0 ? course.ends_at : ""), { includeYear: true }))}</strong>
+      ${session.room || course.venue?.name ? `<span class="session-room">${escapeHtml(session.room || course.venue?.name || "")}</span>` : ""}
     </li>
-  `).join("");
+  `;
+  }).join("");
+}
+
+function courseSeriesSectionHtml(course) {
+  if (!course?.series_id || course.seriesTotal < 2) return "";
+  const linkedCourses = state.composedCourses
+    .filter((item) => item.series_id === course.series_id)
+    .slice()
+    .sort((a, b) => Number(a.series_order || 0) - Number(b.series_order || 0));
+  if (linkedCourses.length < 2) return "";
+  return `
+    <div class="section series-section" style="grid-column: 1 / -1;">
+      <div class="row-top"><h3>연강 교육</h3><span class="badge series-badge">현재 ${course.seriesPosition}/${course.seriesTotal}</span></div>
+      <ol class="series-course-list">
+        ${linkedCourses.map((linkedCourse, index) => `
+          <li class="${linkedCourse.id === course.id ? "current" : ""}">
+            <button type="button" data-open-embed-course="${escapeHtml(linkedCourse.id)}" ${linkedCourse.id === course.id ? "aria-current=\"true\"" : ""}>
+              <span class="series-course-number">${index + 1}</span>
+              <span class="series-course-copy">
+                <strong>${escapeHtml(linkedCourse.title || "교육명 없음")}</strong>
+                ${linkedCourse.subtitle ? `<small>${escapeHtml(linkedCourse.subtitle)}</small>` : ""}
+                <small>${escapeHtml(formatSchedule(courseScheduleStart(linkedCourse), courseScheduleEnd(linkedCourse)))}</small>
+              </span>
+              <span class="badge ${getStatusClass(linkedCourse.status)}">${linkedCourse.id === course.id ? "현재" : escapeHtml(statusLabels[linkedCourse.status] || linkedCourse.status)}</span>
+            </button>
+          </li>
+        `).join("")}
+      </ol>
+    </div>
+  `;
 }
 
 function openCourseDetail(courseId) {
@@ -576,20 +636,17 @@ function openCourseDetail(courseId) {
         <ul class="review-list">${reviewListHtml(course)}</ul>
       </div>
     `
-    : `
-      <div class="section">
-        <h3>교육 후 기록</h3>
-        <p class="embed-detail-note">후기와 사진·영상·자료는 교육 종료 후 공개됩니다. 신청할 때 기대하는 점이나 강사에게 하고 싶은 질문을 남길 수 있습니다.</p>
-      </div>
-    `;
+    : "";
 
   elements.detailBadges.innerHTML = `
     <span class="badge ${getStatusClass(course.status)}">${escapeHtml(statusLabels[course.status] || course.status)}</span>
     ${course.topic ? `<span class="badge">${escapeHtml(course.topic)}</span>` : ""}
+    ${courseSeriesBadgeHtml(course)}
     ${course.organization?.name ? `<span class="badge gray">${escapeHtml(course.organization.name)}</span>` : ""}
   `;
   elements.detailTitle.textContent = course.title || "교육 상세";
   elements.detailBody.innerHTML = `
+    ${course.subtitle ? `<p class="detail-subtitle">${escapeHtml(course.subtitle)}</p>` : ""}
     <div class="detail-grid">
       <div class="section">
         <h3>교육 정보</h3>
@@ -622,6 +679,7 @@ function openCourseDetail(courseId) {
         ${course.organization?.contact_email ? `<p class="muted">연락처: ${escapeHtml(course.organization.contact_email)}</p>` : ""}
         ${orgWebsiteUrl ? `<a class="btn small secondary" href="${escapeHtml(orgWebsiteUrl)}" target="_blank" rel="noreferrer">홈페이지</a>` : ""}
       </div>
+      ${courseSeriesSectionHtml(course)}
       ${reviewSectionHtml}
       <div class="section">
         <h3>안내</h3>
@@ -658,12 +716,13 @@ function bindEvents() {
   });
   elements.resetButton.addEventListener("click", resetSearch);
 
-  document.body.addEventListener("click", (event) => {
+  document.body.addEventListener("click", async (event) => {
     const openButton = event.target.closest("[data-open-embed-course]");
     const fullButton = event.target.closest("[data-go-full-course]");
     const closeButton = event.target.closest("[data-close-embed-modal]");
 
     if (openButton) {
+      await ensureFullDataLoaded();
       openCourseDetail(openButton.dataset.openEmbedCourse);
       return;
     }

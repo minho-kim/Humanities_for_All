@@ -297,8 +297,20 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
   display: flex;
   flex-direction: column;
   padding: 18px;
+  border-top: 4px solid var(--brand);
   background: rgba(255, 255, 255, 0.96);
   box-shadow: var(--shadow);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.course-card.status-finished { border-top-color: #adb5bd; }
+.course-card.status-cancelled { border-top-color: var(--red); }
+
+@media (hover: hover) {
+  .course-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 1rem 2.2rem rgba(33, 37, 41, 0.13);
+  }
 }
 
 .badge-row { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -317,8 +329,35 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 .badge.green { background: var(--green-soft); color: var(--green); }
 .badge.gray { background: #e9ecef; color: var(--muted); }
 .badge.red { background: #f8d7da; color: var(--red); }
+.badge.series-badge { background: #ede7f6; color: #5f3dc4; }
 
-.course-card h3 { margin: 10px 0 8px; font-size: 1.18rem; line-height: 1.32; }
+.course-schedule {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #cfe2ff;
+  border-radius: 0.8rem;
+  background: #f0f6ff;
+  color: #084298;
+  font-size: 0.94rem;
+  font-variant-numeric: tabular-nums;
+  word-break: keep-all;
+}
+
+.course-card h3 { margin: 12px 0 5px; font-size: 1.25rem; line-height: 1.32; }
+.course-subtitle,
+.calendar-subtitle,
+.detail-subtitle {
+  color: #495057;
+  font-weight: 700;
+  line-height: 1.45;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+.course-subtitle { margin: 0 0 12px; font-size: 0.96rem; }
+.course-summary { margin: 0 0 14px; color: #495057; }
 .meta { display: grid; gap: 7px; margin: 0 0 14px; color: var(--muted); font-size: 0.92rem; }
 .footer { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-top: auto; padding-top: 14px; border-top: 1px solid var(--line); }
 .review-note { color: var(--green); font-weight: 900; font-size: 0.92rem; }
@@ -349,9 +388,15 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
   font-size: 1.12rem;
 }
 .calendar-month-list { display: grid; gap: 12px; }
-.calendar-item { display: grid; grid-template-columns: 110px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 16px; border-radius: 22px; background: rgba(255, 255, 255, 0.9); border: 1px solid var(--line); }
-.date-box { padding: 10px; border-radius: 18px; background: #e7f1ff; color: var(--brand); text-align: center; font-weight: 900; }
-.date-box small { display: block; color: var(--muted); }
+.calendar-item { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 16px; border-radius: 22px; background: rgba(255, 255, 255, 0.94); border: 1px solid var(--line); border-left: 4px solid var(--brand); box-shadow: 0 0.45rem 1.2rem rgba(33, 37, 41, 0.05); }
+.calendar-item.status-finished { border-left-color: #adb5bd; }
+.calendar-item.status-cancelled { border-left-color: var(--red); }
+.date-box { padding: 12px 10px; border-radius: 18px; background: #e7f1ff; color: #084298; text-align: center; font-weight: 900; font-variant-numeric: tabular-nums; word-break: keep-all; }
+.date-box span { display: block; }
+.date-box small { display: block; margin-top: 3px; color: #084298; font-size: 0.88rem; }
+.calendar-content h3 { margin: 9px 0 3px; font-size: 1.16rem; }
+.calendar-content > p:last-child { margin: 7px 0 0; color: var(--muted); }
+.calendar-subtitle { margin: 0; font-size: 0.92rem; }
 
 .modal {
   position: fixed;
@@ -370,11 +415,37 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 .modal-header h2 { margin: 0; font-size: clamp(1.45rem, 4vw, 2.1rem); }
 .icon-btn { display: inline-grid; place-items: center; width: 42px; height: 42px; border: 1px solid var(--line); border-radius: 50%; background: #fff; color: var(--ink); font-size: 1.2rem; font-weight: 900; }
 
+.detail-subtitle { margin: 14px 0 0; font-size: 1.02rem; }
 .detail-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr); gap: 18px; margin-top: 18px; }
 .section { padding: 16px; border-radius: 0.9rem; background: #fff; border: 1px solid var(--line); }
 .section h3 { margin: 0 0 10px; }
 .session-list, .review-list, .media-grid, .plain-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .session-list li, .review-item, .plain-list li { padding: 12px; border-radius: 0.8rem; background: #f8f9fa; border: 1px solid #e9ecef; }
+.session-list li { display: grid; gap: 4px; }
+.session-title { color: var(--ink); }
+.session-schedule { color: #084298; font-variant-numeric: tabular-nums; }
+.session-room { color: var(--muted); font-size: 0.92rem; }
+.series-course-list,
+.series-admin-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.series-course-list button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+}
+.series-course-list li.current button { border-color: #9ec5fe; background: #f0f6ff; }
+.series-course-number { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: #e7f1ff; color: var(--brand); font-weight: 900; }
+.series-course-copy { display: grid; gap: 2px; min-width: 0; }
+.series-course-copy strong,
+.series-course-copy small { word-break: keep-all; overflow-wrap: break-word; }
+.series-course-copy small { color: var(--muted); }
 .media-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .media { min-height: 118px; display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; padding: 12px; border-radius: 18px; color: #fff; background: linear-gradient(135deg, rgba(44, 36, 27, 0.58), rgba(44, 36, 27, 0.2)), linear-gradient(135deg, #1f7a6b, #bf6b35); text-decoration: none; }
 .media:nth-child(2n) { background: linear-gradient(135deg, rgba(44, 36, 27, 0.58), rgba(44, 36, 27, 0.2)), linear-gradient(135deg, #614c90, #d87c48); }
@@ -501,6 +572,10 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 .admin-nav button { justify-content: flex-start; }
 .admin-nav button.active { background: var(--ink); color: #fff; }
 .admin-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.series-admin-panel { margin-top: 12px; padding: 14px; border: 1px solid #d7ccf4; border-radius: 0.9rem; background: #faf8ff; }
+.series-admin-list { margin-top: 10px; }
+.series-admin-list li { display: flex; justify-content: space-between; gap: 12px; padding: 9px 10px; border-radius: 0.7rem; background: #fff; }
+.series-admin-list li.current { background: #ede7f6; }
 .table-list { display: grid; gap: 10px; }
 .table-row { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 18px; background: #fff; }
 .row-top { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
@@ -663,8 +738,18 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
   .filter-grid, .course-grid, .stat-grid, .media-grid, .admin-grid, .organization-grid, .resource-grid { grid-template-columns: 1fr; }
   .profile-card { grid-template-columns: 1fr; }
   .calendar-item { grid-template-columns: 1fr; }
+  .date-box { text-align: left; }
+  .date-box span, .date-box small { display: inline; }
+  .date-box small { margin-left: 8px; }
+  .series-course-list button { grid-template-columns: 34px minmax(0, 1fr); }
+  .series-course-list button > .badge { grid-column: 2; justify-self: start; }
+  .series-admin-list li { align-items: flex-start; flex-direction: column; }
   .footer { align-items: stretch; flex-direction: column; }
   .site-footer { width: min(100% - 20px, 1180px); margin-bottom: 22px; }
   .site-footer-inner { align-items: flex-start; flex-direction: column; }
   .site-footer-links { justify-content: flex-start; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .course-card { transition: none; }
 }

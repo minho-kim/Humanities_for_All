@@ -3,7 +3,7 @@ export const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_rXN3xjZ2aJGeb00QMEs1KQ_b
 export const ARCHIVE_BUCKET = "archive-media";
 export const SITE_MEDIA_BUCKET = "site-media";
 export const ATTENDANCE_DOCUMENT_BUCKET = "attendance-documents";
-export const APP_VERSION = "2026.07.21.1350";
+export const APP_VERSION = "2026.07.21.1410";
 
 export const URL_RULES = Object.freeze({
   external: Object.freeze({ protocols: ["https:"] }),
@@ -79,33 +79,100 @@ export function requireSafeUrl(value, label, rule = URL_RULES.external) {
 
 export function formatDateTime(value) {
   if (!value) return "일정 미정";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "일정 미정";
   return new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
     year: "numeric",
     month: "long",
     day: "numeric",
     weekday: "short",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+    hourCycle: "h23",
+  }).format(date);
 }
 
 export function formatDate(value) {
   if (!value) return "일정 미정";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "일정 미정";
   return new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
     month: "long",
     day: "numeric",
     weekday: "short",
-  }).format(new Date(value));
+  }).format(date);
+}
+
+function seoulDateKey(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  return year && month && day ? `${year}-${month}-${day}` : "";
+}
+
+function formatClock(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(date);
+}
+
+export function formatTimeRange(startsAt, endsAt) {
+  if (!startsAt) return "시간 미정";
+  const startText = formatClock(startsAt);
+  if (!startText) return "시간 미정";
+  const endText = endsAt ? formatClock(endsAt) : "";
+  if (!endText || seoulDateKey(startsAt) !== seoulDateKey(endsAt)) return startText;
+  return `${startText}–${endText}`;
+}
+
+export function formatSchedule(startsAt, endsAt, { includeYear = false } = {}) {
+  if (!startsAt) return "일정 미정";
+  const start = new Date(startsAt);
+  if (Number.isNaN(start.getTime())) return "일정 미정";
+  const dateFormatter = new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    ...(includeYear ? { year: "numeric" } : {}),
+    month: "long",
+    day: "numeric",
+    weekday: "short",
+  });
+  const startDateText = dateFormatter.format(start);
+  const startTimeText = formatClock(startsAt);
+  const end = endsAt ? new Date(endsAt) : null;
+  if (!end || Number.isNaN(end.getTime())) return `${startDateText} ${startTimeText}`;
+  if (seoulDateKey(startsAt) === seoulDateKey(endsAt)) {
+    return `${startDateText} ${formatTimeRange(startsAt, endsAt)}`;
+  }
+  return `${startDateText} ${startTimeText} – ${dateFormatter.format(end)} ${formatClock(endsAt)}`;
 }
 
 export function shortDate(value) {
   if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
   return new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+    hourCycle: "h23",
+  }).format(date);
 }
 
 export function getCurrentUrlWithoutHash() {
