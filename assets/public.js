@@ -100,7 +100,7 @@ const PUBLIC_FETCH_RETRIES = 1;
 const LANDING_SUMMARY_TIMEOUT_MS = 4500;
 const STATUS_SYNC_TIMEOUT_MS = 4000;
 const SESSION_TIMEOUT_MS = 2500;
-const APPLICATION_TERMS_VERSION = "2026-06-29";
+const APPLICATION_TERMS_VERSION = "2026-07-21";
 let supplementaryLoadSequence = 0;
 let supabaseClientPromise = null;
 
@@ -116,6 +116,18 @@ function showToast(message) {
   elements.toast.classList.add("show");
   window.clearTimeout(showToast.timer);
   showToast.timer = window.setTimeout(() => elements.toast.classList.remove("show"), 2800);
+}
+
+async function requestNotificationDispatch(supabase, sourceType, sourceId) {
+  if (!sourceId) return;
+  const { error } = await supabase.functions.invoke("notification-dispatch", {
+    body: {
+      action: "dispatch_source",
+      source_type: sourceType,
+      source_id: sourceId,
+    },
+  });
+  if (error) console.warn("[모두의 인문학] 알림 메일 즉시 발송 요청 실패", error);
 }
 
 function openModal(modal) {
@@ -1695,20 +1707,21 @@ function renderApplicationForm(course) {
       <label style="margin-top: 10px;">기대평 / 강사에게 하고 싶은 질문(선택)<textarea name="note" placeholder="교육에서 기대하는 점이나 강사에게 미리 묻고 싶은 내용을 적어주세요."></textarea></label>
       <div class="section privacy-consent" style="margin-top: 12px;">
         <h3>개인정보 수집·이용 동의</h3>
-        <p class="muted">교육 신청 접수와 운영 안내를 위해 필요한 최소한의 개인정보를 수집합니다.</p>
+        <p class="muted">교육 신청 접수와 이메일·문자(카카오톡 포함) 운영 안내를 위해 필요한 최소한의 개인정보를 수집합니다.</p>
         <details>
           <summary>개인정보 수집·이용 안내 자세히 보기</summary>
           <ul class="plain-list">
             <li><strong>관련 근거</strong><br>개인정보 보호법 제15조 제1항 제1호에 따른 정보주체의 동의</li>
-            <li><strong>수집·이용 목적</strong><br>교육 신청 접수, 신청자 본인 확인, 일정·장소·변경·취소 안내, 신청 이력 확인, 운영 문의 응대</li>
+            <li><strong>수집·이용 목적</strong><br>교육 신청 접수, 신청자 본인 확인, 신청 확인 메일과 교육 전 리마인드 발송, 일정·장소·변경·취소 안내, 신청 이력 확인, 운영 문의 응대</li>
             <li><strong>수집 항목</strong><br>필수: 신청자명, 이메일, 휴대전화번호 · 선택: 기대평 또는 강사에게 하고 싶은 질문</li>
+            <li><strong>운영 안내 방법</strong><br>입력한 이메일로 신청 확인·교육 전 리마인드·일정 변경 안내를 발송할 수 있으며, 휴대전화번호로 문자 또는 카카오톡 안내를 발송할 수 있습니다. 광고성 정보는 별도 동의 없이 발송하지 않습니다.</li>
             <li><strong>보유·이용 기간</strong><br>교육 종료 후 6개월 또는 사업 정산·민원 응대 종료 시까지 보관한 뒤 파기합니다. 관련 법령에 따라 더 보관해야 하는 경우에는 해당 법령에서 정한 기간 동안 보관할 수 있습니다.</li>
             <li><strong>동의 거부권과 불이익</strong><br>개인정보 수집·이용에 동의하지 않을 권리가 있습니다. 다만 필수 항목 동의를 거부하면 교육 신청 접수와 운영 안내가 어려워 신청이 제한될 수 있습니다.</li>
             <li><strong>전화번호 안내</strong><br>휴대전화번호는 유료 본인 인증 없이 신청자가 입력한 값을 저장하며, 교육 운영 안내 연락에만 사용합니다.</li>
           </ul>
         </details>
         <label><span><input name="privacy_agreement" type="checkbox" required style="width:auto;min-height:auto;"> 개인정보 수집 및 이용에 동의합니다.</span></label>
-        <label style="margin-top: 8px;"><span><input name="sms_notice_agreement" type="checkbox" required style="width:auto;min-height:auto;"> 교육 운영 안내를 문자로 받을 수 있음에 동의합니다.</span></label>
+        <label style="margin-top: 8px;"><span><input name="sms_notice_agreement" type="checkbox" required style="width:auto;min-height:auto;"> 신청 확인과 교육 운영 안내를 이메일·문자(카카오톡 포함)로 받을 수 있음에 동의합니다.</span></label>
       </div>
       <div class="actions" style="margin-top: 12px;">
         <button class="btn" type="submit">교육 신청하기</button>
@@ -1872,7 +1885,7 @@ async function handleApplicationSubmit(event) {
     return;
   }
   if (formData.get("privacy_agreement") !== "on" || formData.get("sms_notice_agreement") !== "on") {
-    showToast("교육 신청을 위해 개인정보 수집 및 문자 안내 동의가 필요합니다.");
+    showToast("교육 신청을 위해 개인정보 수집 및 이메일·문자 안내 동의가 필요합니다.");
     return;
   }
 
@@ -1897,17 +1910,21 @@ async function handleApplicationSubmit(event) {
     return;
   }
 
-  const { error } = await supabase.from("course_applications").insert({
-    course_id: course.id,
-    user_id: state.user.id,
-    applicant_name: applicantName,
-    email,
-    phone,
-    note: note || null,
-    privacy_agreed_at: now,
-    sms_notice_agreed_at: now,
-    terms_version: APPLICATION_TERMS_VERSION,
-  });
+  const { data: createdApplication, error } = await supabase
+    .from("course_applications")
+    .insert({
+      course_id: course.id,
+      user_id: state.user.id,
+      applicant_name: applicantName,
+      email,
+      phone,
+      note: note || null,
+      privacy_agreed_at: now,
+      sms_notice_agreed_at: now,
+      terms_version: APPLICATION_TERMS_VERSION,
+    })
+    .select("id")
+    .single();
 
   if (error) {
     if (error.code === "23505") showToast("이미 이 교육을 신청했습니다.");
@@ -1921,7 +1938,8 @@ async function handleApplicationSubmit(event) {
   }
 
   await loadApplicationState(supabase);
-  showToast("교육 신청이 접수되었습니다.");
+  void requestNotificationDispatch(supabase, "course_application", createdApplication?.id);
+  showToast("교육 신청이 접수되었습니다. 확인 메일을 보내드립니다.");
   openCourseDetail(course.id);
 }
 
@@ -2209,12 +2227,13 @@ async function handleReportSubmit(event) {
 
   try {
     const supabase = await getSupabaseClient();
-    const { error } = await supabase.rpc("submit_content_report", {
+    const { data: reportId, error } = await supabase.rpc("submit_content_report", {
       p_content_type: contentType,
       p_content_id: contentId,
       p_reason: reason || null,
     });
     if (error) throw error;
+    void requestNotificationDispatch(supabase, "content_report", reportId);
     closeModal(elements.reportModal);
     showToast("신고가 접수되었습니다.");
   } catch (error) {
