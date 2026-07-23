@@ -450,6 +450,102 @@ function activeApplications() {
   return state.applications.filter(isActiveApplication);
 }
 
+function normalizedIdentifier(value) {
+  return String(value || "").trim();
+}
+
+function normalizedTimestamp(value) {
+  if (!value) return "";
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? String(timestamp) : String(value);
+}
+
+function courseChangeNotificationPlan(existingCourse, payload) {
+  if (!existingCourse?.id || existingCourse.status === "cancelled") return null;
+
+  const changedLabels = [];
+  if (String(existingCourse.title || "").trim() !== String(payload.title || "").trim()) changedLabels.push("교육명");
+  if (
+    normalizedTimestamp(existingCourse.starts_at) !== normalizedTimestamp(payload.starts_at)
+    || normalizedTimestamp(existingCourse.ends_at) !== normalizedTimestamp(payload.ends_at)
+  ) changedLabels.push("일시");
+  if (normalizedIdentifier(existingCourse.venue_id) !== normalizedIdentifier(payload.venue_id)) changedLabels.push("장소");
+  if (normalizedIdentifier(existingCourse.instructor_id) !== normalizedIdentifier(payload.instructor_id)) changedLabels.push("강사");
+  if (!changedLabels.length) return null;
+
+  const wasRelevant = !hasCourseEnded(existingCourse);
+  const willBeRelevant = !hasCourseTimeEnded(payload.starts_at, payload.ends_at);
+  if (!wasRelevant && !willBeRelevant) return null;
+
+  const recipientCount = activeApplications().filter((application) => application.course_id === existingCourse.id).length;
+  if (!recipientCount) return null;
+  return {
+    changedLabels,
+    recipientCount,
+    affectedCourses: [existingCourse],
+  };
+}
+
+function venueChangeNotificationPlan(existingVenue, payload) {
+  if (!existingVenue?.id) return null;
+  const hasMaterialChange = ["name", "address", "detail"].some(
+    (key) => String(existingVenue[key] || "").trim() !== String(payload[key] || "").trim(),
+  ) || Boolean(existingVenue.is_online) !== Boolean(payload.is_online);
+  if (!hasMaterialChange) return null;
+
+  const affectedCourses = state.courses.filter((course) => (
+    course.venue_id === existingVenue.id
+    && course.status !== "cancelled"
+    && !hasCourseEnded(course)
+    && activeApplications().some((application) => application.course_id === course.id)
+  ));
+  const affectedCourseIds = new Set(affectedCourses.map((course) => course.id));
+  const recipientCount = activeApplications().filter((application) => affectedCourseIds.has(application.course_id)).length;
+  if (!recipientCount) return null;
+  return {
+    changedLabels: ["장소명·주소·세부 장소"],
+    recipientCount,
+    affectedCourses,
+  };
+}
+
+function requireChangeNotificationConfirmation(form, plan) {
+  if (!plan) return false;
+  if (form.dataset.changeNotificationConfirmed === "true") {
+    delete form.dataset.changeNotificationConfirmed;
+    return false;
+  }
+
+  const courseItems = plan.affectedCourses.slice(0, 5).map((course) => (
+    `<li><strong>${escapeHtml(course.title || "교육명 없음")}</strong> · ${escapeHtml(shortDate(course.starts_at))}</li>`
+  )).join("");
+  const remainingCourseCount = Math.max(0, plan.affectedCourses.length - 5);
+  openAdminNotice(
+    "신청자 변경 안내 메일",
+    `
+      <p><strong>${escapeHtml(plan.changedLabels.join(", "))}</strong> 정보가 변경됩니다.</p>
+      <p>저장하면 관련 교육 ${escapeHtml(plan.affectedCourses.length)}개, 활성 신청 ${escapeHtml(plan.recipientCount)}건에 변경 안내 메일이 등록됩니다.</p>
+      <ul>${courseItems}${remainingCourseCount ? `<li>그 외 ${escapeHtml(remainingCourseCount)}개 교육</li>` : ""}</ul>
+      <p class="muted">변경 전·후 내용을 함께 안내하며, 즉시 발송에 실패해도 예약 작업이 자동으로 다시 시도합니다.</p>
+      <div class="actions" style="margin-top: 16px;">
+        <button class="btn" type="button" data-confirm-change-notification="${escapeHtml(form.id)}">저장하고 메일 등록</button>
+      </div>
+    `,
+  );
+  return true;
+}
+
+async function requestCourseChangeNotificationDispatch() {
+  const { data, error } = await supabase.functions.invoke("notification-dispatch", {
+    body: { action: "dispatch_actor_course_changes" },
+  });
+  if (error) {
+    console.warn("[모두의 인문학] 교육 변경 메일 즉시 발송 요청 실패", error);
+    return null;
+  }
+  return data || null;
+}
+
 function visibleReviews() {
   return state.reviews.filter(isReviewPublic);
 }
@@ -3328,6 +3424,10 @@ async function saveVenue(event) {
     return;
   }
 
+  const existingVenue = state.venues.find((venue) => venue.id === venueId);
+  const notificationPlan = venueChangeNotificationPlan(existingVenue, payload);
+  if (requireChangeNotificationConfirmation(form, notificationPlan)) return;
+
   const request = venueId
     ? supabase.from("venues").update(payload).eq("id", venueId)
     : supabase.from("venues").insert(payload);
@@ -3335,7 +3435,9 @@ async function saveVenue(event) {
   const { data: savedVenue, error } = await request.select().single();
   if (error) throw error;
 
-  showToast("장소 정보를 저장했습니다.");
+  if (notificationPlan) await requestCourseChangeNotificationDispatch();
+
+  showToast(notificationPlan ? "장소 정보를 저장하고 신청자 변경 안내 메일을 등록했습니다." : "장소 정보를 저장했습니다.");
   await reload();
   state.tab = "venues";
   if (isNewVenue) {
@@ -3409,6 +3511,9 @@ async function saveCourse(event) {
     return;
   }
 
+  const notificationPlan = courseChangeNotificationPlan(existingCourse, payload);
+  if (requireChangeNotificationConfirmation(form, notificationPlan)) return;
+
   let savedCourse;
   let linkedSeriesId = "";
   if (courseId) {
@@ -3471,8 +3576,11 @@ async function saveCourse(event) {
     }
   }
 
+  if (notificationPlan) await requestCourseChangeNotificationDispatch();
+
   const savedMessage = seriesPreviousCourseId ? "교육을 저장하고 연강으로 연결했습니다." : "교육을 저장했습니다.";
-  showToast(hasSelectedFile(formData.get("course_file")) ? `${savedMessage} 자료도 등록했습니다.` : savedMessage);
+  const notificationMessage = notificationPlan ? " 신청자 변경 안내 메일도 등록했습니다." : "";
+  showToast(`${hasSelectedFile(formData.get("course_file")) ? `${savedMessage} 자료도 등록했습니다.` : savedMessage}${notificationMessage}`);
   await reload();
   state.tab = "courses";
   clearCourseTemplateDraft();
@@ -4097,7 +4205,17 @@ function bindEvents() {
     const deleteEntityButton = event.target.closest("[data-delete-entity]");
     const removeOrganizationAdminButton = event.target.closest("[data-remove-organization-admin]");
     const downloadDashboardStatsButton = event.target.closest("[data-download-dashboard-stats]");
+    const confirmChangeNotificationButton = event.target.closest("[data-confirm-change-notification]");
     const closeAdminNoticeButton = event.target.closest("[data-close-admin-notice]");
+    if (confirmChangeNotificationButton) {
+      const form = document.getElementById(confirmChangeNotificationButton.dataset.confirmChangeNotification);
+      closeModal(elements.adminNoticeModal);
+      if (form instanceof HTMLFormElement) {
+        form.dataset.changeNotificationConfirmed = "true";
+        form.requestSubmit();
+      }
+      return;
+    }
     if (closeAdminNoticeButton || event.target === elements.adminNoticeModal) {
       closeModal(elements.adminNoticeModal);
       return;
