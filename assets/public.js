@@ -615,7 +615,7 @@ function phoneDigits(value) {
 
 function isValidPhone(value) {
   const digits = phoneDigits(value);
-  return /^0\d+$/.test(digits) && digits.length >= 9 && digits.length <= 11;
+  return /^010\d{8}$/.test(digits);
 }
 
 function coursesForOrganization(organizationId) {
@@ -1769,7 +1769,7 @@ function renderApplicationForm(course) {
         <label>신청자명<input name="applicant_name" value="${escapeHtml(defaultName)}" required maxlength="80" autocomplete="name"></label>
         <label>휴대전화번호
           <input name="phone" type="tel" value="${escapeHtml(defaultPhone)}" required inputmode="numeric" autocomplete="tel-national" pattern="[0-9-]*" placeholder="010-0000-0000" maxlength="13" aria-describedby="applicationPhoneHint">
-          <small class="muted application-phone-hint" id="applicationPhoneHint">숫자만 입력하면 하이픈(-)은 자동으로 입력됩니다.</small>
+          <small class="muted application-phone-hint" id="applicationPhoneHint">010으로 시작하는 숫자 11자리를 입력해 주세요. 하이픈(-)은 자동으로 입력됩니다.</small>
         </label>
       </div>
       <label style="margin-top: 10px;">이메일<input value="${escapeHtml(state.user.email || "")}" readonly></label>
@@ -1998,7 +1998,7 @@ async function handleApplicationSubmit(event) {
     return;
   }
   if (!isValidPhone(phone)) {
-    showToast("전화번호를 확인해 주세요. 예: 010-0000-0000");
+    showToast("010으로 시작하는 휴대전화번호 11자리를 입력해 주세요.");
     return;
   }
   if (formData.get("privacy_agreement") !== "on" || formData.get("sms_notice_agreement") !== "on") {
@@ -2022,8 +2022,12 @@ async function handleApplicationSubmit(event) {
     .from("applicant_profiles")
     .upsert(profilePayload, { onConflict: "user_id" });
   if (profileError) {
-    console.error("Applicant profile save failed", profileError);
-    showToast("신청자 정보를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    if (profileError.code === "23505") {
+      showToast("신청자 정보를 저장하지 못했습니다. 이전에 사용한 로그인 계정이 있다면 그 계정으로 다시 시도하거나 운영자에게 문의해 주세요.");
+    } else {
+      console.error("Applicant profile save failed", profileError);
+      showToast("신청자 정보를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    }
     return;
   }
 
