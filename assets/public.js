@@ -82,6 +82,7 @@ const elements = {
   detailBody: document.getElementById("detailBody"),
   loginModal: document.getElementById("loginModal"),
   loginButton: document.getElementById("loginButton"),
+  googleLoginButton: document.getElementById("googleLoginButton"),
   loginForm: document.getElementById("loginForm"),
   loginEmail: document.getElementById("loginEmail"),
   logoutButton: document.getElementById("logoutButton"),
@@ -103,6 +104,7 @@ const LANDING_SUMMARY_TIMEOUT_MS = 4500;
 const STATUS_SYNC_TIMEOUT_MS = 4000;
 const SESSION_TIMEOUT_MS = 2500;
 const APPLICATION_TERMS_VERSION = "2026-07-21";
+const OAUTH_RETURN_STATE_KEY = "humanities-google-oauth-return";
 let supplementaryLoadSequence = 0;
 let supabaseClientPromise = null;
 
@@ -2383,8 +2385,9 @@ async function handleReportSubmit(event) {
 function updateSessionUi(user) {
   state.user = user || null;
   elements.loginButton.textContent = state.user ? `${getReviewAuthorName(state.user)}님` : "로그인";
-  elements.loginButton.setAttribute("aria-label", state.user ? "나의 정보 보기" : "이메일 인증 로그인");
-  elements.loginStatus.textContent = state.user ? `${getReviewAuthorName(state.user)}님으로 인증되었습니다.` : "이메일 인증 전입니다.";
+  elements.loginButton.setAttribute("aria-label", state.user ? "나의 정보 보기" : "로그인");
+  elements.loginStatus.textContent = state.user ? `${getReviewAuthorName(state.user)}님으로 로그인되었습니다.` : "로그인 전입니다.";
+  elements.logoutButton.hidden = !state.user;
 }
 
 async function refreshSession(supabaseClient = null) {
@@ -2422,6 +2425,55 @@ async function handleLogin(event) {
   showToast("이메일로 인증 링크를 보냈습니다.");
 }
 
+function rememberOAuthReturnState() {
+  const returnState = {
+    hash: window.location.hash || "",
+    courseId: state.activeCourseId || requestedCourseIdFromUrl() || "",
+  };
+  try {
+    window.sessionStorage.setItem(OAUTH_RETURN_STATE_KEY, JSON.stringify(returnState));
+  } catch (error) {
+    console.warn("[모두의 인문학] Google 로그인 복귀 위치 저장 실패", error);
+  }
+}
+
+function takeOAuthReturnState() {
+  try {
+    const raw = window.sessionStorage.getItem(OAUTH_RETURN_STATE_KEY);
+    if (!raw) return null;
+    window.sessionStorage.removeItem(OAUTH_RETURN_STATE_KEY);
+    const parsed = JSON.parse(raw);
+    return {
+      hash: typeof parsed?.hash === "string" && parsed.hash.startsWith("#") ? parsed.hash : "",
+      courseId: typeof parsed?.courseId === "string" ? parsed.courseId : "",
+    };
+  } catch (error) {
+    console.warn("[모두의 인문학] Google 로그인 복귀 위치 확인 실패", error);
+    return null;
+  }
+}
+
+async function handleGoogleLogin() {
+  const button = elements.googleLoginButton;
+  button.disabled = true;
+  rememberOAuthReturnState();
+  try {
+    const supabase = await getSupabaseClient();
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: getCurrentUrlWithoutHash(),
+      },
+    });
+    if (error) throw error;
+  } catch (error) {
+    window.sessionStorage.removeItem(OAUTH_RETURN_STATE_KEY);
+    console.error("Google login failed", error);
+    showToast("Google 로그인을 시작하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    button.disabled = false;
+  }
+}
+
 async function handleLogout() {
   const supabase = await getSupabaseClient();
   await supabase.auth.signOut();
@@ -2438,7 +2490,16 @@ function startAuthMonitor() {
     updateSessionUi(user);
     if (user) await loadApplicationState(supabase);
     else clearApplicationState();
+    const oauthReturnState = user ? takeOAuthReturnState() : null;
+    if (oauthReturnState?.hash && window.location.hash !== oauthReturnState.hash) {
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${oauthReturnState.hash}`);
+      applyRouteFromHash();
+    }
     render();
+    if (oauthReturnState?.courseId) {
+      await ensureFullDataLoaded({ waitForSupplementary: true });
+      if (courseById(oauthReturnState.courseId)) openCourseDetail(oauthReturnState.courseId);
+    }
     if (elements.detailModal.classList.contains("open") && state.activeCourseId) {
       openCourseDetail(state.activeCourseId);
     }
@@ -2620,6 +2681,7 @@ function bindEvents() {
     if (state.user) openMyInfo();
     else openModal(elements.loginModal);
   });
+  elements.googleLoginButton.addEventListener("click", handleGoogleLogin);
   elements.loginForm.addEventListener("submit", handleLogin);
   elements.logoutButton.addEventListener("click", handleLogout);
   window.addEventListener("hashchange", async () => {
