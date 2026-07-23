@@ -1767,7 +1767,10 @@ function renderApplicationForm(course) {
       ` : ""}
       <div class="admin-grid">
         <label>신청자명<input name="applicant_name" value="${escapeHtml(defaultName)}" required maxlength="80" autocomplete="name"></label>
-        <label>휴대전화번호<input name="phone" value="${escapeHtml(defaultPhone)}" required inputmode="tel" autocomplete="tel" placeholder="010-0000-0000" maxlength="13"></label>
+        <label>휴대전화번호
+          <input name="phone" type="tel" value="${escapeHtml(defaultPhone)}" required inputmode="numeric" autocomplete="tel-national" pattern="[0-9-]*" placeholder="010-0000-0000" maxlength="13" aria-describedby="applicationPhoneHint">
+          <small class="muted" id="applicationPhoneHint">숫자만 입력하면 하이픈(-)은 자동으로 입력됩니다.</small>
+        </label>
       </div>
       <label style="margin-top: 10px;">이메일<input value="${escapeHtml(state.user.email || "")}" readonly></label>
       <label style="margin-top: 10px;">기대평 / 강사에게 하고 싶은 질문(선택)<textarea name="note" placeholder="교육에서 기대하는 점이나 강사에게 미리 묻고 싶은 내용을 적어주세요.">${escapeHtml(defaultNote)}</textarea></label>
