@@ -597,6 +597,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 .admin-nav button { justify-content: flex-start; }
 .admin-nav button.active { background: var(--ink); color: #fff; }
 .admin-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.application-contact-grid { align-items: start; }
+.application-phone-hint { margin: 0; font-weight: 600; line-height: 1.4; }
 .series-admin-panel { margin-top: 12px; padding: 14px; border: 1px solid #d7ccf4; border-radius: 0.9rem; background: #faf8ff; }
 .series-admin-list { margin-top: 10px; }
 .series-admin-list li { display: flex; justify-content: space-between; gap: 12px; padding: 9px 10px; border-radius: 0.7rem; background: #fff; }

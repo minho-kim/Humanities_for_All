@@ -1765,11 +1765,11 @@ function renderApplicationForm(course) {
           <p class="muted">아래 정보를 확인하고 다시 신청하면 현재 신청자 명단에 등록됩니다.</p>
         </div>
       ` : ""}
-      <div class="admin-grid">
+      <div class="admin-grid application-contact-grid">
         <label>신청자명<input name="applicant_name" value="${escapeHtml(defaultName)}" required maxlength="80" autocomplete="name"></label>
         <label>휴대전화번호
           <input name="phone" type="tel" value="${escapeHtml(defaultPhone)}" required inputmode="numeric" autocomplete="tel-national" pattern="[0-9-]*" placeholder="010-0000-0000" maxlength="13" aria-describedby="applicationPhoneHint">
-          <small class="muted" id="applicationPhoneHint">숫자만 입력하면 하이픈(-)은 자동으로 입력됩니다.</small>
+          <small class="muted application-phone-hint" id="applicationPhoneHint">숫자만 입력하면 하이픈(-)은 자동으로 입력됩니다.</small>
         </label>
       </div>
       <label style="margin-top: 10px;">이메일<input value="${escapeHtml(state.user.email || "")}" readonly></label>
