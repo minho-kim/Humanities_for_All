@@ -203,7 +203,7 @@ function managedOrganizationIds() {
 
 function canAccessAdminTab(tab) {
   if (isOwner()) return true;
-  return ["dashboard", "organizations", "courses", "applications", "expectations", "archive", "reviews", "reports"].includes(tab);
+  return ["dashboard", "organizations", "venues", "courses", "applications", "expectations", "archive", "reviews", "reports"].includes(tab);
 }
 
 function updateAdminNavigationVisibility() {
@@ -320,6 +320,19 @@ function venueById(venueId) {
   return state.venues.find((venue) => venue.id === venueId);
 }
 
+function canManageVenue(venue) {
+  if (isOwner()) return true;
+  return Boolean(venue?.organization_id && managedOrganizationIds().has(venue.organization_id));
+}
+
+function venueOwnershipLabel(venue) {
+  if (!venue?.organization_id) return "공용 장소";
+  const organization = organizationById(venue.organization_id);
+  if (organization?.name) return `${organization.name} 장소`;
+  if (managedOrganizationIds().has(venue.organization_id)) return "담당 단체 장소";
+  return "다른 단체 장소";
+}
+
 function instructorSearchText(instructor) {
   return [
     instructor.name,
@@ -338,6 +351,7 @@ function venueSearchText(venue) {
     venue.kakao_map_url,
     venue.naver_place_url,
     venue.is_online ? "온라인" : "오프라인",
+    venueOwnershipLabel(venue),
   ].join(" ");
 }
 
@@ -486,12 +500,16 @@ function courseChangeNotificationPlan(existingCourse, payload) {
   };
 }
 
-function venueChangeNotificationPlan(existingVenue, payload) {
-  if (!existingVenue?.id) return null;
-  const hasMaterialChange = ["name", "address", "detail"].some(
+function hasMaterialVenueChange(existingVenue, payload) {
+  if (!existingVenue?.id) return false;
+  return ["name", "address", "detail"].some(
     (key) => String(existingVenue[key] || "").trim() !== String(payload[key] || "").trim(),
   ) || Boolean(existingVenue.is_online) !== Boolean(payload.is_online);
-  if (!hasMaterialChange) return null;
+}
+
+function venueChangeNotificationPlan(existingVenue, payload, impact = null) {
+  if (!existingVenue?.id) return null;
+  if (!hasMaterialVenueChange(existingVenue, payload)) return null;
 
   const affectedCourses = state.courses.filter((course) => (
     course.venue_id === existingVenue.id
@@ -499,14 +517,23 @@ function venueChangeNotificationPlan(existingVenue, payload) {
     && !hasCourseEnded(course)
     && activeApplications().some((application) => application.course_id === course.id)
   ));
-  const affectedCourseIds = new Set(affectedCourses.map((course) => course.id));
-  const recipientCount = activeApplications().filter((application) => affectedCourseIds.has(application.course_id)).length;
+  const recipientCount = Number(impact?.recipient_count || 0);
   if (!recipientCount) return null;
   return {
     changedLabels: ["장소명·주소·세부 장소"],
     recipientCount,
     affectedCourses,
+    affectedCourseCount: Number(impact?.affected_course_count || affectedCourses.length),
   };
+}
+
+async function loadVenueChangeImpact(venueId) {
+  if (!venueId) return null;
+  const { data, error } = await supabase.rpc("get_managed_venue_change_impact", {
+    p_venue_id: venueId,
+  }).single();
+  if (error) throw error;
+  return data || null;
 }
 
 function requireChangeNotificationConfirmation(form, plan) {
@@ -516,16 +543,17 @@ function requireChangeNotificationConfirmation(form, plan) {
     return false;
   }
 
+  const affectedCourseCount = Number(plan.affectedCourseCount || plan.affectedCourses.length);
   const courseItems = plan.affectedCourses.slice(0, 5).map((course) => (
     `<li><strong>${escapeHtml(course.title || "교육명 없음")}</strong> · ${escapeHtml(shortDate(course.starts_at))}</li>`
   )).join("");
-  const remainingCourseCount = Math.max(0, plan.affectedCourses.length - 5);
+  const remainingCourseCount = Math.max(0, affectedCourseCount - Math.min(5, plan.affectedCourses.length));
   openAdminNotice(
     "신청자 변경 안내 메일",
     `
       <p><strong>${escapeHtml(plan.changedLabels.join(", "))}</strong> 정보가 변경됩니다.</p>
-      <p>저장하면 관련 교육 ${escapeHtml(plan.affectedCourses.length)}개, 활성 신청 ${escapeHtml(plan.recipientCount)}건에 변경 안내 메일이 등록됩니다.</p>
-      <ul>${courseItems}${remainingCourseCount ? `<li>그 외 ${escapeHtml(remainingCourseCount)}개 교육</li>` : ""}</ul>
+      <p>저장하면 관련 교육 ${escapeHtml(affectedCourseCount)}개, 활성 신청 ${escapeHtml(plan.recipientCount)}건에 변경 안내 메일이 등록됩니다.</p>
+      ${courseItems || remainingCourseCount ? `<ul>${courseItems}${remainingCourseCount ? `<li>그 외 ${escapeHtml(remainingCourseCount)}개 교육</li>` : ""}</ul>` : ""}
       <p class="muted">변경 전·후 내용을 함께 안내하며, 즉시 발송에 실패해도 예약 작업이 자동으로 다시 시도합니다.</p>
       <div class="actions" style="margin-top: 16px;">
         <button class="btn" type="button" data-confirm-change-notification="${escapeHtml(form.id)}">저장하고 메일 등록</button>
@@ -1386,11 +1414,12 @@ function organizationResultHtml(organization, selectedId = "") {
 
 function venueResultHtml(venue, selectedId = "") {
   const courseCount = connectedCoursesForEntity("venue", venue.id).length;
+  const ownershipLabel = venueOwnershipLabel(venue);
   return `
     <button class="admin-search-result ${venue.id === selectedId ? "selected" : ""}" type="button" data-admin-select="venue" data-entity-id="${escapeHtml(venue.id)}">
       <span class="admin-search-title">
         <strong>${escapeHtml(venue.name || "장소명 없음")}</strong>
-        <span>${escapeHtml(venue.is_online ? "온라인" : "오프라인")}</span>
+        <span>${escapeHtml(venue.is_online ? "온라인" : "오프라인")} · ${escapeHtml(ownershipLabel)}</span>
       </span>
       <span class="muted">연결 교육 ${courseCount}개 · ${escapeHtml(venue.address || "주소 없음")}${venue.detail ? ` · ${escapeHtml(venue.detail)}` : ""}</span>
     </button>
@@ -1710,7 +1739,7 @@ function coursePickerResultMeta(kind, item) {
     return `연결 교육 ${courseCount}개${item.description ? ` · ${item.description}` : ""}${item.contact_email ? ` · ${item.contact_email}` : ""}`;
   }
   if (kind === "venue") {
-    return `연결 교육 ${courseCount}개 · ${item.address || "주소 없음"}${item.detail ? ` · ${item.detail}` : ""}`;
+    return `연결 교육 ${courseCount}개 · ${venueOwnershipLabel(item)} · ${item.address || "주소 없음"}${item.detail ? ` · ${item.detail}` : ""}`;
   }
   return `연결 교육 ${courseCount}개${item.bio ? ` · ${item.bio}` : ""}`;
 }
@@ -2454,12 +2483,65 @@ function renderInstructors() {
 
 function renderVenueForm(venue = {}) {
   const isEditing = Boolean(venue.id);
+  const canEdit = !isEditing || canManageVenue(venue);
+  const ownershipLabel = venueOwnershipLabel(venue);
+  if (!canEdit) {
+    const kakaoMapUrl = normalizeSafeUrl(venue.kakao_map_url, URL_RULES.kakaoMap);
+    const naverPlaceUrl = normalizeSafeUrl(venue.naver_place_url, URL_RULES.naverPlace);
+    return `
+      <section class="section">
+        <div class="row-top">
+          <strong>${escapeHtml(venue.name || "장소명 없음")}</strong>
+          <span class="badge gray">${escapeHtml(ownershipLabel)}</span>
+        </div>
+        <p>${escapeHtml(venue.address || "주소 없음")}${venue.detail ? ` · ${escapeHtml(venue.detail)}` : ""}</p>
+        <p class="muted">이 장소는 교육 관리에서 선택할 수 있지만, 수정과 삭제는 소유 단체 관리자 또는 전체 관리자만 할 수 있습니다.</p>
+        <div class="actions">
+          ${kakaoMapUrl ? `<a class="btn small secondary" href="${escapeHtml(kakaoMapUrl)}" target="_blank" rel="noreferrer">카카오맵 보기</a>` : ""}
+          ${naverPlaceUrl ? `<a class="btn small secondary" href="${escapeHtml(naverPlaceUrl)}" target="_blank" rel="noreferrer">네이버플레이스 보기</a>` : ""}
+          <button class="btn" type="button" id="newVenueButton">내 단체 장소 추가</button>
+        </div>
+      </section>
+    `;
+  }
+
+  const selectedOrganizationId = isEditing
+    ? String(venue.organization_id || "")
+    : (isOwner() ? "" : (state.organizations.length === 1 ? state.organizations[0].id : ""));
+  let ownershipField = "";
+  if (isOwner()) {
+    ownershipField = `
+      <label>장소 소유
+        <select name="organization_id">
+          <option value="" ${selectedOrganizationId ? "" : "selected"}>공용 장소</option>
+          ${state.organizations.map((organization) => `<option value="${escapeHtml(organization.id)}" ${organization.id === selectedOrganizationId ? "selected" : ""}>${escapeHtml(organization.name)}</option>`).join("")}
+        </select>
+      </label>
+    `;
+  } else if (isEditing || state.organizations.length === 1) {
+    const organization = organizationById(selectedOrganizationId);
+    ownershipField = `
+      <input type="hidden" name="organization_id" value="${escapeHtml(selectedOrganizationId)}">
+      <label>장소 소유<input value="${escapeHtml(organization?.name || "담당 단체")}" readonly></label>
+    `;
+  } else {
+    ownershipField = `
+      <label>장소 소유
+        <select name="organization_id" required>
+          <option value="">담당 단체 선택</option>
+          ${state.organizations.map((organization) => `<option value="${escapeHtml(organization.id)}">${escapeHtml(organization.name)}</option>`).join("")}
+        </select>
+      </label>
+    `;
+  }
+
   return `
     <form id="venueForm" class="section">
       <input type="hidden" name="venue_id" value="${escapeHtml(venue.id || "")}">
       <div class="admin-grid">
         <label>장소명<input name="name" value="${escapeHtml(venue.name || "")}" required></label>
         <label>세부 장소<input name="detail" value="${escapeHtml(venue.detail || "")}" placeholder="예: 2층 세미나실"></label>
+        ${ownershipField}
       </div>
       <label style="margin-top: 10px;">주소<input name="address" value="${escapeHtml(venue.address || "")}" placeholder="지도 검색에 사용할 주소"></label>
       <div class="admin-grid" style="margin-top: 10px;">
@@ -2481,11 +2563,13 @@ function renderVenues() {
   const selectedVenue = state.venues.find((venue) => venue.id === selectedId) || {};
   elements.adminContent.innerHTML = `
     <h2>장소 관리</h2>
-    <p class="muted">교육 상세 화면에서 주소, 카카오맵, 네이버플레이스 링크로 표시됩니다. 정확한 장소 페이지가 있으면 URL을 붙여 넣으세요.</p>
+    <p class="muted">${isOwner()
+      ? "공용 장소와 단체별 장소를 모두 관리합니다. 교육 상세 화면에 정확한 주소와 지도 링크가 표시되도록 입력해 주세요."
+      : "담당 단체 장소를 직접 추가·수정할 수 있습니다. 공용 장소와 다른 단체 장소는 교육에서 선택할 수 있지만 수정할 수 없습니다."}</p>
     ${renderAdminSearchPicker({
       kind: "venue",
       label: "수정할 장소 검색",
-      placeholder: "장소명, 주소, 세부 장소, 지도 URL로 검색",
+      placeholder: "장소명, 주소, 세부 장소, 소유 단체, 지도 URL로 검색",
       query: state.adminSearch.venue,
       selectedItem: selectedVenue,
       items: state.venues,
@@ -2493,7 +2577,7 @@ function renderVenues() {
       resultBuilder: venueResultHtml,
       emptyText: "검색어에 맞는 장소가 없습니다.",
       hideResultsUntilQuery: true,
-      emptyQueryText: "장소명, 주소, 세부 장소, 지도 URL 중 하나를 입력하면 검색 결과가 표시됩니다.",
+      emptyQueryText: "장소명, 주소, 세부 장소, 소유 단체, 지도 URL 중 하나를 입력하면 검색 결과가 표시됩니다.",
     })}
     <div style="margin-top: 14px;">${renderVenueForm(selectedVenue)}</div>
   `;
@@ -3408,8 +3492,23 @@ async function saveVenue(event) {
   const form = getSubmitForm(event);
   if (!form) return;
   const formData = new FormData(form);
-  const venueId = formData.get("venue_id");
+  const venueId = String(formData.get("venue_id") || "").trim();
   const isNewVenue = !venueId;
+  const existingVenue = state.venues.find((venue) => venue.id === venueId);
+  let organizationId = String(formData.get("organization_id") || "").trim();
+
+  if (!isOwner()) {
+    if (existingVenue && !canManageVenue(existingVenue)) {
+      showToast("이 장소는 소유 단체 또는 전체 관리자만 수정할 수 있습니다.");
+      return;
+    }
+    if (existingVenue) organizationId = String(existingVenue.organization_id || "");
+    if (!organizationId || !managedOrganizationIds().has(organizationId)) {
+      showToast("장소를 등록할 담당 단체를 선택해 주세요.");
+      return;
+    }
+  }
+
   const payload = {
     name: String(formData.get("name") || "").trim(),
     address: String(formData.get("address") || "").trim() || null,
@@ -3417,6 +3516,7 @@ async function saveVenue(event) {
     kakao_map_url: requireSafeUrl(formData.get("kakao_map_url"), "카카오맵 URL", URL_RULES.kakaoMap),
     naver_place_url: requireSafeUrl(formData.get("naver_place_url"), "네이버플레이스 URL", URL_RULES.naverPlace),
     is_online: formData.get("is_online") === "on",
+    organization_id: organizationId || null,
   };
 
   if (!payload.name) {
@@ -3424,8 +3524,10 @@ async function saveVenue(event) {
     return;
   }
 
-  const existingVenue = state.venues.find((venue) => venue.id === venueId);
-  const notificationPlan = venueChangeNotificationPlan(existingVenue, payload);
+  const changeImpact = existingVenue && hasMaterialVenueChange(existingVenue, payload)
+    ? await loadVenueChangeImpact(existingVenue.id)
+    : null;
+  const notificationPlan = venueChangeNotificationPlan(existingVenue, payload, changeImpact);
   if (requireChangeNotificationConfirmation(form, notificationPlan)) return;
 
   const request = venueId
@@ -3464,8 +3566,26 @@ async function deleteManagedEntity(kind, entityId) {
     return false;
   }
 
-  const { error } = await supabase.from(config.table).delete().eq("id", entityId);
-  if (error) throw error;
+  if (kind === "venue") {
+    const { data, error } = await supabase.rpc("delete_managed_venue", {
+      p_venue_id: entityId,
+    }).single();
+    if (error) throw error;
+    if (!data?.deleted) {
+      const connectedCount = Number(data?.connected_course_count || 0);
+      openAdminNotice(
+        "장소를 삭제할 수 없습니다",
+        `
+          <p><strong>${escapeHtml(item.name || "장소")}</strong>에 연결된 교육이 있어 삭제하지 않았습니다.</p>
+          <p class="muted">현재 연결 교육 ${escapeHtml(connectedCount)}개입니다. 다른 단체 교육이 포함되어 있을 수 있으므로 전체 관리자에게 연결 변경을 요청해 주세요.</p>
+        `,
+      );
+      return false;
+    }
+  } else {
+    const { error } = await supabase.from(config.table).delete().eq("id", entityId);
+    if (error) throw error;
+  }
 
   const mediaPath = config.mediaUrlKey ? siteMediaStoragePathFromUrl(item[config.mediaUrlKey]) : "";
   if (mediaPath) await removeUploadedSiteImage(mediaPath);
