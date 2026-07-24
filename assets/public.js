@@ -107,7 +107,7 @@ const PUBLIC_FETCH_RETRIES = 1;
 const LANDING_SUMMARY_TIMEOUT_MS = 4500;
 const STATUS_SYNC_TIMEOUT_MS = 4000;
 const SESSION_TIMEOUT_MS = 2500;
-const APPLICATION_TERMS_VERSION = "2026-07-24";
+const APPLICATION_TERMS_VERSION = "2026-07-24-v2";
 const DEMOGRAPHICS_TERMS_VERSION = "2026-07-24";
 const GUEST_CONTACT_SESSION_KEY = "humanities-guest-contact";
 const DEMOGRAPHIC_BANNER_DISMISS_KEY = "humanities-demographic-banner-dismissed";
@@ -1947,7 +1947,7 @@ function applicationPrivacyConsentHtml({ guest = false } = {}) {
         <summary>개인정보 수집·이용 안내 자세히 보기</summary>
         <ul class="plain-list">
           <li><strong>관련 근거</strong><br>개인정보 보호법 제15조 제1항 제1호에 따른 정보주체의 동의</li>
-          <li><strong>수집·이용 목적</strong><br>교육 신청 접수, 신청자 본인 확인, 신청 확인과 교육 전 리마인드, 일정·장소·변경·취소 안내, 신청 이력 확인, 운영 문의 응대</li>
+          <li><strong>수집·이용 목적</strong><br>교육 신청 접수, 신청자 본인 확인, 신청 확인과 교육 전 리마인드, 일정·장소·변경·취소 안내, 참석 확인자 대상 교육 종료 후 후기 작성 안내, 신청 이력 확인, 운영 문의 응대</li>
           <li><strong>수집 항목</strong><br>필수: 신청자명, 휴대전화번호${guest ? " · 선택: 이메일, 기대평 또는 강사에게 하고 싶은 질문" : ", 인증 이메일 · 선택: 기대평 또는 강사에게 하고 싶은 질문"}</li>
           <li><strong>운영 안내 방법</strong><br>휴대전화번호로 문자 또는 카카오톡 안내를 발송할 수 있고${guest ? ", 이메일을 입력한 경우 해당 주소로도 안내할 수 있습니다" : ", 인증 이메일로도 신청 확인과 운영 안내를 발송할 수 있습니다"}. 광고성 정보는 별도 동의 없이 발송하지 않습니다.</li>
           <li><strong>보유·이용 기간</strong><br>교육 종료 후 6개월 또는 사업 정산·민원 응대 종료 시까지 보관한 뒤 파기합니다. 관련 법령에 따라 더 보관해야 하는 경우에는 해당 법령에서 정한 기간 동안 보관할 수 있습니다.</li>
@@ -1956,7 +1956,7 @@ function applicationPrivacyConsentHtml({ guest = false } = {}) {
         </ul>
       </details>
       <label><span><input name="privacy_agreement" type="checkbox" required style="width:auto;min-height:auto;"> 개인정보 수집 및 이용에 동의합니다.</span></label>
-      <label style="margin-top: 8px;"><span><input name="sms_notice_agreement" type="checkbox" required style="width:auto;min-height:auto;"> 신청 확인과 교육 운영 안내를 이메일·문자(카카오톡 포함)로 받을 수 있음에 동의합니다.</span></label>
+      <label style="margin-top: 8px;"><span><input name="sms_notice_agreement" type="checkbox" required style="width:auto;min-height:auto;"> 신청 확인, 교육 운영 및 참석 후 후기 작성 안내를 이메일·문자(카카오톡 포함)로 받을 수 있음에 동의합니다.</span></label>
     </div>
   `;
 }
@@ -2317,8 +2317,8 @@ async function handleApplicationSubmit(event) {
       showToast(result.result_state === "existing"
         ? "이미 접수된 비회원 신청을 확인했습니다."
         : result.result_state === "reapplied"
-          ? "비회원 신청을 다시 접수했습니다."
-          : "비회원 교육 신청이 접수되었습니다.");
+          ? "비회원 신청을 다시 접수했습니다. 확인 문자를 보내드립니다."
+          : "비회원 교육 신청이 접수되었습니다. 확인 문자를 보내드립니다.");
       openCourseDetail(course.id);
     } catch (error) {
       console.error("Guest course application failed", error);
@@ -2420,8 +2420,8 @@ async function handleApplicationSubmit(event) {
   await loadApplicationState(supabase);
   void requestNotificationDispatch(supabase, "course_application", createdApplication?.id);
   showToast(cancelledApplication
-    ? "교육을 다시 신청했습니다. 확인 메일을 보내드립니다."
-    : "교육 신청이 접수되었습니다. 확인 메일을 보내드립니다.");
+    ? "교육을 다시 신청했습니다. 확인 메일과 문자를 보내드립니다."
+    : "교육 신청이 접수되었습니다. 확인 메일과 문자를 보내드립니다.");
   openCourseDetail(course.id);
 }
 
@@ -2560,7 +2560,7 @@ async function handleCancelApplication(button) {
 
   void requestNotificationDispatch(supabase, "course_application", applicationId);
   await loadApplicationState(supabase);
-  showToast("교육 신청을 취소했습니다. 취소 완료 메일을 보내드립니다.");
+  showToast("교육 신청을 취소했습니다. 취소 완료 메일과 문자를 보내드립니다.");
   if (state.activeCourseId) openCourseDetail(state.activeCourseId);
   if (elements.profileModal.classList.contains("open") && elements.profileEyebrow.textContent === "나의 정보") {
     openMyInfo();
@@ -2604,7 +2604,7 @@ async function handleGuestApplicationCancel(button) {
   }
 
   await loadGuestAccessForCourse(course.id, { force: true });
-  showToast("비회원 교육 신청을 취소했습니다. 같은 정보로 다시 신청할 수 있습니다.");
+  showToast("비회원 교육 신청을 취소했습니다. 취소 완료 문자를 보내드리며 같은 정보로 다시 신청할 수 있습니다.");
   openCourseDetail(course.id);
 }
 

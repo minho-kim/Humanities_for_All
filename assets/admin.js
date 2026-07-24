@@ -90,6 +90,7 @@ const state = {
   contentReports: [],
   draws: [],
   winners: [],
+  smsDeliveries: [],
   demographicSummary: null,
 };
 
@@ -551,14 +552,14 @@ function requireChangeNotificationConfirmation(form, plan) {
   )).join("");
   const remainingCourseCount = Math.max(0, affectedCourseCount - Math.min(5, plan.affectedCourses.length));
   openAdminNotice(
-    "신청자 변경 안내 메일",
+    "신청자 변경 안내",
     `
       <p><strong>${escapeHtml(plan.changedLabels.join(", "))}</strong> 정보가 변경됩니다.</p>
-      <p>저장하면 관련 교육 ${escapeHtml(affectedCourseCount)}개, 활성 신청 ${escapeHtml(plan.recipientCount)}건에 변경 안내 메일이 등록됩니다.</p>
+      <p>저장하면 관련 교육 ${escapeHtml(affectedCourseCount)}개, 활성 신청 ${escapeHtml(plan.recipientCount)}건에 변경 안내 메일·문자가 등록됩니다.</p>
       ${courseItems || remainingCourseCount ? `<ul>${courseItems}${remainingCourseCount ? `<li>그 외 ${escapeHtml(remainingCourseCount)}개 교육</li>` : ""}</ul>` : ""}
       <p class="muted">변경 전·후 내용을 함께 안내하며, 즉시 발송에 실패해도 예약 작업이 자동으로 다시 시도합니다.</p>
       <div class="actions" style="margin-top: 16px;">
-        <button class="btn" type="button" data-confirm-change-notification="${escapeHtml(form.id)}">저장하고 메일 등록</button>
+        <button class="btn" type="button" data-confirm-change-notification="${escapeHtml(form.id)}">저장하고 안내 등록</button>
       </div>
     `,
   );
@@ -570,7 +571,7 @@ async function requestCourseChangeNotificationDispatch() {
     body: { action: "dispatch_actor_course_changes" },
   });
   if (error) {
-    console.warn("[모두의 인문학] 교육 변경 메일 즉시 발송 요청 실패", error);
+    console.warn("[모두의 인문학] 교육 변경 안내 즉시 발송 요청 실패", error);
     return null;
   }
   return data || null;
@@ -2237,6 +2238,17 @@ async function loadAdminData() {
     state.organizationAdminsError = "";
   }
 
+  const { data: smsDeliveries, error: smsDeliveriesError } = await supabase.rpc("get_managed_sms_deliveries", {
+    p_limit: 100,
+    p_course_id: null,
+  });
+  if (smsDeliveriesError) {
+    console.warn("[모두의 인문학] 문자 발송 현황 확인 지연", smsDeliveriesError);
+    state.smsDeliveries = [];
+  } else {
+    state.smsDeliveries = smsDeliveries || [];
+  }
+
   renderAuthStatus();
   render();
 }
@@ -2526,6 +2538,69 @@ function renderSkySmsTest() {
   `;
 }
 
+const SMS_EVENT_LABELS = {
+  application_confirmation: "신청 확인",
+  application_cancellation: "신청 취소",
+  application_reminder: "교육 전날 알림",
+  course_update: "교육 정보 변경",
+  course_cancellation: "교육 취소",
+  review_request: "후기 작성 요청",
+};
+
+const SMS_STATUS_LABELS = {
+  pending: "발송 대기",
+  processing: "처리 중",
+  sent: "발송 완료",
+  skipped: "발송 제외",
+  failed: "발송 실패",
+};
+
+function renderSmsDeliveryHistory() {
+  const deliveries = state.smsDeliveries || [];
+  const sentCount = deliveries.filter((item) => item.status === "sent").length;
+  const pendingCount = deliveries.filter((item) => ["pending", "processing"].includes(item.status)).length;
+  const failedCount = deliveries.filter((item) => item.status === "failed").length;
+  return `
+    <section class="section" style="margin-top: 16px;">
+      <div class="row-top">
+        <div>
+          <h3>자동 문자 발송 현황</h3>
+          <p class="muted">휴대전화번호는 끝 4자리만 표시합니다. 담당 단체 관리자는 자기 교육의 발송 이력만 볼 수 있습니다.</p>
+        </div>
+        <div class="actions">
+          <span class="badge green">완료 ${escapeHtml(sentCount)}건</span>
+          <span class="badge gray">대기 ${escapeHtml(pendingCount)}건</span>
+          ${failedCount ? `<span class="badge red">실패 ${escapeHtml(failedCount)}건</span>` : ""}
+        </div>
+      </div>
+      <details>
+        <summary>자동 발송 시점과 내용 확인</summary>
+        <ul class="plain-list">
+          <li><strong>신청·재신청</strong><br>접수 직후 신청 교육, 일시, 장소, 확인·취소 링크를 보냅니다.</li>
+          <li><strong>신청 취소</strong><br>취소 직후 취소 완료와 재신청 링크를 보냅니다.</li>
+          <li><strong>교육 변경·취소</strong><br>교육명·일시·장소·강사가 바뀌거나 교육이 취소되면 변경된 항목을 보냅니다.</li>
+          <li><strong>교육 전날</strong><br>교육 전날 오후 6시 이후 일시, 장소, 상세 링크를 보냅니다.</li>
+          <li><strong>후기 요청</strong><br>참석 확인된 사람에게 교육 종료 2일 뒤 오전 10시 이후 후기 링크를 보냅니다. 이미 후기를 썼으면 보내지 않습니다.</li>
+        </ul>
+      </details>
+      <div class="table-list" style="margin-top: 12px;">
+        ${deliveries.map((delivery) => `
+          <div class="table-row">
+            <div class="row-top">
+              <strong>${escapeHtml(delivery.course_title || "교육")}</strong>
+              <span class="badge ${delivery.status === "sent" ? "green" : delivery.status === "failed" ? "red" : "gray"}">${escapeHtml(SMS_STATUS_LABELS[delivery.status] || delivery.status)}</span>
+            </div>
+            <p class="muted">${escapeHtml(SMS_EVENT_LABELS[delivery.event_type] || delivery.event_type)} · 본인확인 ****${escapeHtml(delivery.phone_last_four || "----")}</p>
+            <p class="muted">등록 ${escapeHtml(formatDateTime(delivery.created_at))}${delivery.sent_at ? ` · 발송 ${escapeHtml(formatDateTime(delivery.sent_at))}` : ` · 다음 처리 ${escapeHtml(formatDateTime(delivery.available_at))}`}${delivery.message_type ? ` · ${escapeHtml(delivery.message_type)} ${escapeHtml(delivery.message_bytes || 0)}바이트` : ""}</p>
+            ${delivery.message_body ? `<p style="white-space:pre-line;">${escapeHtml(delivery.message_body)}</p>` : ""}
+            ${delivery.status === "failed" && delivery.last_error ? `<p class="muted">발송 오류: ${escapeHtml(delivery.last_error)}</p>` : ""}
+          </div>
+        `).join("") || `<div class="empty compact-empty">아직 자동 문자 발송 이력이 없습니다.</div>`}
+      </div>
+    </section>
+  `;
+}
+
 function renderDashboard() {
   const publicReviews = visibleReviews().length;
   const hiddenReviews = state.reviews.length - publicReviews;
@@ -2544,6 +2619,7 @@ function renderDashboard() {
       <div class="section"><h3>후기 관리</h3><p>공개 후기 ${publicReviews}개 · 숨김 ${hiddenReviews}개</p></div>
       ${isOwner() ? `<div class="section"><h3>관리자 전용 추첨</h3><p>추첨 기록 ${state.draws.length}건 · 당첨 이력 ${state.winners.length}건</p></div>` : ""}
     </div>
+    ${renderSmsDeliveryHistory()}
     ${renderSkySmsTest()}
     ${renderDashboardMetricSection("organization")}
     ${renderDashboardMetricSection("instructor")}
@@ -3750,7 +3826,7 @@ async function saveVenue(event) {
 
   if (notificationPlan) await requestCourseChangeNotificationDispatch();
 
-  showToast(notificationPlan ? "장소 정보를 저장하고 신청자 변경 안내 메일을 등록했습니다." : "장소 정보를 저장했습니다.");
+  showToast(notificationPlan ? "장소 정보를 저장하고 신청자 변경 안내 메일·문자를 등록했습니다." : "장소 정보를 저장했습니다.");
   await reload();
   state.tab = "venues";
   if (isNewVenue) {
@@ -3910,7 +3986,7 @@ async function saveCourse(event) {
   if (notificationPlan) await requestCourseChangeNotificationDispatch();
 
   const savedMessage = seriesPreviousCourseId ? "교육을 저장하고 연강으로 연결했습니다." : "교육을 저장했습니다.";
-  const notificationMessage = notificationPlan ? " 신청자 변경 안내 메일도 등록했습니다." : "";
+  const notificationMessage = notificationPlan ? " 신청자 변경 안내 메일·문자도 등록했습니다." : "";
   showToast(`${hasSelectedFile(formData.get("course_file")) ? `${savedMessage} 자료도 등록했습니다.` : savedMessage}${notificationMessage}`);
   await reload();
   state.tab = "courses";
