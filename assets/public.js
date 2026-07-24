@@ -108,7 +108,7 @@ const LANDING_SUMMARY_TIMEOUT_MS = 4500;
 const STATUS_SYNC_TIMEOUT_MS = 4000;
 const SESSION_TIMEOUT_MS = 2500;
 const APPLICATION_TERMS_VERSION = "2026-07-24-v2";
-const DEMOGRAPHICS_TERMS_VERSION = "2026-07-24";
+const DEMOGRAPHICS_TERMS_VERSION = "2026-07-24-v2";
 const GUEST_CONTACT_SESSION_KEY = "humanities-guest-contact";
 const DEMOGRAPHIC_BANNER_DISMISS_KEY = "humanities-demographic-banner-dismissed";
 const OAUTH_RETURN_STATE_KEY = "humanities-google-oauth-return";
@@ -1694,9 +1694,91 @@ function demographicOption(value, label, selectedValue) {
   return `<option value="${escapeHtml(value)}" ${selectedValue === value ? "selected" : ""}>${escapeHtml(label)}</option>`;
 }
 
+function normalizedResidencePart(value, maxLength = 60) {
+  return String(value || "")
+    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function residenceSelectionFromPostcode(data) {
+  const sido = normalizedResidencePart(data?.sido);
+  const sigungu = normalizedResidencePart(data?.sigungu);
+  const district = normalizedResidencePart([sido, sigungu].filter(Boolean).join(" "));
+  const ruralNeighborhood = normalizedResidencePart(data?.bname1);
+  const legalNeighborhood = normalizedResidencePart(data?.bname2 || data?.bname);
+  const neighborhood = ruralNeighborhood || legalNeighborhood;
+  const selectedAddress = normalizedResidencePart(
+    data?.userSelectedType === "J" ? data?.jibunAddress : data?.roadAddress,
+    200,
+  ) || normalizedResidencePart(data?.address, 200);
+
+  if (!district || !neighborhood || (!ruralNeighborhood && /리$/.test(neighborhood))) return null;
+  return {
+    district,
+    neighborhood,
+    storedLabel: `${district} ${neighborhood}`,
+    discardedAddress: selectedAddress,
+  };
+}
+
+function openResidencePostcodeSearch(button) {
+  const form = button.closest("#demographicsForm");
+  if (!form) return;
+  const Postcode = globalThis.kakao?.Postcode || globalThis.daum?.Postcode;
+  if (typeof Postcode !== "function") {
+    showToast("주소검색을 불러오지 못했습니다. 인터넷 연결을 확인한 뒤 다시 시도해 주세요.");
+    return;
+  }
+
+  new Postcode({
+    oncomplete(data) {
+      const selection = residenceSelectionFromPostcode(data);
+      if (!selection) {
+        showToast("선택한 주소에서 읍·면·동을 확인하지 못했습니다. 다른 검색 결과를 선택해 주세요.");
+        return;
+      }
+
+      form.elements.residence_district.value = selection.district;
+      form.elements.residence_neighborhood.value = selection.neighborhood;
+      const preview = form.querySelector("[data-residence-stored-preview]");
+      const storedLabel = form.querySelector("[data-residence-stored-label]");
+      const summary = form.querySelector("[data-residence-selection-summary]");
+      const discardedRow = form.querySelector("[data-residence-discarded-row]");
+      const discardedValue = form.querySelector("[data-residence-discarded-value]");
+      if (preview) preview.value = selection.storedLabel;
+      if (storedLabel) storedLabel.textContent = selection.storedLabel;
+      if (summary) summary.hidden = false;
+      if (discardedRow) discardedRow.hidden = !selection.discardedAddress;
+      if (discardedValue) discardedValue.textContent = selection.discardedAddress;
+      showToast("읍·면·동까지만 선택했습니다. 상세주소는 저장하지 않습니다.");
+    },
+  }).open();
+}
+
+function clearResidenceSelection(button) {
+  const form = button.closest("#demographicsForm");
+  if (!form) return;
+  form.elements.residence_district.value = "";
+  form.elements.residence_neighborhood.value = "";
+  const preview = form.querySelector("[data-residence-stored-preview]");
+  const storedLabel = form.querySelector("[data-residence-stored-label]");
+  const summary = form.querySelector("[data-residence-selection-summary]");
+  const discardedRow = form.querySelector("[data-residence-discarded-row]");
+  const discardedValue = form.querySelector("[data-residence-discarded-value]");
+  if (preview) preview.value = "";
+  if (storedLabel) storedLabel.textContent = "";
+  if (summary) summary.hidden = true;
+  if (discardedRow) discardedRow.hidden = true;
+  if (discardedValue) discardedValue.textContent = "";
+  showToast("거주지역을 저장하지 않도록 비웠습니다.");
+}
+
 function renderDemographicsForm() {
   const profile = state.demographics || {};
   const currentYear = Number(new Intl.DateTimeFormat("en", { year: "numeric", timeZone: "Asia/Seoul" }).format(new Date()));
+  const storedResidence = [profile.residence_district, profile.residence_neighborhood].filter(Boolean).join(" ");
   return `
     <form id="demographicsForm" class="demographics-form">
       <div class="row-top">
@@ -1706,9 +1788,23 @@ function renderDemographicsForm() {
         </div>
         <span class="badge gray">모든 항목 선택 입력</span>
       </div>
-      <div class="admin-grid">
-        <label>거주 시·군·구(선택)<input name="residence_district" value="${escapeHtml(profile.residence_district || "")}" maxlength="60" placeholder="예: 용인시 수지구" autocomplete="address-level2"></label>
-        <label>거주 읍·면·동(선택)<input name="residence_neighborhood" value="${escapeHtml(profile.residence_neighborhood || "")}" maxlength="60" placeholder="예: 풍덕천동" autocomplete="address-level3"></label>
+      <div class="residence-search-panel">
+        <input name="residence_district" type="hidden" value="${escapeHtml(profile.residence_district || "")}">
+        <input name="residence_neighborhood" type="hidden" value="${escapeHtml(profile.residence_neighborhood || "")}">
+        <label>거주지역(선택)
+          <input type="text" value="${escapeHtml(storedResidence)}" data-residence-stored-preview readonly placeholder="주소검색으로 읍·면·동을 선택하세요" aria-describedby="residenceStorageGuide">
+        </label>
+        <div class="actions">
+          <button class="btn small secondary" type="button" data-search-residence>주소검색</button>
+          <button class="btn small secondary" type="button" data-clear-residence>거주지역 비우기</button>
+        </div>
+        <p class="muted" id="residenceStorageGuide">카카오 주소검색에서 도로명주소와 지번주소 모두 검색할 수 있습니다. 검색 과정은 카카오 서비스에서 처리되며, 우리 서비스는 선택 결과 중 시·도, 시·군·구, 법정동 또는 읍·면까지만 저장합니다.</p>
+        <div class="residence-selection-summary" data-residence-selection-summary aria-live="polite" ${storedResidence ? "" : "hidden"}>
+          <p><strong>저장되는 지역</strong><span data-residence-stored-label>${escapeHtml(storedResidence)}</span></p>
+          <p data-residence-discarded-row hidden><strong>저장하지 않고 버리는 주소</strong><span class="residence-discarded-value" data-residence-discarded-value></span><small>이 값은 현재 화면에서 확인한 뒤 DB·세션·로그에 저장하지 않습니다.</small></p>
+        </div>
+      </div>
+      <div class="admin-grid demographic-fields-grid">
         <label>출생연도(선택)<input name="birth_year" type="number" min="1900" max="${currentYear}" value="${escapeHtml(profile.birth_year ?? "")}" inputmode="numeric" placeholder="예: 1985"></label>
         <label>성별(선택)
           <select name="gender">
@@ -1734,7 +1830,8 @@ function renderDemographicsForm() {
         <summary>선택 정보 수집·이용 안내</summary>
         <ul class="plain-list">
           <li><strong>목적</strong><br>참여자 구성에 대한 통계 작성과 교육 기획·서비스 개선</li>
-          <li><strong>항목</strong><br>거주지(시·군·구 및 읍·면·동), 출생연도, 성별, 결혼 여부, 자녀 수 중 이용자가 선택한 항목</li>
+          <li><strong>항목</strong><br>거주지역(시·도, 시·군·구, 법정동 또는 읍·면까지만 저장), 출생연도, 성별, 결혼 여부, 자녀 수 중 이용자가 선택한 항목</li>
+          <li><strong>주소검색 처리</strong><br>검색어와 검색 화면은 카카오 우편번호 서비스에서 처리합니다. 우리 서비스는 선택 결과 중 전체 주소·건물번호·상세주소·우편번호를 저장하지 않습니다.</li>
           <li><strong>열람 범위</strong><br>개별 응답 원문은 본인만 열람·수정할 수 있고, 전체 관리자는 5명 이상인 범주의 집계만 확인합니다.</li>
           <li><strong>보유 기간</strong><br>동의 철회 또는 계정 삭제 시까지. 나의 정보에서 언제든 삭제할 수 있습니다.</li>
           <li><strong>거부권</strong><br>동의를 거부하거나 일부 항목만 입력할 수 있으며, 교육 신청과 서비스 이용에 불이익이 없습니다.</li>
@@ -2834,6 +2931,10 @@ async function handleDemographicsSubmit(event) {
     showToast("저장할 선택 항목을 하나 이상 입력해 주세요.");
     return;
   }
+  if (Boolean(residenceDistrict) !== Boolean(residenceNeighborhood)) {
+    showToast("거주지역은 주소검색으로 읍·면·동까지 선택하거나 비워 주세요.");
+    return;
+  }
   if (birthYear !== null && (!Number.isInteger(birthYear) || birthYear < 1900 || birthYear > currentYear)) {
     showToast(`출생연도는 1900년부터 ${currentYear}년 사이로 입력해 주세요.`);
     return;
@@ -3155,7 +3256,17 @@ function bindEvents() {
     const deleteDemographicsButton = event.target.closest("[data-delete-demographics]");
     const openDemographicsButton = event.target.closest("[data-open-demographics]");
     const dismissDemographicsButton = event.target.closest("[data-dismiss-demographics]");
+    const searchResidenceButton = event.target.closest("[data-search-residence]");
+    const clearResidenceButton = event.target.closest("[data-clear-residence]");
     const reportButton = event.target.closest("[data-report-content]");
+    if (searchResidenceButton) {
+      openResidencePostcodeSearch(searchResidenceButton);
+      return;
+    }
+    if (clearResidenceButton) {
+      clearResidenceSelection(clearResidenceButton);
+      return;
+    }
     if (routeControl) {
       event.preventDefault();
       const route = routeControl.dataset.route;
