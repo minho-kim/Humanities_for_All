@@ -58,6 +58,7 @@ const state = {
   applicantProfile: null,
   demographics: null,
   guestContact: null,
+  guestAccessTokens: {},
   guestAccessByCourse: {},
 };
 
@@ -107,13 +108,16 @@ const PUBLIC_FETCH_RETRIES = 1;
 const LANDING_SUMMARY_TIMEOUT_MS = 4500;
 const STATUS_SYNC_TIMEOUT_MS = 4000;
 const SESSION_TIMEOUT_MS = 2500;
-const APPLICATION_TERMS_VERSION = "2026-07-24-v2";
-const DEMOGRAPHICS_TERMS_VERSION = "2026-07-24-v2";
+const APPLICATION_TERMS_VERSION = "2026-07-24-v6";
+const DEMOGRAPHICS_TERMS_VERSION = "2026-07-24-v3";
 const GUEST_CONTACT_SESSION_KEY = "humanities-guest-contact";
+const GUEST_ACCESS_TOKEN_SESSION_KEY = "humanities-guest-access-tokens";
 const DEMOGRAPHIC_BANNER_DISMISS_KEY = "humanities-demographic-banner-dismissed";
 const OAUTH_RETURN_STATE_KEY = "humanities-google-oauth-return";
 let supplementaryLoadSequence = 0;
 let supabaseClientPromise = null;
+let residenceSearchPopup = null;
+let residenceSearchForm = null;
 
 function getSupabaseClient() {
   if (!supabaseClientPromise) {
@@ -155,6 +159,48 @@ function rememberGuestContact({ applicant_name: applicantName, phone, email = ""
   } catch (error) {
     console.warn("[모두의 인문학] 비회원 신청 정보 임시 저장 실패", error);
   }
+}
+
+function validGuestAccessToken(value) {
+  const token = String(value || "").trim();
+  return /^[0-9a-f-]{36}\.[0-9a-f]{64}$/i.test(token) && token.length === 101 ? token : "";
+}
+
+function readGuestAccessTokens() {
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(GUEST_ACCESS_TOKEN_SESSION_KEY) || "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed)
+      .map(([courseId, token]) => [courseId, validGuestAccessToken(token)])
+      .filter(([courseId, token]) => /^[0-9a-f-]{36}$/i.test(courseId) && token));
+  } catch (error) {
+    console.warn("[모두의 인문학] 비회원 접근 링크 확인 실패", error);
+    return {};
+  }
+}
+
+function rememberGuestAccessToken(courseId, accessToken) {
+  const token = validGuestAccessToken(accessToken);
+  if (!/^[0-9a-f-]{36}$/i.test(String(courseId || "")) || !token) return false;
+  state.guestAccessTokens[courseId] = token;
+  try {
+    window.sessionStorage.setItem(GUEST_ACCESS_TOKEN_SESSION_KEY, JSON.stringify(state.guestAccessTokens));
+  } catch (error) {
+    console.warn("[모두의 인문학] 비회원 접근 링크 임시 저장 실패", error);
+  }
+  return true;
+}
+
+function captureGuestAccessTokenFromUrl() {
+  const url = new URL(window.location.href);
+  const courseId = String(url.searchParams.get("course") || "");
+  const hashParams = new URLSearchParams(url.hash.replace(/^#/, ""));
+  const token = validGuestAccessToken(hashParams.get("guest") || url.searchParams.get("guest"));
+  if (!courseId || !token || !rememberGuestAccessToken(courseId, token)) return;
+  hashParams.delete("guest");
+  url.searchParams.delete("guest");
+  url.hash = hashParams.toString() ? `#${hashParams.toString()}` : "";
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
 async function requestNotificationDispatch(supabase, sourceType, sourceId) {
@@ -650,8 +696,8 @@ function canWriteReviewForCourse(course) {
 }
 
 async function loadGuestAccessForCourse(courseId, { force = false } = {}) {
-  const contact = state.guestContact;
-  if (!courseId || !contact) return null;
+  const accessToken = validGuestAccessToken(state.guestAccessTokens[courseId]);
+  if (!courseId || !accessToken) return null;
   if (!force && Object.prototype.hasOwnProperty.call(state.guestAccessByCourse, courseId)) {
     return guestAccessForCourse(courseId);
   }
@@ -659,10 +705,9 @@ async function loadGuestAccessForCourse(courseId, { force = false } = {}) {
   state.guestAccessByCourse[courseId] = { loading: true };
   try {
     const supabase = await getSupabaseClient();
-    const { data, error } = await supabase.rpc("get_guest_course_access", {
+    const { data, error } = await supabase.rpc("get_guest_course_access_v3", {
       p_course_id: courseId,
-      p_applicant_name: contact.applicant_name,
-      p_phone: contact.phone,
+      p_access_token: accessToken,
     });
     if (error) throw error;
     const access = Array.isArray(data) ? data[0] || null : data || null;
@@ -1694,67 +1739,49 @@ function demographicOption(value, label, selectedValue) {
   return `<option value="${escapeHtml(value)}" ${selectedValue === value ? "selected" : ""}>${escapeHtml(label)}</option>`;
 }
 
-function normalizedResidencePart(value, maxLength = 60) {
-  return String(value || "")
-    .replace(/[\u0000-\u001F\u007F]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, maxLength);
-}
-
-function residenceSelectionFromPostcode(data) {
-  const sido = normalizedResidencePart(data?.sido);
-  const sigungu = normalizedResidencePart(data?.sigungu);
-  const district = normalizedResidencePart([sido, sigungu].filter(Boolean).join(" "));
-  const ruralNeighborhood = normalizedResidencePart(data?.bname1);
-  const legalNeighborhood = normalizedResidencePart(data?.bname2 || data?.bname);
-  const neighborhood = ruralNeighborhood || legalNeighborhood;
-  const selectedAddress = normalizedResidencePart(
-    data?.userSelectedType === "J" ? data?.jibunAddress : data?.roadAddress,
-    200,
-  ) || normalizedResidencePart(data?.address, 200);
-
-  if (!district || !neighborhood || (!ruralNeighborhood && /리$/.test(neighborhood))) return null;
-  return {
-    district,
-    neighborhood,
-    storedLabel: `${district} ${neighborhood}`,
-    discardedAddress: selectedAddress,
-  };
-}
-
 function openResidencePostcodeSearch(button) {
   const form = button.closest("#demographicsForm");
   if (!form) return;
-  const Postcode = globalThis.kakao?.Postcode || globalThis.daum?.Postcode;
-  if (typeof Postcode !== "function") {
-    showToast("주소검색을 불러오지 못했습니다. 인터넷 연결을 확인한 뒤 다시 시도해 주세요.");
+  residenceSearchForm = form;
+  residenceSearchPopup = window.open(
+    "./address-search.html",
+    "humanities-address-search",
+    "popup=yes,width=520,height=720,resizable=yes,scrollbars=yes",
+  );
+  if (!residenceSearchPopup) {
+    residenceSearchForm = null;
+    showToast("주소검색 팝업이 차단되었습니다. 브라우저에서 팝업을 허용한 뒤 다시 시도해 주세요.");
+  }
+}
+
+function handleResidenceSearchMessage(event) {
+  if (event.origin !== window.location.origin || event.source !== residenceSearchPopup) return;
+  const message = event.data;
+  if (!message || message.type !== "humanities:residence-selected") return;
+  const form = residenceSearchForm;
+  residenceSearchPopup = null;
+  residenceSearchForm = null;
+  if (!form || !document.body.contains(form)) return;
+
+  const selection = message.selection;
+  if (!selection?.district || !selection?.neighborhood || !selection?.storedLabel) {
+    showToast("선택한 주소에서 읍·면·동을 확인하지 못했습니다. 다른 검색 결과를 선택해 주세요.");
     return;
   }
 
-  new Postcode({
-    oncomplete(data) {
-      const selection = residenceSelectionFromPostcode(data);
-      if (!selection) {
-        showToast("선택한 주소에서 읍·면·동을 확인하지 못했습니다. 다른 검색 결과를 선택해 주세요.");
-        return;
-      }
-
-      form.elements.residence_district.value = selection.district;
-      form.elements.residence_neighborhood.value = selection.neighborhood;
-      const preview = form.querySelector("[data-residence-stored-preview]");
-      const storedLabel = form.querySelector("[data-residence-stored-label]");
-      const summary = form.querySelector("[data-residence-selection-summary]");
-      const discardedRow = form.querySelector("[data-residence-discarded-row]");
-      const discardedValue = form.querySelector("[data-residence-discarded-value]");
-      if (preview) preview.value = selection.storedLabel;
-      if (storedLabel) storedLabel.textContent = selection.storedLabel;
-      if (summary) summary.hidden = false;
-      if (discardedRow) discardedRow.hidden = !selection.discardedAddress;
-      if (discardedValue) discardedValue.textContent = selection.discardedAddress;
-      showToast("읍·면·동까지만 선택했습니다. 상세주소는 저장하지 않습니다.");
-    },
-  }).open();
+  form.elements.residence_district.value = selection.district;
+  form.elements.residence_neighborhood.value = selection.neighborhood;
+  const preview = form.querySelector("[data-residence-stored-preview]");
+  const storedLabel = form.querySelector("[data-residence-stored-label]");
+  const summary = form.querySelector("[data-residence-selection-summary]");
+  const discardedRow = form.querySelector("[data-residence-discarded-row]");
+  const discardedValue = form.querySelector("[data-residence-discarded-value]");
+  if (preview) preview.value = selection.storedLabel;
+  if (storedLabel) storedLabel.textContent = selection.storedLabel;
+  if (summary) summary.hidden = false;
+  if (discardedRow) discardedRow.hidden = !selection.discardedAddress;
+  if (discardedValue) discardedValue.textContent = selection.discardedAddress || "";
+  showToast("읍·면·동까지만 선택했습니다. 상세주소는 저장하지 않습니다.");
 }
 
 function clearResidenceSelection(button) {
@@ -1833,7 +1860,7 @@ function renderDemographicsForm() {
           <li><strong>항목</strong><br>거주지역(시·도, 시·군·구, 법정동 또는 읍·면까지만 저장), 출생연도, 성별, 결혼 여부, 자녀 수 중 이용자가 선택한 항목</li>
           <li><strong>주소검색 처리</strong><br>검색어와 검색 화면은 카카오 우편번호 서비스에서 처리합니다. 우리 서비스는 선택 결과 중 전체 주소·건물번호·상세주소·우편번호를 저장하지 않습니다.</li>
           <li><strong>열람 범위</strong><br>개별 응답 원문은 본인만 열람·수정할 수 있고, 전체 관리자는 5명 이상인 범주의 집계만 확인합니다.</li>
-          <li><strong>보유 기간</strong><br>동의 철회 또는 계정 삭제 시까지. 나의 정보에서 언제든 삭제할 수 있습니다.</li>
+          <li><strong>보유 기간</strong><br>동의 철회·계정 삭제 또는 교육 신청 개인정보의 마지막 참석·신청 기준 6개월 보유기간 도래 중 먼저 발생하는 시점까지입니다. 나의 정보에서 언제든 삭제할 수 있습니다.</li>
           <li><strong>거부권</strong><br>동의를 거부하거나 일부 항목만 입력할 수 있으며, 교육 신청과 서비스 이용에 불이익이 없습니다.</li>
         </ul>
       </details>
@@ -1988,21 +2015,11 @@ function renderReviewForm(course) {
 
   if (!reviewIdentity) {
     if (!canShowPostCourseContent(course)) return "";
-    const contact = state.guestContact || {};
     return `
-      <form id="guestReviewAccessForm">
-        <p>비회원으로 신청했거나 현장에서 참여했다면 신청자명과 휴대전화번호를 확인한 뒤 후기를 쓸 수 있습니다.</p>
-        <div class="admin-grid application-contact-grid">
-          <label>신청자명<input name="applicant_name" value="${escapeHtml(contact.applicant_name || "")}" required maxlength="80" autocomplete="name"></label>
-          <label>휴대전화번호
-            <input name="phone" type="tel" value="${escapeHtml(contact.phone || "")}" required inputmode="numeric" autocomplete="tel-national" pattern="[0-9-]*" placeholder="010-0000-0000" maxlength="13">
-          </label>
-        </div>
-        <div class="actions" style="margin-top: 12px;">
-          <button class="btn small secondary" type="submit">참석 확인하고 후기 쓰기</button>
-          <span class="badge gray">관리자 참석 확인 후 작성 가능</span>
-        </div>
-      </form>
+      <div class="table-row">
+        <p>비회원 참여자는 신청 확인 문자에 포함된 안전한 확인 링크로 접속하면 참석 확인 후 후기를 작성할 수 있습니다.</p>
+        <span class="badge gray">이름과 전화번호만으로는 후기 권한을 확인하지 않습니다</span>
+      </div>
     `;
   }
 
@@ -2039,21 +2056,27 @@ function applicationPrivacyConsentHtml({ guest = false } = {}) {
   return `
     <div class="section privacy-consent" style="margin-top: 12px;">
       <h3>개인정보 수집·이용 동의</h3>
-      <p class="muted">교육 신청 접수와 문자(카카오톡 포함) 운영 안내를 위해 필요한 최소한의 개인정보를 수집합니다.${guest ? " 이메일은 선택 항목입니다." : ""}</p>
+      <p class="muted">교육 신청 접수와 이메일·문자 운영 안내를 위해 필요한 최소한의 개인정보를 수집합니다.${guest ? " 이메일은 선택 항목입니다." : ""}</p>
       <details>
         <summary>개인정보 수집·이용 안내 자세히 보기</summary>
         <ul class="plain-list">
           <li><strong>관련 근거</strong><br>개인정보 보호법 제15조 제1항 제1호에 따른 정보주체의 동의</li>
-          <li><strong>수집·이용 목적</strong><br>교육 신청 접수, 신청자 본인 확인, 신청 확인과 교육 전 리마인드, 일정·장소·변경·취소 안내, 참석 확인자 대상 교육 종료 후 후기 작성 안내, 신청 이력 확인, 운영 문의 응대</li>
-          <li><strong>수집 항목</strong><br>필수: 신청자명, 휴대전화번호${guest ? " · 선택: 이메일, 기대평 또는 강사에게 하고 싶은 질문" : ", 인증 이메일 · 선택: 기대평 또는 강사에게 하고 싶은 질문"}</li>
-          <li><strong>운영 안내 방법</strong><br>휴대전화번호로 문자 또는 카카오톡 안내를 발송할 수 있고${guest ? ", 이메일을 입력한 경우 해당 주소로도 안내할 수 있습니다" : ", 인증 이메일로도 신청 확인과 운영 안내를 발송할 수 있습니다"}. 광고성 정보는 별도 동의 없이 발송하지 않습니다.</li>
-          <li><strong>보유·이용 기간</strong><br>교육 종료 후 6개월 또는 사업 정산·민원 응대 종료 시까지 보관한 뒤 파기합니다. 관련 법령에 따라 더 보관해야 하는 경우에는 해당 법령에서 정한 기간 동안 보관할 수 있습니다.</li>
-          <li><strong>동의 거부권과 불이익</strong><br>개인정보 수집·이용에 동의하지 않을 권리가 있습니다. 다만 필수 항목 동의를 거부하면 온라인 교육 신청 접수와 운영 안내가 어려울 수 있습니다.</li>
+          <li><strong>수집·이용 목적</strong><br>교육 신청 접수, 신청자 본인 확인, 신청 확인과 교육 전 리마인드, 일정·장소 변경 및 취소 안내, 참석 확인, 신청 이력 확인, 운영 문의 응대</li>
+          <li><strong>수집 항목</strong><br>필수: 신청자명, 휴대전화번호${guest ? " · 선택: 이메일, 기대평 또는 강사에게 하고 싶은 질문" : ", 인증 이메일 · 선택: 기대평 또는 강사에게 하고 싶은 질문"}. 현장 참석 명단을 작성하는 경우 성명, 휴대전화번호 끝 4자리와 서명을 별도로 수집할 수 있습니다.</li>
+          <li><strong>공개되는 선택 내용</strong><br>기대평 또는 강사에게 하고 싶은 질문을 작성하면 작성자 표시를 일부 가린 뒤 공개 페이지에 게시합니다. 연락처나 사적인 정보는 입력하지 마세요.</li>
+          <li><strong>운영 안내 방법</strong><br>휴대전화번호로 문자를 발송할 수 있고${guest ? ", 선택 입력한 이메일은 운영 문의 응대 시 연락 목적으로 사용할 수 있습니다" : ", 인증 이메일로도 신청 확인과 운영 안내를 발송할 수 있습니다"}. 광고성 정보는 별도 동의 없이 발송하지 않습니다.</li>
+          <li><strong>신청 개인정보 보유·이용 기간</strong><br>참석 확인된 교육이 있는 경우 마지막 참석 교육 종료일로부터 6개월, 참석 확인 기록이 없는 경우 마지막 신청 교육 종료일 또는 취소일로부터 6개월까지 보관합니다. 이후 이름·전화번호·이메일과 직접적인 신청자 식별정보를 파기하고 통계에 필요한 비식별 기록만 남깁니다. 진행 전이거나 최근에 신청한 교육이 있으면 해당 교육을 기준으로 기간을 다시 계산합니다.</li>
+          <li><strong>공개 콘텐츠 보유기간</strong><br>기대평·질문과 공개 후기는 작성자 또는 관리자가 삭제하거나 서비스가 종료될 때까지 보관합니다. 작성자의 수정·삭제 권한을 유지하는 데 필요한 최소한의 계정 연결 또는 비회원 서명 확인정보도 해당 콘텐츠와 함께 보관합니다. 관계 법령에 따라 별도 보관이 필요한 경우에는 해당 기간 동안 분리 보관합니다.</li>
+          <li><strong>만 14세 이상 이용</strong><br>온라인 신청은 만 14세 이상만 이용할 수 있습니다. 생년월일이나 유료 본인인증 정보를 추가로 수집하지 않고 신청자가 직접 확인하는 방식이며, 실제 연령을 인증하는 절차는 아닙니다.</li>
+          <li><strong>동의 거부권과 불이익</strong><br>개인정보 수집·이용에 동의하지 않을 권리가 있습니다. 다만 필수 항목 동의를 거부하거나 만 14세 이상임을 확인하지 않으면 온라인 교육 신청 접수와 운영 안내가 어렵습니다.</li>
           <li><strong>전화번호 안내</strong><br>휴대전화번호는 유료 본인 인증 없이 신청자가 입력한 값을 저장하며, 교육 운영 안내 연락에만 사용합니다.</li>
         </ul>
       </details>
       <label><span><input name="privacy_agreement" type="checkbox" required style="width:auto;min-height:auto;"> 개인정보 수집 및 이용에 동의합니다.</span></label>
-      <label style="margin-top: 8px;"><span><input name="sms_notice_agreement" type="checkbox" required style="width:auto;min-height:auto;"> 신청 확인, 교육 운영 및 참석 후 후기 작성 안내를 이메일·문자(카카오톡 포함)로 받을 수 있음에 동의합니다.</span></label>
+      <label style="margin-top: 8px;"><span><input name="age_14_confirmation" type="checkbox" required style="width:auto;min-height:auto;"> <strong>필수:</strong> 만 14세 이상입니다.</span></label>
+      <p class="muted">생년월일이나 유료 본인인증을 받지 않는 자기확인 항목입니다.</p>
+      <label style="margin-top: 8px;"><span><input name="review_request_agreement" type="checkbox" style="width:auto;min-height:auto;"> <strong>선택:</strong> 참석 확인 후 교육 종료 2일 뒤 후기 작성 요청 문자 1회를 받는 데 동의합니다.</span></label>
+      <p class="muted">선택 동의를 하지 않아도 교육 신청·참여와 참석 확인 후 후기 작성에는 불이익이 없습니다.</p>
     </div>
   `;
 }
@@ -2066,6 +2089,7 @@ function renderGuestApplicationForm(course) {
   if (activeGuestAccess) {
     const attendanceConfirmed = Boolean(activeGuestAccess.attendance_confirmed_at);
     const canCancelApplication = !attendanceConfirmed && canApplyToCourse(course);
+    const expectationBody = String(activeGuestAccess.expectation_body || "").trim();
     return `
       <div class="table-row">
         <div class="row-top">
@@ -2073,6 +2097,10 @@ function renderGuestApplicationForm(course) {
           <span class="badge ${attendanceConfirmed ? "green" : "gray"}">${attendanceConfirmed ? "참석 인증" : "신청"}</span>
         </div>
         <p class="muted">신청자: ${escapeHtml(contact.applicant_name || "비회원 신청자")} · 연락처: ${escapeHtml(contact.phone || "확인됨")}</p>
+        ${expectationBody ? `
+          <p><strong>내 기대평 / 강사에게 하고 싶은 질문</strong><br>${escapeHtml(expectationBody)}</p>
+          <button class="btn small danger" type="button" data-delete-guest-application-note>기대평·질문 삭제</button>
+        ` : ""}
         ${attendanceConfirmed ? `<p class="muted">참석 인증이 완료되어 후기를 작성할 수 있습니다.</p>` : ""}
         ${canCancelApplication ? `<button class="btn small secondary" type="button" data-cancel-guest-application>신청 취소</button>` : ""}
       </div>
@@ -2092,8 +2120,8 @@ function renderGuestApplicationForm(course) {
           <small class="muted application-phone-hint" id="guestApplicationPhoneHint">010으로 시작하는 숫자 11자리를 입력해 주세요. 하이픈(-)은 자동으로 입력됩니다.</small>
         </label>
       </div>
-      <label style="margin-top: 10px;">이메일(선택)<input name="email" type="email" value="${escapeHtml(contact.email || "")}" autocomplete="email" maxlength="320" placeholder="안내 메일도 받으려면 입력하세요"></label>
-      <label style="margin-top: 10px;">기대평 / 강사에게 하고 싶은 질문(선택)<textarea name="note" maxlength="1000" placeholder="교육에서 기대하는 점이나 강사에게 미리 묻고 싶은 내용을 적어주세요."></textarea></label>
+      <label style="margin-top: 10px;">이메일(선택)<input name="email" type="email" value="${escapeHtml(contact.email || "")}" autocomplete="email" maxlength="320" placeholder="운영 문의 연락용 이메일"></label>
+      <label style="margin-top: 10px;">기대평 / 강사에게 하고 싶은 질문(선택)<textarea name="note" maxlength="1000" placeholder="교육에서 기대하는 점이나 강사에게 미리 묻고 싶은 내용을 적어주세요."></textarea><small class="muted">작성 내용은 작성자 표시를 일부 가린 뒤 공개됩니다. 연락처나 사적인 정보는 적지 마세요.</small></label>
       ${applicationPrivacyConsentHtml({ guest: true })}
       <div class="actions" style="margin-top: 12px;">
         <button class="btn" type="submit">${isReapplication ? "비회원으로 다시 신청하기" : "비회원으로 신청하기"}</button>
@@ -2177,7 +2205,7 @@ function renderApplicationForm(course) {
         </label>
       </div>
       <label style="margin-top: 10px;">이메일<input value="${escapeHtml(state.user.email || "")}" readonly></label>
-      <label style="margin-top: 10px;">기대평 / 강사에게 하고 싶은 질문(선택)<textarea name="note" placeholder="교육에서 기대하는 점이나 강사에게 미리 묻고 싶은 내용을 적어주세요.">${escapeHtml(defaultNote)}</textarea></label>
+      <label style="margin-top: 10px;">기대평 / 강사에게 하고 싶은 질문(선택)<textarea name="note" placeholder="교육에서 기대하는 점이나 강사에게 미리 묻고 싶은 내용을 적어주세요.">${escapeHtml(defaultNote)}</textarea><small class="muted">작성 내용은 작성자 표시를 일부 가린 뒤 공개됩니다. 연락처나 사적인 정보는 적지 마세요.</small></label>
       ${applicationPrivacyConsentHtml()}
       <div class="actions" style="margin-top: 12px;">
         <button class="btn" type="submit">${cancelledApplication ? "교육 다시 신청하기" : "교육 신청하기"}</button>
@@ -2338,7 +2366,7 @@ function openCourseDetail(courseId) {
     </div>
   `;
   openModal(elements.detailModal);
-  if (state.guestContact && !Object.prototype.hasOwnProperty.call(state.guestAccessByCourse, course.id)) {
+  if (state.guestAccessTokens[course.id] && !Object.prototype.hasOwnProperty.call(state.guestAccessByCourse, course.id)) {
     refreshGuestAccessInOpenCourse(course.id);
   }
 }
@@ -2382,10 +2410,15 @@ async function handleApplicationSubmit(event) {
     showToast("010으로 시작하는 휴대전화번호 11자리를 입력해 주세요.");
     return;
   }
-  if (formData.get("privacy_agreement") !== "on" || formData.get("sms_notice_agreement") !== "on") {
-    showToast("교육 신청을 위해 개인정보 수집 및 이메일·문자 안내 동의가 필요합니다.");
+  if (formData.get("privacy_agreement") !== "on") {
+    showToast("교육 신청을 위해 개인정보 수집·이용 동의가 필요합니다.");
     return;
   }
+  if (formData.get("age_14_confirmation") !== "on") {
+    showToast("온라인 신청을 위해 만 14세 이상임을 확인해 주세요.");
+    return;
+  }
+  const reviewRequestAgreed = formData.get("review_request_agreement") === "on";
 
   if (applicationMode === "guest") {
     const email = String(formData.get("email") || "").trim().toLowerCase();
@@ -2396,20 +2429,24 @@ async function handleApplicationSubmit(event) {
     }
     try {
       const supabase = await getSupabaseClient();
-      const { data, error } = await supabase.rpc("submit_guest_course_application", {
+      const { data, error } = await supabase.rpc("submit_guest_course_application_v4", {
         p_course_id: course.id,
         p_applicant_name: applicantName,
         p_phone: phone,
         p_email: email || null,
         p_note: note || null,
         p_terms_version: APPLICATION_TERMS_VERSION,
+        p_review_request_agreed: reviewRequestAgreed,
+        p_age_14_confirmed: true,
       });
       if (error) throw error;
       const result = Array.isArray(data) ? data[0] : data;
-      if (!result?.application_id) throw new Error("신청 저장 결과를 확인하지 못했습니다.");
+      if (!result?.application_id || !rememberGuestAccessToken(course.id, result.access_token)) {
+        throw new Error("신청 확인 링크를 저장하지 못했습니다.");
+      }
 
       rememberGuestContact({ applicant_name: applicantName, phone, email });
-      state.guestAccessByCourse[course.id] = result;
+      state.guestAccessByCourse[course.id] = { ...result, expectation_body: note || null };
       if (state.supplementaryLoaded && note) await loadSupplementaryData();
       showToast(result.result_state === "existing"
         ? "이미 접수된 비회원 신청을 확인했습니다."
@@ -2443,67 +2480,41 @@ async function handleApplicationSubmit(event) {
     return;
   }
   const cancelledApplication = cancelledApplicationForCourse(courseId);
-
-  const now = new Date().toISOString();
-  const email = state.user.email || "";
   const supabase = await getSupabaseClient();
-  const profilePayload = {
-    user_id: state.user.id,
-    applicant_name: applicantName,
-    phone,
-    privacy_agreed_at: now,
-    sms_notice_agreed_at: now,
-    terms_version: APPLICATION_TERMS_VERSION,
-  };
-
-  const { error: profileError } = await supabase
-    .from("applicant_profiles")
-    .upsert(profilePayload, { onConflict: "user_id" });
-  if (profileError) {
-    if (profileError.code === "23505") {
-      showToast("신청자 정보를 저장하지 못했습니다. 이전에 사용한 로그인 계정이 있다면 그 계정으로 다시 시도하거나 운영자에게 문의해 주세요.");
-    } else {
-      console.error("Applicant profile save failed", profileError);
-      showToast("신청자 정보를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.");
-    }
-    return;
+  const submitButton = form.querySelector("button[type='submit']");
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "신청 중...";
   }
 
-  let createdApplication = null;
-  let error = null;
-  if (cancelledApplication) {
-    const result = await supabase.rpc("reapply_my_course_application", {
+  try {
+    const { data, error } = await supabase.rpc("submit_my_course_application_v3", {
       p_course_id: course.id,
       p_applicant_name: applicantName,
       p_phone: phone,
       p_note: note || null,
       p_terms_version: APPLICATION_TERMS_VERSION,
+      p_review_request_agreed: reviewRequestAgreed,
+      p_age_14_confirmed: true,
     });
-    createdApplication = result.data ? { id: result.data } : null;
-    error = result.error;
-  } else {
-    const result = await supabase
-      .from("course_applications")
-      .insert({
-        course_id: course.id,
-        user_id: state.user.id,
-        applicant_name: applicantName,
-        email,
-        phone,
-        note: note || null,
-        privacy_agreed_at: now,
-        sms_notice_agreed_at: now,
-        terms_version: APPLICATION_TERMS_VERSION,
-      })
-      .select("id")
-      .single();
-    createdApplication = result.data;
-    error = result.error;
-  }
+    if (error) throw error;
+    const application = Array.isArray(data) ? data[0] : data;
+    if (!application?.application_id) throw new Error("신청 저장 결과를 확인하지 못했습니다.");
 
-  if (error) {
-    if (error.code === "23505") showToast("이미 이 교육을 신청했습니다.");
-    else {
+    await loadApplicationState(supabase);
+    void requestNotificationDispatch(supabase, "course_application", application.application_id);
+    showToast(application.result_state === "existing"
+      ? "이미 접수된 교육 신청을 확인했습니다."
+      : application.result_state === "reapplied" || cancelledApplication
+        ? "교육을 다시 신청했습니다. 확인 메일과 문자를 보내드립니다."
+        : "교육 신청이 접수되었습니다. 확인 메일과 문자를 보내드립니다.");
+    openCourseDetail(course.id);
+  } catch (error) {
+    if (error?.code === "23505") {
+      showToast("신청자 정보를 저장하지 못했습니다. 이전에 사용한 로그인 계정이 있다면 그 계정으로 다시 시도하거나 운영자에게 문의해 주세요.");
+    } else if (error?.code === "22023") {
+      showToast(error.message || "신청 정보를 다시 확인해 주세요.");
+    } else {
       console.error("Course application failed", error);
       showToast(cancelledApplication
         ? "교육 재신청을 저장하지 못했습니다. 신청 가능 시간을 확인한 뒤 다시 시도해 주세요."
@@ -2511,15 +2522,12 @@ async function handleApplicationSubmit(event) {
     }
     await loadApplicationState(supabase);
     openCourseDetail(course.id);
-    return;
+  } finally {
+    if (submitButton && document.body.contains(submitButton)) {
+      submitButton.disabled = false;
+      submitButton.textContent = cancelledApplication ? "다시 신청하기" : "신청하기";
+    }
   }
-
-  await loadApplicationState(supabase);
-  void requestNotificationDispatch(supabase, "course_application", createdApplication?.id);
-  showToast(cancelledApplication
-    ? "교육을 다시 신청했습니다. 확인 메일과 문자를 보내드립니다."
-    : "교육 신청이 접수되었습니다. 확인 메일과 문자를 보내드립니다.");
-  openCourseDetail(course.id);
 }
 
 async function handleApplicationNoteSubmit(event) {
@@ -2613,6 +2621,47 @@ async function handleApplicationNoteDelete(button) {
   }
 }
 
+async function handleGuestApplicationNoteDelete(button) {
+  const course = state.composedCourses.find((item) => item.id === state.activeCourseId);
+  const accessToken = validGuestAccessToken(state.guestAccessTokens[course?.id]);
+  if (!course || !accessToken) {
+    showToast("비회원 신청 확인 링크를 다시 열어 주세요.");
+    return;
+  }
+
+  if (button.dataset.confirmDelete !== "true") {
+    button.dataset.confirmDelete = "true";
+    button.textContent = "한 번 더 누르면 삭제";
+    window.setTimeout(() => {
+      if (button.dataset.confirmDelete === "true") {
+        button.dataset.confirmDelete = "false";
+        button.textContent = "기대평·질문 삭제";
+      }
+    }, 3000);
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = "삭제 중...";
+  const supabase = await getSupabaseClient();
+  const { data, error } = await supabase.rpc("delete_guest_application_note_v2", {
+    p_course_id: course.id,
+    p_access_token: accessToken,
+  });
+  if (error || data !== true) {
+    console.error("Guest application note delete failed", error);
+    showToast("기대평/질문을 삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    button.disabled = false;
+    button.textContent = "기대평·질문 삭제";
+    return;
+  }
+
+  await loadGuestAccessForCourse(course.id, { force: true });
+  if (state.supplementaryLoaded) await loadSupplementaryData();
+  showToast("기대평/질문을 삭제했습니다.");
+  openCourseDetail(course.id);
+}
+
 async function handleCancelApplication(button) {
   if (!state.user) {
     openModal(elements.loginModal);
@@ -2666,8 +2715,8 @@ async function handleCancelApplication(button) {
 
 async function handleGuestApplicationCancel(button) {
   const course = state.composedCourses.find((item) => item.id === state.activeCourseId);
-  const contact = state.guestContact;
-  if (!course || !contact || !canApplyToCourse(course)) {
+  const accessToken = validGuestAccessToken(state.guestAccessTokens[course?.id]);
+  if (!course || !accessToken || !canApplyToCourse(course)) {
     if (course) openCourseDetail(course.id);
     return;
   }
@@ -2687,10 +2736,9 @@ async function handleGuestApplicationCancel(button) {
   button.disabled = true;
   button.textContent = "취소 중...";
   const supabase = await getSupabaseClient();
-  const { data, error } = await supabase.rpc("cancel_guest_course_application", {
+  const { data, error } = await supabase.rpc("cancel_guest_course_application_v2", {
     p_course_id: course.id,
-    p_applicant_name: contact.applicant_name,
-    p_phone: contact.phone,
+    p_access_token: accessToken,
   });
   if (error || data !== true) {
     console.error("Guest application cancel failed", error);
@@ -2763,16 +2811,15 @@ async function handleReviewSubmit(event) {
   const supabase = await getSupabaseClient();
   const reviewId = String(form.elements.review_id?.value || "");
   if (reviewIdentity === "guest") {
-    const contact = state.guestContact;
+    const accessToken = validGuestAccessToken(state.guestAccessTokens[course.id]);
     const access = activeGuestAccessForCourse(course.id);
-    if (!contact || !access?.attendance_confirmed_at) {
-      showToast("신청자명과 휴대전화번호로 참석 정보를 다시 확인해 주세요.");
+    if (!accessToken || !access?.attendance_confirmed_at) {
+      showToast("신청 확인 문자에 포함된 안전한 링크로 참석 정보를 다시 확인해 주세요.");
       return;
     }
-    const { error } = await supabase.rpc("save_guest_review", {
+    const { error } = await supabase.rpc("save_guest_review_v2", {
       p_course_id: course.id,
-      p_applicant_name: contact.applicant_name,
-      p_phone: contact.phone,
+      p_access_token: accessToken,
       p_body: body,
     });
     if (error) {
@@ -2870,8 +2917,8 @@ async function handleReviewDelete(button) {
 
 async function handleGuestReviewDelete(button) {
   const course = state.composedCourses.find((item) => item.id === state.activeCourseId);
-  const contact = state.guestContact;
-  if (!course || !contact) return;
+  const accessToken = validGuestAccessToken(state.guestAccessTokens[course?.id]);
+  if (!course || !accessToken) return;
 
   if (button.dataset.confirmDelete !== "true") {
     button.dataset.confirmDelete = "true";
@@ -2888,10 +2935,9 @@ async function handleGuestReviewDelete(button) {
   button.disabled = true;
   button.textContent = "삭제 중...";
   const supabase = await getSupabaseClient();
-  const { data, error } = await supabase.rpc("delete_guest_review", {
+  const { data, error } = await supabase.rpc("delete_guest_review_v2", {
     p_course_id: course.id,
-    p_applicant_name: contact.applicant_name,
-    p_phone: contact.phone,
+    p_access_token: accessToken,
   });
   if (error || data !== true) {
     console.error("Guest review delete failed", error);
@@ -3253,6 +3299,7 @@ function bindEvents() {
     const deleteReviewButton = event.target.closest("[data-delete-review]");
     const deleteGuestReviewButton = event.target.closest("[data-delete-guest-review]");
     const deleteApplicationNoteButton = event.target.closest("[data-delete-application-note]");
+    const deleteGuestApplicationNoteButton = event.target.closest("[data-delete-guest-application-note]");
     const deleteDemographicsButton = event.target.closest("[data-delete-demographics]");
     const openDemographicsButton = event.target.closest("[data-open-demographics]");
     const dismissDemographicsButton = event.target.closest("[data-dismiss-demographics]");
@@ -3321,6 +3368,10 @@ function bindEvents() {
     }
     if (deleteApplicationNoteButton) {
       handleApplicationNoteDelete(deleteApplicationNoteButton).catch((error) => showToast(`기대평/질문 삭제 실패: ${error.message}`));
+      return;
+    }
+    if (deleteGuestApplicationNoteButton) {
+      handleGuestApplicationNoteDelete(deleteGuestApplicationNoteButton).catch((error) => showToast(`기대평/질문 삭제 실패: ${error.message}`));
       return;
     }
     if (deleteDemographicsButton) {
@@ -3418,6 +3469,7 @@ function bindEvents() {
   elements.googleLoginButton.addEventListener("click", handleGoogleLogin);
   elements.loginForm.addEventListener("submit", handleLogin);
   elements.logoutButton.addEventListener("click", handleLogout);
+  window.addEventListener("message", handleResidenceSearchMessage);
   window.addEventListener("hashchange", async () => {
     applyRouteFromHash();
     if (state.activePage !== "courses") {
@@ -3429,6 +3481,8 @@ function bindEvents() {
 
 async function initialize() {
   state.guestContact = readGuestContact();
+  state.guestAccessTokens = readGuestAccessTokens();
+  captureGuestAccessTokenFromUrl();
   applyRouteFromHash();
   bindEvents();
   await loadLandingData();

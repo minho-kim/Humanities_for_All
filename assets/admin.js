@@ -913,6 +913,7 @@ function renderApplicationRow(application) {
     guest: "비회원 신청",
     admin_walk_in: "로그인 현장 등록",
     admin_guest_walk_in: "비회원 현장 등록",
+    anonymized: "개인정보 파기 완료",
   };
   const sourceLabel = sourceLabels[application.registration_source] || "신청";
   const sourceBadge = application.registration_source === "guest"
@@ -921,7 +922,9 @@ function renderApplicationRow(application) {
       ? "현장 등록"
       : application.registration_source === "admin_guest_walk_in"
         ? "비회원 현장 등록"
-        : "";
+        : application.registration_source === "anonymized"
+          ? "비식별 기록"
+          : "";
   return `
     <div class="table-row">
       <div class="row-top">
@@ -3208,7 +3211,7 @@ function renderArchive() {
   const isEditing = Boolean(selectedArchive.id);
   elements.adminContent.innerHTML = `
     <h2>아카이브 등록</h2>
-    <p class="muted">영상은 YouTube/Vimeo 등 외부 링크를 권장합니다. 사진이나 PDF는 Supabase Storage에 업로드할 수 있습니다. 사진은 여러 장을 한 번에 선택할 수 있습니다.</p>
+    <p class="muted">영상은 YouTube/Vimeo 등 외부 링크를 권장합니다. 사진이나 PDF는 Supabase Storage에 업로드할 수 있습니다. 등록한 아카이브는 공개 페이지에 노출되므로 참여자 촬영·공개 동의를 확인한 자료만 올려 주세요.</p>
     <label>수정할 아카이브 선택<select id="archivePicker"><option value="">새 아카이브</option>${state.archives.map((item) => `<option value="${item.id}" ${item.id === selectedArchive.id ? "selected" : ""}>${escapeHtml(item.title)} · ${escapeHtml(courseName(item.course_id))}</option>`).join("")}</select></label>
     <form id="archiveForm" class="section">
       <input type="hidden" name="archive_id" value="${escapeHtml(selectedArchive.id || "")}">
@@ -3224,7 +3227,7 @@ function renderArchive() {
       <label style="margin-top: 10px;">파일 업로드<input name="files" type="file" accept="image/*,.pdf" multiple></label>
       <p class="media-upload-note">사진은 여러 장을 선택할 수 있습니다. 기존 아카이브 수정 중 여러 장을 선택하면 첫 파일은 현재 항목을 대체하고 나머지는 새 항목으로 추가됩니다.</p>
       <label style="margin-top: 10px;">설명(선택)<textarea name="caption">${escapeHtml(selectedArchive.caption || "")}</textarea></label>
-      <label style="margin-top: 10px;"><span><input name="is_public" type="checkbox" ${selectedArchive.is_public === false ? "" : "checked"} style="width:auto;min-height:auto;"> 공개</span></label>
+      <p class="media-upload-note">아카이브는 공개 자료입니다. 내부 운영 문서나 개인정보가 포함된 파일은 업로드하지 마세요.</p>
       <div class="actions" style="margin-top: 14px;">
         <button class="btn" type="submit">${isEditing ? "아카이브 수정" : "아카이브 등록"}</button>
         <button class="btn secondary" type="button" id="newArchiveButton">새 아카이브 입력</button>
@@ -4186,7 +4189,7 @@ async function saveArchive(event) {
   const files = Array.from(form.querySelector("input[name='files']")?.files || []).filter(hasSelectedFile);
   let archiveType = String(formData.get("type"));
   const caption = String(formData.get("caption") || "").trim();
-  const isPublic = formData.get("is_public") === "on";
+  const isPublic = true;
 
   if (!courseId) {
     showToast("교육을 선택해 주세요.");
@@ -4604,6 +4607,26 @@ async function runDraw(event) {
 
 async function reload() {
   await refreshSession();
+  if (!isAdmin()) {
+    state.organizations = [];
+    state.instructors = [];
+    state.venues = [];
+    state.courses = [];
+    state.sessions = [];
+    state.archives = [];
+    state.applications = [];
+    state.attendanceDocuments = [];
+    state.reviews = [];
+    state.contentReports = [];
+    state.draws = [];
+    state.winners = [];
+    state.smsDeliveries = [];
+    state.demographicSummary = null;
+    state.organizationAdmins = [];
+    state.organizationAdminsError = "";
+    render();
+    return;
+  }
   await syncFinishedCourseStatuses();
   await loadAdminData();
 }
