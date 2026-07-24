@@ -624,6 +624,13 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 .demographic-summary-items { display: flex; flex-wrap: wrap; gap: 8px; }
 .demographic-summary-items span { display: inline-flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 999px; background: #fff; }
 .demographic-summary-items em { color: var(--muted); font-style: normal; font-size: 0.9rem; }
+.sms-test-panel { border-color: #c9d8ee; background: #f7faff; }
+.sms-test-panel h3 { margin: 0 0 4px; }
+.sms-test-result { display: grid; gap: 4px; margin-top: 14px; padding: 12px 14px; border-radius: 14px; }
+.sms-test-result[hidden] { display: none; }
+.sms-test-result[data-status="success"] { background: #e7f6ed; color: #146c43; }
+.sms-test-result[data-status="error"] { background: #fff0f0; color: #9b1c1c; }
+.sms-test-result span { font-size: 0.9rem; }
 
 .admin-layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 18px; align-items: start; }
 .admin-card { padding: 18px; background: rgba(255, 255, 255, 0.88); }

@@ -143,6 +143,7 @@ const ATTENDANCE_DOCUMENT_TYPES = new Map([
 const ATTENDANCE_DOCUMENT_MAX_BYTES = 15 * 1024 * 1024;
 const ADMIN_SEARCH_LIMIT = 10;
 const COURSE_PICKER_LIMIT = 12;
+const SMS_TEST_MESSAGE = "[모두의 인문학] 문자 발송 연동 테스트입니다.";
 const rosterNameSorter = new Intl.Collator("ko-KR", {
   numeric: true,
   sensitivity: "base",
@@ -2268,6 +2269,83 @@ async function invokeOrganizationAdminFunction(action, payload = {}) {
   return data || {};
 }
 
+async function invokeSmsDispatch(payload = {}) {
+  const { data, error } = await supabase.functions.invoke("sms-dispatch", { body: payload });
+  if (error) {
+    let message = error.message || "문자 발송 연동을 확인하지 못했습니다.";
+    try {
+      const response = error.context;
+      if (response instanceof Response) {
+        const body = await response.clone().json();
+        if (body?.error) message = body.error;
+      }
+    } catch {
+      // The generic SDK error is kept when the response body is unavailable.
+    }
+    throw new Error(message);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data || {};
+}
+
+async function handleSmsTestSubmit(event) {
+  event.preventDefault();
+  if (!isOwner()) throw new Error("전체 관리자만 문자 연동을 시험할 수 있습니다.");
+  const form = getSubmitForm(event);
+  if (!form) return;
+
+  const submitButton = event.submitter instanceof HTMLButtonElement
+    ? event.submitter
+    : form.querySelector('button[value="provider_test"]');
+  const action = submitButton?.value === "send_test" ? "send_test" : "provider_test";
+  if (action === "send_test" && submitButton?.dataset.confirmRealSms !== "true") {
+    submitButton.dataset.confirmRealSms = "true";
+    submitButton.textContent = "한 번 더 누르면 실제 발송됩니다";
+    window.setTimeout(() => {
+      if (submitButton.dataset.confirmRealSms === "true") {
+        submitButton.dataset.confirmRealSms = "false";
+        submitButton.textContent = "실제 테스트 문자 보내기";
+      }
+    }, 5000);
+    return;
+  }
+
+  const formData = new FormData(form);
+  const recipientPhone = formatMobilePhone(formData.get("recipient_phone"));
+  const message = String(formData.get("message") || "").trim();
+  if (!isValidMobilePhone(recipientPhone)) throw new Error("010으로 시작하는 휴대전화번호 11자리를 입력해 주세요.");
+  if (!message) throw new Error("시험 문자 내용을 입력해 주세요.");
+
+  const resultContainer = form.parentElement?.querySelector("[data-sms-test-result]");
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = action === "send_test" ? "실제 발송 중..." : "연동 확인 중...";
+  }
+  try {
+    const result = await invokeSmsDispatch({
+      action,
+      recipient_phone: recipientPhone,
+      message,
+      confirmation: action === "send_test" ? "SEND_REAL_SMS" : undefined,
+    });
+    if (resultContainer) {
+      const outcome = result.ok
+        ? action === "send_test" ? "실제 테스트 문자가 정상 접수되었습니다." : "시험 모드 요청이 정상 처리되었습니다."
+        : result.message || "SkySMS 설정을 확인해 주세요.";
+      resultContainer.hidden = false;
+      resultContainer.dataset.status = result.ok ? "success" : "error";
+      resultContainer.innerHTML = `<strong>${escapeHtml(outcome)}</strong><span>응답 코드 ${escapeHtml(result.code || "-")} · ${escapeHtml(result.message_type || "-")} ${Number(result.message_bytes || 0)}바이트</span>`;
+    }
+    showToast(result.ok ? "SkySMS 연동 응답을 확인했습니다." : result.message || "SkySMS 설정을 확인해 주세요.");
+  } finally {
+    if (submitButton && document.body.contains(submitButton)) {
+      submitButton.disabled = false;
+      submitButton.dataset.confirmRealSms = "false";
+      submitButton.textContent = action === "send_test" ? "실제 테스트 문자 보내기" : "시험 모드 확인";
+    }
+  }
+}
+
 async function loadOrganizationAdmins() {
   if (!isOwner()) return;
   state.organizationAdminsLoading = true;
@@ -2417,6 +2495,37 @@ function renderDemographicSummary() {
   `;
 }
 
+function renderSkySmsTest() {
+  if (!isOwner()) return "";
+  return `
+    <section class="section sms-test-panel" style="margin-top: 16px;">
+      <div class="row-top">
+        <div>
+          <h3>SkySMS 문자 연동 시험</h3>
+          <p class="muted">시험 모드는 문자를 발송하지 않고 인증키·회원 아이디·발신번호·발송 IP 설정을 확인합니다.</p>
+        </div>
+        <span class="badge gray">전체 관리자 전용</span>
+      </div>
+      <form data-sms-test-form>
+        <div class="admin-grid application-contact-grid">
+          <label>수신 휴대전화번호
+            <input name="recipient_phone" type="tel" required inputmode="numeric" pattern="[0-9-]*" maxlength="13" placeholder="010-0000-0000" autocomplete="off">
+          </label>
+          <label>시험 문자 내용
+            <input name="message" required maxlength="1000" value="${escapeHtml(SMS_TEST_MESSAGE)}">
+          </label>
+        </div>
+        <div class="actions" style="margin-top: 12px;">
+          <button class="btn small" type="submit" name="sms_action" value="provider_test">시험 모드 확인</button>
+          <button class="btn small danger" type="submit" name="sms_action" value="send_test" data-real-sms-submit>실제 테스트 문자 보내기</button>
+        </div>
+        <p class="media-upload-note">실제 발송 버튼은 두 번 눌러야 실행되며 SkySMS 잔액이 차감됩니다.</p>
+      </form>
+      <div class="sms-test-result" data-sms-test-result aria-live="polite" hidden></div>
+    </section>
+  `;
+}
+
 function renderDashboard() {
   const publicReviews = visibleReviews().length;
   const hiddenReviews = state.reviews.length - publicReviews;
@@ -2435,6 +2544,7 @@ function renderDashboard() {
       <div class="section"><h3>후기 관리</h3><p>공개 후기 ${publicReviews}개 · 숨김 ${hiddenReviews}개</p></div>
       ${isOwner() ? `<div class="section"><h3>관리자 전용 추첨</h3><p>추첨 기록 ${state.draws.length}건 · 당첨 이력 ${state.winners.length}건</p></div>` : ""}
     </div>
+    ${renderSkySmsTest()}
     ${renderDashboardMetricSection("organization")}
     ${renderDashboardMetricSection("instructor")}
     ${renderDemographicSummary()}
@@ -4938,6 +5048,11 @@ function bindEvents() {
   });
 
   document.body.addEventListener("input", (event) => {
+    const smsTestPhone = event.target.closest("[data-sms-test-form] input[name='recipient_phone']");
+    if (smsTestPhone) {
+      smsTestPhone.value = formatMobilePhone(smsTestPhone.value);
+      return;
+    }
     const guestWalkInPhone = event.target.closest("[data-guest-walk-in-form] input[name='phone']");
     if (guestWalkInPhone) {
       guestWalkInPhone.value = formatMobilePhone(guestWalkInPhone.value);
@@ -5009,6 +5124,7 @@ function bindEvents() {
       if (event.target.matches("[data-attendance-document-form]")) return await saveAttendanceDocument(event);
       if (event.target.matches("[data-walk-in-search-form]")) return await searchWalkInCandidates(event);
       if (event.target.matches("[data-guest-walk-in-form]")) return await addGuestWalkInAttendee(event);
+      if (event.target.matches("[data-sms-test-form]")) return await handleSmsTestSubmit(event);
       if (event.target.id === "drawForm") return await runDraw(event);
     } catch (error) {
       showToast(`작업 실패: ${error.message}`);
