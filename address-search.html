@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>거주지역 주소검색</title>
+  <style>
+    html, body, #postcode { width: 100%; height: 100%; margin: 0; }
+    body { font-family: Arial, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+    .status { box-sizing: border-box; padding: 20px; color: #374151; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <div id="postcode"><p class="status">주소검색을 불러오는 중입니다.</p></div>
+  <script src="https://t1.kakaocdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
+  <script type="module" src="./assets/address-search.js"></script>
+</body>
+</html>

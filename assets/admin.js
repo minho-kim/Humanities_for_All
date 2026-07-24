@@ -28,6 +28,7 @@ const state = {
   isPasswordRecovery: false,
   applicationFilters: {
     courseId: "",
+    applicantQuery: "",
   },
   expectationFilters: {
     courseId: "",
@@ -143,6 +144,7 @@ const ATTENDANCE_DOCUMENT_TYPES = new Map([
 ]);
 const ATTENDANCE_DOCUMENT_MAX_BYTES = 15 * 1024 * 1024;
 const ADMIN_SEARCH_LIMIT = 10;
+const COURSE_NOTIFICATION_TERMS_VERSION = "2026-07-24-v2";
 const COURSE_PICKER_LIMIT = 12;
 const SMS_TEST_MESSAGE = "[모두의 인문학] 문자 발송 연동 테스트입니다.";
 const rosterNameSorter = new Intl.Collator("ko-KR", {
@@ -868,8 +870,10 @@ function renderReviewKeywordChart() {
 }
 
 function filteredApplications() {
+  const applicantQuery = normalizeSearchText(state.applicationFilters.applicantQuery);
   return activeApplications().filter((application) => {
     if (state.applicationFilters.courseId && application.course_id !== state.applicationFilters.courseId) return false;
+    if (applicantQuery && !normalizeSearchText(application.applicant_name).includes(applicantQuery)) return false;
     return true;
   });
 }
@@ -904,6 +908,28 @@ function activeApplicationForCourseUser(courseId, userId) {
   ));
 }
 
+function renderAdminCourseNotificationPreferences(application) {
+  if (!application || application.status === "cancelled" || application.registration_source === "anonymized") return "";
+  const emailAvailable = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(application.email || ""));
+  const smsAvailable = application.sms_notice_agreed_at
+    && /^010\d{8}$/.test(String(application.phone || "").replace(/\D/g, ""));
+  return `
+    <form data-admin-course-notification-form class="course-notice-form">
+      <input type="hidden" name="application_id" value="${escapeHtml(application.id)}">
+      <div>
+        <strong>교육별 일정 안내</strong>
+        <p class="muted">신청자가 연락해 변경을 요청한 경우에만 이메일·문자를 대신 켜거나 끄세요.</p>
+      </div>
+      <div class="course-notice-controls">
+        <label title="${emailAvailable ? "" : "신청자 이메일이 없습니다."}"><span><input type="checkbox" name="email_enabled" ${application.email_course_notice_enabled === true ? "checked" : ""} ${emailAvailable ? "" : "disabled"}> 이메일</span></label>
+        <label title="${smsAvailable ? "" : "유효한 010 번호 또는 문자 안내 동의를 확인하지 못했습니다."}"><span><input type="checkbox" name="sms_enabled" ${application.sms_course_notice_enabled === true ? "checked" : ""} ${smsAvailable ? "" : "disabled"}> 문자</span></label>
+      </div>
+      <label class="consent-check"><span><input type="checkbox" name="participant_request_confirmed" required style="width:auto;min-height:auto;"> 신청자의 알림 설정 변경 요청을 확인했습니다.</span></label>
+      <div class="actions"><button class="btn small secondary" type="submit">알림 설정 저장</button><span class="muted">관리자·변경 전후 값·시각이 감사 기록에 남습니다.</span></div>
+    </form>
+  `;
+}
+
 function renderApplicationRow(application) {
   const attendanceConfirmed = Boolean(application.attendance_confirmed_at);
   const course = courseById(application.course_id);
@@ -935,7 +961,8 @@ function renderApplicationRow(application) {
       <div class="muted">${escapeHtml(sourceLabel)}일 ${escapeHtml(shortDate(application.created_at))}</div>
       <p class="muted">이메일: ${escapeHtml(application.email || "없음")} · 전화: ${escapeHtml(application.phone || "없음")}</p>
       ${application.note ? `<p><strong>기대평 / 강사에게 하고 싶은 질문</strong><br>${escapeHtml(application.note)}</p>` : ""}
-      <p class="muted">개인정보·이메일·문자 안내 동의 완료</p>
+      <p class="muted">개인정보 수집 동의 완료 · 교육별 선택 안내: 이메일 ${application.email_course_notice_enabled === true ? "수신" : "미수신"}, 문자 ${application.sms_course_notice_enabled === true ? "수신" : "미수신"}</p>
+      ${renderAdminCourseNotificationPreferences(application)}
       <div class="actions">
         ${attendanceConfirmed
           ? `<span class="badge green">참석 확인 ${escapeHtml(shortDate(application.attendance_confirmed_at))}</span>
@@ -3403,6 +3430,14 @@ function renderWalkInAttendeeSection(courseId) {
   `;
 }
 
+function applyApplicationNameSearch(event) {
+  event.preventDefault();
+  const form = getSubmitForm(event);
+  if (!form) return;
+  state.applicationFilters.applicantQuery = String(form.elements.applicant_query?.value || "").trim();
+  renderApplications();
+}
+
 function renderApplications() {
   const applications = filteredApplications();
   let groups = applicationGroups(applications);
@@ -3422,6 +3457,15 @@ function renderApplications() {
     <div class="section" style="margin: 12px 0 14px;">
       <h3>교육별 보기</h3>
       ${renderCourseFilterControl("application", state.applicationFilters.courseId, { emptyLabel: "전체 교육" })}
+      <form data-application-name-search-form style="margin-top: 12px;">
+        <div class="admin-grid">
+          <label>참가자 이름 검색<input name="applicant_query" type="search" value="${escapeHtml(state.applicationFilters.applicantQuery)}" placeholder="이름 일부 또는 전체" autocomplete="off"></label>
+        </div>
+        <div class="actions" style="margin-top: 10px;">
+          <button class="btn small" type="submit">이름 검색</button>
+          ${state.applicationFilters.applicantQuery ? `<button class="btn small secondary" type="button" data-clear-applicant-search>이름 검색 초기화</button>` : ""}
+        </div>
+      </form>
       <div class="actions" style="margin-top: 12px;">
         ${applicationCountBadges(applications)}
       </div>
@@ -4424,6 +4468,48 @@ async function updateReportStatus(reportId, status) {
   render();
 }
 
+async function saveAdminCourseNotificationPreferences(event) {
+  event.preventDefault();
+  const form = getSubmitForm(event);
+  if (!form) return;
+  const applicationId = String(form.elements.application_id?.value || "");
+  const application = state.applications.find((item) => item.id === applicationId);
+  if (!application) throw new Error("알림을 변경할 교육 신청을 찾지 못했습니다.");
+  if (form.elements.participant_request_confirmed?.checked !== true) {
+    throw new Error("신청자의 알림 설정 변경 요청을 확인해 주세요.");
+  }
+
+  const submitButton = form.querySelector("button[type='submit']");
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "저장 중...";
+  }
+  try {
+    const { data, error } = await supabase.rpc("admin_set_course_notification_preferences", {
+      p_application_id: applicationId,
+      p_email_enabled: form.elements.email_enabled?.checked === true,
+      p_sms_enabled: form.elements.sms_enabled?.checked === true,
+      p_participant_request_confirmed: true,
+      p_terms_version: COURSE_NOTIFICATION_TERMS_VERSION,
+    });
+    if (error) throw error;
+    const result = data || {};
+    Object.assign(application, {
+      email_course_notice_enabled: result.email_enabled === true,
+      sms_course_notice_enabled: result.sms_enabled === true,
+      course_notice_preferences_updated_at: result.updated_at || new Date().toISOString(),
+      course_notice_terms_version: COURSE_NOTIFICATION_TERMS_VERSION,
+    });
+    renderApplications();
+    showToast("신청자 요청에 따른 교육별 알림 설정을 저장하고 감사 기록을 남겼습니다.");
+  } finally {
+    if (submitButton && document.body.contains(submitButton)) {
+      submitButton.disabled = false;
+      submitButton.textContent = "알림 설정 저장";
+    }
+  }
+}
+
 async function confirmApplicationAttendance(applicationId) {
   const application = state.applications.find((item) => item.id === applicationId);
   const course = courseById(application?.course_id);
@@ -4656,6 +4742,7 @@ function bindEvents() {
     const reviewButton = event.target.closest("[data-review-action]");
     const deleteReviewButton = event.target.closest("[data-delete-review-admin]");
     const clearApplicationNoteButton = event.target.closest("[data-clear-application-note-admin]");
+    const clearApplicantSearchButton = event.target.closest("[data-clear-applicant-search]");
     const reportStatusButton = event.target.closest("[data-report-status]");
     const attendanceButton = event.target.closest("[data-confirm-attendance]");
     const unconfirmAttendanceButton = event.target.closest("[data-unconfirm-attendance]");
@@ -4682,6 +4769,11 @@ function bindEvents() {
     const downloadDashboardStatsButton = event.target.closest("[data-download-dashboard-stats]");
     const confirmChangeNotificationButton = event.target.closest("[data-confirm-change-notification]");
     const closeAdminNoticeButton = event.target.closest("[data-close-admin-notice]");
+    if (clearApplicantSearchButton) {
+      state.applicationFilters.applicantQuery = "";
+      renderApplications();
+      return;
+    }
     if (confirmChangeNotificationButton) {
       const form = document.getElementById(confirmChangeNotificationButton.dataset.confirmChangeNotification);
       closeModal(elements.adminNoticeModal);
@@ -5220,6 +5312,8 @@ function bindEvents() {
       if (event.target.id === "courseForm") return await saveCourse(event);
       if (event.target.id === "archiveForm") return await saveArchive(event);
       if (event.target.id === "organizationAdminForm") return await inviteOrganizationAdmin(event);
+      if (event.target.matches("[data-application-name-search-form]")) return applyApplicationNameSearch(event);
+      if (event.target.matches("[data-admin-course-notification-form]")) return await saveAdminCourseNotificationPreferences(event);
       if (event.target.matches("[data-attendance-document-form]")) return await saveAttendanceDocument(event);
       if (event.target.matches("[data-walk-in-search-form]")) return await searchWalkInCandidates(event);
       if (event.target.matches("[data-guest-walk-in-form]")) return await addGuestWalkInAttendee(event);

@@ -29,6 +29,12 @@ const state = {
   expectations: [],
   myReviews: [],
   applications: [],
+  interestSubscriptions: [],
+  interestOptions: {
+    instructors: [],
+    topics: [],
+  },
+  interestSearch: "",
   composedCourses: [],
   landingCourses: [],
   stats: {
@@ -110,10 +116,13 @@ const STATUS_SYNC_TIMEOUT_MS = 4000;
 const SESSION_TIMEOUT_MS = 2500;
 const APPLICATION_TERMS_VERSION = "2026-07-24-v6";
 const DEMOGRAPHICS_TERMS_VERSION = "2026-07-24-v3";
+const INTEREST_NOTIFICATION_CONSENT_VERSION = "2026-07-24-v1";
+const COURSE_NOTIFICATION_TERMS_VERSION = "2026-07-24-v2";
 const GUEST_CONTACT_SESSION_KEY = "humanities-guest-contact";
 const GUEST_ACCESS_TOKEN_SESSION_KEY = "humanities-guest-access-tokens";
 const DEMOGRAPHIC_BANNER_DISMISS_KEY = "humanities-demographic-banner-dismissed";
 const OAUTH_RETURN_STATE_KEY = "humanities-google-oauth-return";
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 let supplementaryLoadSequence = 0;
 let supabaseClientPromise = null;
 let residenceSearchPopup = null;
@@ -705,7 +714,7 @@ async function loadGuestAccessForCourse(courseId, { force = false } = {}) {
   state.guestAccessByCourse[courseId] = { loading: true };
   try {
     const supabase = await getSupabaseClient();
-    const { data, error } = await supabase.rpc("get_guest_course_access_v3", {
+    const { data, error } = await supabase.rpc("get_guest_course_access_v4", {
       p_course_id: courseId,
       p_access_token: accessToken,
     });
@@ -1018,6 +1027,9 @@ function clearApplicationState() {
   state.demographics = null;
   state.applications = [];
   state.myReviews = [];
+  state.interestSubscriptions = [];
+  state.interestOptions = { instructors: [], topics: [] };
+  state.interestSearch = "";
 }
 
 async function loadApplicationState(supabase) {
@@ -1026,7 +1038,14 @@ async function loadApplicationState(supabase) {
     return;
   }
 
-  const [profileResult, demographicsResult, applicationsResult, myReviewsResult] = await Promise.allSettled([
+  const [
+    profileResult,
+    demographicsResult,
+    applicationsResult,
+    myReviewsResult,
+    interestSubscriptionsResult,
+    interestOptionsResult,
+  ] = await Promise.allSettled([
     supabase
       .from("applicant_profiles")
       .select("user_id,applicant_name,phone,privacy_agreed_at,sms_notice_agreed_at,terms_version,updated_at")
@@ -1042,6 +1061,8 @@ async function loadApplicationState(supabase) {
       .select("*")
       .order("created_at", { ascending: false }),
     supabase.rpc("get_my_reviews"),
+    supabase.rpc("get_my_interest_subscriptions"),
+    supabase.rpc("get_interest_subscription_options"),
   ]);
 
   if (profileResult.status === "fulfilled" && !profileResult.value.error) {
@@ -1070,6 +1091,28 @@ async function loadApplicationState(supabase) {
   } else {
     console.warn("[모두의 인문학] 내 후기 내역 확인 지연", myReviewsResult.reason || myReviewsResult.value?.error);
     state.myReviews = [];
+  }
+
+  if (interestSubscriptionsResult.status === "fulfilled" && !interestSubscriptionsResult.value.error) {
+    state.interestSubscriptions = (interestSubscriptionsResult.value.data || []).map((subscription) => ({
+      ...subscription,
+      email_enabled: subscription.email_enabled === true,
+      sms_enabled: subscription.sms_enabled === true,
+    }));
+  } else {
+    console.warn("[모두의 인문학] 관심 알림 설정 확인 지연", interestSubscriptionsResult.reason || interestSubscriptionsResult.value?.error);
+    state.interestSubscriptions = [];
+  }
+
+  if (interestOptionsResult.status === "fulfilled" && !interestOptionsResult.value.error) {
+    const options = interestOptionsResult.value.data || {};
+    state.interestOptions = {
+      instructors: Array.isArray(options.instructors) ? options.instructors : [],
+      topics: Array.isArray(options.topics) ? options.topics : [],
+    };
+  } else {
+    console.warn("[모두의 인문학] 관심 알림 대상 확인 지연", interestOptionsResult.reason || interestOptionsResult.value?.error);
+    state.interestOptions = { instructors: [], topics: [] };
   }
 }
 
@@ -1642,11 +1685,33 @@ function renderApplicationHistory() {
             <p class="muted">신청일 ${escapeHtml(shortDate(application.created_at))} · 신청자 ${escapeHtml(application.applicant_name || "")}</p>
             ${isAttendanceConfirmed(application) ? `<p class="muted">참석 인증: ${escapeHtml(shortDate(application.attendance_confirmed_at))}</p>` : ""}
             ${application.note ? `<p><strong>기대평 / 강사에게 하고 싶은 질문</strong><br>${escapeHtml(application.note)}</p>` : ""}
+            ${renderCourseNotificationPreferences(application)}
             ${course ? `<button class="btn small secondary" type="button" data-open-course="${course.id}">교육 보기</button>` : ""}
           </div>
         `;
       }).join("")}
     </div>
+  `;
+}
+
+function renderCourseNotificationPreferences(application) {
+  if (!application || isCancelledApplication(application)) return "";
+  const emailEnabled = application.email_course_notice_enabled !== false;
+  const smsEnabled = application.sms_course_notice_enabled !== false;
+  return `
+    <form data-course-notification-form class="course-notice-form">
+      <input type="hidden" name="application_id" value="${escapeHtml(application.id)}">
+      <div>
+        <strong>이 교육의 일정 안내</strong>
+        <p class="muted">교육 정보 변경과 교육 시작 전 안내를 받을 채널을 선택하세요.</p>
+      </div>
+      <div class="course-notice-controls">
+        <label><span><input type="checkbox" name="email_enabled" ${emailEnabled ? "checked" : ""}> 이메일</span></label>
+        <label><span><input type="checkbox" name="sms_enabled" ${smsEnabled ? "checked" : ""}> 문자</span></label>
+        <button class="btn small secondary" type="submit">알림 저장</button>
+      </div>
+      <p class="muted">체크를 끄고 저장하면 이후 해당 채널의 변경·리마인드 안내는 발송하지 않습니다. 신청·취소 완료와 교육 취소 같은 필수 운영 안내는 별도로 발송될 수 있습니다.</p>
+    </form>
   `;
 }
 
@@ -1899,6 +1964,123 @@ function renderDemographicBanner() {
   `;
 }
 
+function interestOptionId(targetType, targetKey) {
+  return `${targetType}:${targetKey}`;
+}
+
+function allInterestOptions() {
+  return [
+    ...(state.interestOptions.instructors || []),
+    ...(state.interestOptions.topics || []),
+  ];
+}
+
+function renderInterestSearchResults(query = state.interestSearch) {
+  const normalizedQuery = String(query || "").trim().toLocaleLowerCase("ko-KR");
+  if (!normalizedQuery) {
+    return `<p class="muted">강사명이나 주제를 입력하면 추가할 대상을 보여드립니다.</p>`;
+  }
+
+  const selectedIds = new Set(state.interestSubscriptions.map((subscription) => (
+    interestOptionId(subscription.target_type, subscription.target_key)
+  )));
+  const results = allInterestOptions()
+    .filter((option) => !selectedIds.has(interestOptionId(option.target_type, option.target_key)))
+    .filter((option) => [option.label, option.description, option.target_type === "instructor" ? "강사" : "주제"]
+      .join(" ")
+      .toLocaleLowerCase("ko-KR")
+      .includes(normalizedQuery))
+    .slice(0, 10);
+
+  if (!results.length) return `<p class="muted">추가할 수 있는 강사나 주제를 찾지 못했습니다.</p>`;
+  return results.map((option) => `
+    <button class="interest-search-result" type="button"
+      data-add-interest
+      data-target-type="${escapeHtml(option.target_type)}"
+      data-target-key="${escapeHtml(option.target_key)}">
+      <span>
+        <strong>${escapeHtml(option.label)}</strong>
+        ${option.description ? `<small>${escapeHtml(option.description)}</small>` : ""}
+      </span>
+      <span class="badge gray">${option.target_type === "instructor" ? "강사" : "주제"}</span>
+    </button>
+  `).join("");
+}
+
+function renderInterestSubscriptionRows() {
+  const hasSmsPhone = /^010\d{8}$/.test(String(state.applicantProfile?.phone || "").replace(/\D/g, ""));
+  if (!state.interestSubscriptions.length) {
+    return `<div class="empty">등록한 관심 강사나 주제가 없습니다.</div>`;
+  }
+
+  return state.interestSubscriptions.map((subscription) => {
+    const smsEnabled = hasSmsPhone && subscription.sms_enabled === true;
+    return `
+      <article class="interest-subscription-row"
+        data-interest-row
+        data-target-type="${escapeHtml(subscription.target_type)}"
+        data-target-key="${escapeHtml(subscription.target_key)}">
+        <div class="interest-subscription-target">
+          <span class="badge gray">${subscription.target_type === "instructor" ? "강사" : "주제"}</span>
+          <span>
+            <strong>${escapeHtml(subscription.target_label || subscription.target_key)}</strong>
+            ${subscription.target_description ? `<small>${escapeHtml(subscription.target_description)}</small>` : ""}
+          </span>
+        </div>
+        <div class="interest-channel-controls" aria-label="${escapeHtml(subscription.target_label || subscription.target_key)} 알림 채널">
+          <label><span><input type="checkbox" data-interest-channel="email" ${subscription.email_enabled ? "checked" : ""}> 이메일</span></label>
+          <label title="${hasSmsPhone ? "" : "교육 신청 시 저장한 010 휴대전화번호가 필요합니다."}"><span><input type="checkbox" data-interest-channel="sms" ${smsEnabled ? "checked" : ""} ${hasSmsPhone ? "" : "disabled"}> 문자</span></label>
+          <button class="btn small secondary" type="button" data-remove-interest>삭제</button>
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
+function renderInterestNotificationsForm() {
+  const hasSmsPhone = /^010\d{8}$/.test(String(state.applicantProfile?.phone || "").replace(/\D/g, ""));
+  return `
+    <form id="interestNotificationsForm" class="interest-notifications-form">
+      <div class="row-top">
+        <div>
+          <h3>관심 강사·주제 새 교육 알림</h3>
+          <p class="muted">새 교육이 공개되면 다음 오전 10시에 관심 항목과 일치하는 교육을 한 번에 모아 알려드립니다.</p>
+        </div>
+        <span class="badge gray">선택 알림</span>
+      </div>
+      <div class="interest-subscription-list" data-interest-subscription-list>
+        ${renderInterestSubscriptionRows()}
+      </div>
+      ${hasSmsPhone
+        ? `<p class="muted">문자 수신 번호: ${escapeHtml(formatPhoneNumber(state.applicantProfile.phone))}</p>`
+        : `<p class="muted">문자 알림을 선택하려면 먼저 교육을 신청해 010 휴대전화번호를 저장해 주세요. 이메일 알림은 바로 선택할 수 있습니다.</p>`}
+      <div class="interest-search-panel">
+        <label>관심 강사·주제 추가
+          <input type="search" data-interest-search value="${escapeHtml(state.interestSearch)}" placeholder="예: 김민호, 철학">
+        </label>
+        <div class="interest-search-results" data-interest-search-results aria-live="polite">
+          ${renderInterestSearchResults()}
+        </div>
+      </div>
+      <details class="privacy-details">
+        <summary>관심 알림 수신 동의 안내</summary>
+        <ul class="plain-list">
+          <li><strong>목적·내용</strong><br>선택한 강사 또는 주제의 새 교육 안내</li>
+          <li><strong>수신 채널</strong><br>항목별로 이메일, 문자 또는 두 채널 모두 선택할 수 있습니다.</li>
+          <li><strong>이용 정보</strong><br>인증 이메일, 교육 신청 시 저장한 휴대전화번호, 관심 강사·주제, 채널별 동의·철회 시각</li>
+          <li><strong>보유 기간</strong><br>수신 동의 철회 또는 계정 삭제 때까지 보유합니다. 발송 이력은 중복 방지와 장애 확인을 위해 필요한 기간 동안 제한적으로 보관합니다.</li>
+          <li><strong>선택 동의</strong><br>동의하지 않거나 언제든 해지해도 교육 검색·신청·참여에 불이익이 없습니다.</li>
+        </ul>
+      </details>
+      <label class="consent-check"><span><input name="interest_consent" type="checkbox" style="width:auto;min-height:auto;"> 선택한 채널로 새 교육 알림을 받는 데 동의합니다.</span></label>
+      <div class="actions">
+        <button class="btn small" type="submit">관심 알림 설정 저장</button>
+        <span class="muted">모든 항목을 삭제하고 저장하면 전체 해지됩니다.</span>
+      </div>
+    </form>
+  `;
+}
+
 function openMyInfo() {
   if (!state.user) {
     openModal(elements.loginModal);
@@ -1926,6 +2108,9 @@ function openMyInfo() {
         ` : `<p class="muted">아직 저장된 신청자 정보가 없습니다. 교육을 신청하면 다음 신청 때 자동 입력됩니다.</p>`}
       </section>
     </div>
+    <section class="section" id="interestNotificationsSection" style="margin-top: 14px;">
+      ${renderInterestNotificationsForm()}
+    </section>
     <section class="section" id="demographicsSection" style="margin-top: 14px;">
       ${renderDemographicsForm()}
     </section>
@@ -2064,7 +2249,7 @@ function applicationPrivacyConsentHtml({ guest = false } = {}) {
           <li><strong>수집·이용 목적</strong><br>교육 신청 접수, 신청자 본인 확인, 신청 확인과 교육 전 리마인드, 일정·장소 변경 및 취소 안내, 참석 확인, 신청 이력 확인, 운영 문의 응대</li>
           <li><strong>수집 항목</strong><br>필수: 신청자명, 휴대전화번호${guest ? " · 선택: 이메일, 기대평 또는 강사에게 하고 싶은 질문" : ", 인증 이메일 · 선택: 기대평 또는 강사에게 하고 싶은 질문"}. 현장 참석 명단을 작성하는 경우 성명, 휴대전화번호 끝 4자리와 서명을 별도로 수집할 수 있습니다.</li>
           <li><strong>공개되는 선택 내용</strong><br>기대평 또는 강사에게 하고 싶은 질문을 작성하면 작성자 표시를 일부 가린 뒤 공개 페이지에 게시합니다. 연락처나 사적인 정보는 입력하지 마세요.</li>
-          <li><strong>운영 안내 방법</strong><br>휴대전화번호로 문자를 발송할 수 있고${guest ? ", 선택 입력한 이메일은 운영 문의 응대 시 연락 목적으로 사용할 수 있습니다" : ", 인증 이메일로도 신청 확인과 운영 안내를 발송할 수 있습니다"}. 광고성 정보는 별도 동의 없이 발송하지 않습니다.</li>
+          <li><strong>운영 안내 방법</strong><br>휴대전화번호로 문자를 발송할 수 있고${guest ? ", 이메일을 선택 입력하고 교육별 이메일 안내를 켜면 일정 변경·리마인드 운영 안내를 발송할 수 있습니다" : ", 인증 이메일로도 신청 확인과 운영 안내를 발송할 수 있습니다"}. 광고성 정보는 별도 동의 없이 발송하지 않습니다.</li>
           <li><strong>신청 개인정보 보유·이용 기간</strong><br>참석 확인된 교육이 있는 경우 마지막 참석 교육 종료일로부터 6개월, 참석 확인 기록이 없는 경우 마지막 신청 교육 종료일 또는 취소일로부터 6개월까지 보관합니다. 이후 이름·전화번호·이메일과 직접적인 신청자 식별정보를 파기하고 통계에 필요한 비식별 기록만 남깁니다. 진행 전이거나 최근에 신청한 교육이 있으면 해당 교육을 기준으로 기간을 다시 계산합니다.</li>
           <li><strong>공개 콘텐츠 보유기간</strong><br>기대평·질문과 공개 후기는 작성자 또는 관리자가 삭제하거나 서비스가 종료될 때까지 보관합니다. 작성자의 수정·삭제 권한을 유지하는 데 필요한 최소한의 계정 연결 또는 비회원 서명 확인정보도 해당 콘텐츠와 함께 보관합니다. 관계 법령에 따라 별도 보관이 필요한 경우에는 해당 기간 동안 분리 보관합니다.</li>
           <li><strong>만 14세 이상 이용</strong><br>온라인 신청은 만 14세 이상만 이용할 수 있습니다. 생년월일이나 유료 본인인증 정보를 추가로 수집하지 않고 신청자가 직접 확인하는 방식이며, 실제 연령을 인증하는 절차는 아닙니다.</li>
@@ -2078,6 +2263,27 @@ function applicationPrivacyConsentHtml({ guest = false } = {}) {
       <label style="margin-top: 8px;"><span><input name="review_request_agreement" type="checkbox" style="width:auto;min-height:auto;"> <strong>선택:</strong> 참석 확인 후 교육 종료 2일 뒤 후기 작성 요청 문자 1회를 받는 데 동의합니다.</span></label>
       <p class="muted">선택 동의를 하지 않아도 교육 신청·참여와 참석 확인 후 후기 작성에는 불이익이 없습니다.</p>
     </div>
+  `;
+}
+
+function renderGuestCourseNotificationPreferences(course, access) {
+  if (!course || !access || access.application_status === "cancelled") return "";
+  const emailAvailable = access.email_available === true;
+  const smsAvailable = access.sms_available === true;
+  return `
+    <form data-guest-course-notification-form class="course-notice-form">
+      <input type="hidden" name="course_id" value="${escapeHtml(course.id)}">
+      <div>
+        <strong>이 교육의 일정 안내</strong>
+        <p class="muted">교육 정보 변경과 교육 시작 전 안내를 받을 채널을 선택하세요.</p>
+      </div>
+      <div class="course-notice-controls">
+        <label title="${emailAvailable ? "" : "신청할 때 입력한 이메일이 필요합니다."}"><span><input type="checkbox" name="email_enabled" ${access.email_course_notice_enabled === true ? "checked" : ""} ${emailAvailable ? "" : "disabled"}> 이메일</span></label>
+        <label title="${smsAvailable ? "" : "신청할 때 입력한 010 휴대전화번호가 필요합니다."}"><span><input type="checkbox" name="sms_enabled" ${access.sms_course_notice_enabled === true ? "checked" : ""} ${smsAvailable ? "" : "disabled"}> 문자</span></label>
+        <button class="btn small secondary" type="submit">알림 저장</button>
+      </div>
+      <p class="muted">체크를 끄고 저장하면 이후 해당 채널의 변경·리마인드 안내는 발송하지 않습니다. 확인 링크를 잃은 경우 운영자에게 변경을 요청할 수 있습니다.</p>
+    </form>
   `;
 }
 
@@ -2101,6 +2307,7 @@ function renderGuestApplicationForm(course) {
           <p><strong>내 기대평 / 강사에게 하고 싶은 질문</strong><br>${escapeHtml(expectationBody)}</p>
           <button class="btn small danger" type="button" data-delete-guest-application-note>기대평·질문 삭제</button>
         ` : ""}
+        ${renderGuestCourseNotificationPreferences(course, activeGuestAccess)}
         ${attendanceConfirmed ? `<p class="muted">참석 인증이 완료되어 후기를 작성할 수 있습니다.</p>` : ""}
         ${canCancelApplication ? `<button class="btn small secondary" type="button" data-cancel-guest-application>신청 취소</button>` : ""}
       </div>
@@ -2122,6 +2329,15 @@ function renderGuestApplicationForm(course) {
       </div>
       <label style="margin-top: 10px;">이메일(선택)<input name="email" type="email" value="${escapeHtml(contact.email || "")}" autocomplete="email" maxlength="320" placeholder="운영 문의 연락용 이메일"></label>
       <label style="margin-top: 10px;">기대평 / 강사에게 하고 싶은 질문(선택)<textarea name="note" maxlength="1000" placeholder="교육에서 기대하는 점이나 강사에게 미리 묻고 싶은 내용을 적어주세요."></textarea><small class="muted">작성 내용은 작성자 표시를 일부 가린 뒤 공개됩니다. 연락처나 사적인 정보는 적지 마세요.</small></label>
+      <fieldset class="course-notice-signup-options">
+        <legend>이 교육의 일정 안내</legend>
+        <p class="muted">교육 정보 변경과 교육 시작 전 안내를 받을 채널을 선택하세요. 신청 후 확인 링크를 연 브라우저에서 다시 끌 수 있습니다.</p>
+        <div class="course-notice-controls">
+          <label><span><input type="checkbox" name="course_email_notice" ${contact.email ? "checked" : ""}> 이메일</span></label>
+          <label><span><input type="checkbox" name="course_sms_notice" checked> 문자</span></label>
+        </div>
+        <p class="muted">이메일을 선택하려면 위 이메일 입력란도 작성해 주세요. 링크를 잃은 경우 운영자에게 설정 변경을 요청할 수 있습니다.</p>
+      </fieldset>
       ${applicationPrivacyConsentHtml({ guest: true })}
       <div class="actions" style="margin-top: 12px;">
         <button class="btn" type="submit">${isReapplication ? "비회원으로 다시 신청하기" : "비회원으로 신청하기"}</button>
@@ -2165,6 +2381,7 @@ function renderApplicationForm(course) {
           <span class="badge ${attendanceConfirmed ? "green" : "gray"}">${attendanceConfirmed ? "참석 인증" : "신청"}</span>
         </div>
         <p class="muted">신청자: ${escapeHtml(existingApplication.applicant_name)} · 연락처: ${escapeHtml(existingApplication.phone)}</p>
+        ${renderCourseNotificationPreferences(existingApplication)}
         ${renderApplicationNoteForm(existingApplication, course)}
         ${attendanceConfirmed
           ? `<p class="muted">참석 인증이 완료되어 후기를 작성할 수 있습니다.</p>`
@@ -2184,6 +2401,8 @@ function renderApplicationForm(course) {
   const defaultName = state.applicantProfile?.applicant_name || cancelledApplication?.applicant_name || "";
   const defaultPhone = formatPhoneNumber(state.applicantProfile?.phone || cancelledApplication?.phone || "");
   const defaultNote = cancelledApplication?.note || "";
+  const defaultEmailCourseNotice = cancelledApplication?.email_course_notice_enabled !== false;
+  const defaultSmsCourseNotice = cancelledApplication?.sms_course_notice_enabled !== false;
   return `
     <form id="applicationForm">
       <input type="hidden" name="course_id" value="${escapeHtml(course.id)}">
@@ -2206,6 +2425,14 @@ function renderApplicationForm(course) {
       </div>
       <label style="margin-top: 10px;">이메일<input value="${escapeHtml(state.user.email || "")}" readonly></label>
       <label style="margin-top: 10px;">기대평 / 강사에게 하고 싶은 질문(선택)<textarea name="note" placeholder="교육에서 기대하는 점이나 강사에게 미리 묻고 싶은 내용을 적어주세요.">${escapeHtml(defaultNote)}</textarea><small class="muted">작성 내용은 작성자 표시를 일부 가린 뒤 공개됩니다. 연락처나 사적인 정보는 적지 마세요.</small></label>
+      <fieldset class="course-notice-signup-options">
+        <legend>이 교육의 일정 안내</legend>
+        <p class="muted">교육 정보 변경과 교육 시작 전 안내를 받을 채널을 선택하세요. 신청 후에도 교육 상세 또는 나의 정보에서 끌 수 있습니다.</p>
+        <div class="course-notice-controls">
+          <label><span><input type="checkbox" name="course_email_notice" ${defaultEmailCourseNotice ? "checked" : ""}> 이메일</span></label>
+          <label><span><input type="checkbox" name="course_sms_notice" ${defaultSmsCourseNotice ? "checked" : ""}> 문자</span></label>
+        </div>
+      </fieldset>
       ${applicationPrivacyConsentHtml()}
       <div class="actions" style="margin-top: 12px;">
         <button class="btn" type="submit">${cancelledApplication ? "교육 다시 신청하기" : "교육 신청하기"}</button>
@@ -2419,9 +2646,16 @@ async function handleApplicationSubmit(event) {
     return;
   }
   const reviewRequestAgreed = formData.get("review_request_agreement") === "on";
+  const emailCourseNoticeEnabled = formData.get("course_email_notice") === "on";
+  const smsCourseNoticeEnabled = formData.get("course_sms_notice") === "on";
 
   if (applicationMode === "guest") {
     const email = String(formData.get("email") || "").trim().toLowerCase();
+    if (emailCourseNoticeEnabled && !email) {
+      showToast("이메일 일정 안내를 받으려면 이메일을 입력해 주세요.");
+      form.elements.email?.focus();
+      return;
+    }
     const submitButton = form.querySelector("button[type='submit']");
     if (submitButton) {
       submitButton.disabled = true;
@@ -2446,9 +2680,24 @@ async function handleApplicationSubmit(event) {
       }
 
       rememberGuestContact({ applicant_name: applicantName, phone, email });
+      let preferenceSaveFailed = false;
+      const { error: preferenceError } = await supabase.rpc("set_guest_course_notification_preferences_v1", {
+        p_course_id: course.id,
+        p_access_token: result.access_token,
+        p_email_enabled: emailCourseNoticeEnabled,
+        p_sms_enabled: smsCourseNoticeEnabled,
+        p_terms_version: COURSE_NOTIFICATION_TERMS_VERSION,
+      });
+      if (preferenceError) {
+        preferenceSaveFailed = true;
+        console.error("Guest course notification preferences save after application failed", preferenceError);
+      }
       state.guestAccessByCourse[course.id] = { ...result, expectation_body: note || null };
+      await loadGuestAccessForCourse(course.id, { force: true });
       if (state.supplementaryLoaded && note) await loadSupplementaryData();
-      showToast(result.result_state === "existing"
+      showToast(preferenceSaveFailed
+        ? "교육 신청은 완료됐지만 일정 알림 설정은 저장하지 못했습니다. 확인 링크 화면에서 다시 저장해 주세요."
+        : result.result_state === "existing"
         ? "이미 접수된 비회원 신청을 확인했습니다."
         : result.result_state === "reapplied"
           ? "비회원 신청을 다시 접수했습니다. 확인 문자를 보내드립니다."
@@ -2501,13 +2750,27 @@ async function handleApplicationSubmit(event) {
     const application = Array.isArray(data) ? data[0] : data;
     if (!application?.application_id) throw new Error("신청 저장 결과를 확인하지 못했습니다.");
 
+    let preferenceSaveFailed = false;
+    const { error: preferenceError } = await supabase.rpc("set_my_course_notification_preferences", {
+      p_application_id: application.application_id,
+      p_email_enabled: emailCourseNoticeEnabled,
+      p_sms_enabled: smsCourseNoticeEnabled,
+      p_terms_version: COURSE_NOTIFICATION_TERMS_VERSION,
+    });
+    if (preferenceError) {
+      preferenceSaveFailed = true;
+      console.error("Course notification preferences save after application failed", preferenceError);
+    }
+
     await loadApplicationState(supabase);
     void requestNotificationDispatch(supabase, "course_application", application.application_id);
-    showToast(application.result_state === "existing"
-      ? "이미 접수된 교육 신청을 확인했습니다."
-      : application.result_state === "reapplied" || cancelledApplication
-        ? "교육을 다시 신청했습니다. 확인 메일과 문자를 보내드립니다."
-        : "교육 신청이 접수되었습니다. 확인 메일과 문자를 보내드립니다.");
+    showToast(preferenceSaveFailed
+      ? "교육 신청은 완료됐지만 일정 알림 설정은 저장하지 못했습니다. 아래 알림 설정을 다시 확인해 주세요."
+      : application.result_state === "existing"
+        ? "이미 접수된 교육 신청과 알림 설정을 확인했습니다."
+        : application.result_state === "reapplied" || cancelledApplication
+          ? "교육을 다시 신청했습니다. 확인 메일과 문자를 보내드립니다."
+          : "교육 신청이 접수되었습니다. 확인 메일과 문자를 보내드립니다.");
     openCourseDetail(course.id);
   } catch (error) {
     if (error?.code === "23505") {
@@ -2526,6 +2789,90 @@ async function handleApplicationSubmit(event) {
     if (submitButton && document.body.contains(submitButton)) {
       submitButton.disabled = false;
       submitButton.textContent = cancelledApplication ? "다시 신청하기" : "신청하기";
+    }
+  }
+}
+
+async function handleCourseNotificationPreferencesSubmit(event) {
+  event.preventDefault();
+  if (!state.user) {
+    openModal(elements.loginModal);
+    return;
+  }
+  const form = getSubmitForm(event);
+  if (!form) return;
+  const applicationId = String(form.elements.application_id?.value || "");
+  const application = state.applications.find((item) => item.id === applicationId && !isCancelledApplication(item));
+  if (!application) {
+    showToast("알림을 변경할 교육 신청을 찾지 못했습니다.");
+    return;
+  }
+
+  const submitButton = form.querySelector("button[type='submit']");
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "저장 중...";
+  }
+  try {
+    const supabase = await getSupabaseClient();
+    const { error } = await supabase.rpc("set_my_course_notification_preferences", {
+      p_application_id: applicationId,
+      p_email_enabled: form.elements.email_enabled?.checked === true,
+      p_sms_enabled: form.elements.sms_enabled?.checked === true,
+      p_terms_version: COURSE_NOTIFICATION_TERMS_VERSION,
+    });
+    if (error) throw error;
+    await loadApplicationState(supabase);
+    if (elements.profileModal.classList.contains("open") && elements.profileEyebrow.textContent === "나의 정보") openMyInfo();
+    if (elements.detailModal.classList.contains("open") && state.activeCourseId) openCourseDetail(state.activeCourseId);
+    showToast("이 교육의 이메일·문자 알림 설정을 저장했습니다.");
+  } catch (error) {
+    console.error("Course notification preferences save failed", error);
+    showToast(error?.message || "교육별 알림 설정을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+  } finally {
+    if (submitButton && document.body.contains(submitButton)) {
+      submitButton.disabled = false;
+      submitButton.textContent = "알림 저장";
+    }
+  }
+}
+
+async function handleGuestCourseNotificationPreferencesSubmit(event) {
+  event.preventDefault();
+  const form = getSubmitForm(event);
+  if (!form) return;
+  const courseId = String(form.elements.course_id?.value || "");
+  const accessToken = validGuestAccessToken(state.guestAccessTokens[courseId]);
+  if (!courseId || !accessToken || !activeGuestAccessForCourse(courseId)) {
+    showToast("비회원 신청 확인 링크를 다시 열어 주세요.");
+    return;
+  }
+
+  const submitButton = form.querySelector("button[type='submit']");
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "저장 중...";
+  }
+  try {
+    const supabase = await getSupabaseClient();
+    const { error } = await supabase.rpc("set_guest_course_notification_preferences_v1", {
+      p_course_id: courseId,
+      p_access_token: accessToken,
+      p_email_enabled: form.elements.email_enabled?.checked === true,
+      p_sms_enabled: form.elements.sms_enabled?.checked === true,
+      p_terms_version: COURSE_NOTIFICATION_TERMS_VERSION,
+    });
+    if (error) throw error;
+    await loadGuestAccessForCourse(courseId, { force: true });
+    if (elements.detailModal.classList.contains("open") && state.activeCourseId === courseId) openCourseDetail(courseId);
+    showToast("이 교육의 이메일·문자 알림 설정을 저장했습니다.");
+  } catch (error) {
+    console.error("Guest course notification preferences save failed", error);
+    showToast(error?.message || "비회원 교육별 알림 설정을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+  } finally {
+    if (submitButton && document.body.contains(submitButton)) {
+      submitButton.disabled = false;
+      submitButton.textContent = "알림 저장";
     }
   }
 }
@@ -3045,6 +3392,122 @@ async function handleDemographicsDelete(button) {
   showToast("선택 이용자 정보를 삭제했습니다.");
 }
 
+function addInterestSubscription(button) {
+  const targetType = String(button.dataset.targetType || "");
+  const targetKey = String(button.dataset.targetKey || "");
+  const option = allInterestOptions().find((item) => (
+    item.target_type === targetType && item.target_key === targetKey
+  ));
+  if (!option) {
+    showToast("추가할 관심 대상을 찾지 못했습니다.");
+    return;
+  }
+  if (state.interestSubscriptions.some((subscription) => (
+    subscription.target_type === targetType && subscription.target_key === targetKey
+  ))) {
+    showToast("이미 추가한 관심 대상입니다.");
+    return;
+  }
+
+  state.interestSubscriptions.push({
+    target_type: option.target_type,
+    target_key: option.target_key,
+    target_label: option.label,
+    target_description: option.description || "",
+    email_enabled: true,
+    sms_enabled: false,
+  });
+  state.interestSearch = "";
+  openMyInfo();
+  window.setTimeout(() => document.querySelector("[data-interest-search]")?.focus(), 0);
+  showToast("관심 대상을 추가했습니다. 채널을 확인한 뒤 설정을 저장해 주세요.");
+}
+
+function removeInterestSubscription(button) {
+  const row = button.closest("[data-interest-row]");
+  if (!row) return;
+  const targetType = row.dataset.targetType || "";
+  const targetKey = row.dataset.targetKey || "";
+  state.interestSubscriptions = state.interestSubscriptions.filter((subscription) => !(
+    subscription.target_type === targetType && subscription.target_key === targetKey
+  ));
+  openMyInfo();
+  showToast("관심 대상을 삭제했습니다. 설정 저장을 누르면 반영됩니다.");
+}
+
+async function handleInterestNotificationsSubmit(event) {
+  event.preventDefault();
+  if (!state.user) {
+    openModal(elements.loginModal);
+    return;
+  }
+  const form = getSubmitForm(event);
+  if (!form) return;
+  const rows = [...form.querySelectorAll("[data-interest-row]")];
+  const subscriptions = rows.map((row) => ({
+    target_type: String(row.dataset.targetType || ""),
+    target_key: String(row.dataset.targetKey || ""),
+    email_enabled: row.querySelector('[data-interest-channel="email"]')?.checked === true,
+    sms_enabled: row.querySelector('[data-interest-channel="sms"]')?.checked === true,
+  }));
+  if (subscriptions.some((subscription) => !subscription.email_enabled && !subscription.sms_enabled)) {
+    showToast("각 관심 항목에서 이메일이나 문자 중 하나 이상을 선택해 주세요. 알림을 받지 않을 항목은 삭제할 수 있습니다.");
+    return;
+  }
+  if (subscriptions.length && form.elements.interest_consent?.checked !== true) {
+    showToast("관심 알림 수신 동의를 확인해 주세요.");
+    form.elements.interest_consent?.focus();
+    return;
+  }
+
+  const submitButton = form.querySelector("button[type='submit']");
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "저장 중...";
+  }
+  try {
+    const supabase = await getSupabaseClient();
+    const { error } = await supabase.rpc("replace_my_interest_subscriptions", {
+      p_subscriptions: subscriptions,
+      p_consent_version: INTEREST_NOTIFICATION_CONSENT_VERSION,
+    });
+    if (error) throw error;
+    await loadApplicationState(supabase);
+    openMyInfo();
+    showToast(subscriptions.length ? "관심 알림 설정을 저장했습니다." : "관심 알림을 모두 해지했습니다.");
+  } catch (error) {
+    console.error("Interest notification settings save failed", error);
+    showToast(error?.message || "관심 알림 설정을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+  } finally {
+    if (submitButton && document.body.contains(submitButton)) {
+      submitButton.disabled = false;
+      submitButton.textContent = "관심 알림 설정 저장";
+    }
+  }
+}
+
+function takeInterestUnsubscribeToken() {
+  const match = window.location.hash.match(/^#unsubscribe-interest=([0-9a-f-]{36})$/i);
+  if (!match || !UUID_PATTERN.test(match[1])) return "";
+  window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#courses`);
+  return match[1];
+}
+
+async function processInterestUnsubscribe(token) {
+  if (!token) return;
+  try {
+    const supabase = await getSupabaseClient();
+    const { data, error } = await supabase.rpc("unsubscribe_interest_notifications", { p_token: token });
+    if (error) throw error;
+    showToast(data === true
+      ? "관심 강사·주제 알림을 모두 해지했습니다."
+      : "해지 링크가 만료되었거나 올바르지 않습니다. 로그인 후 나의 정보에서 설정을 확인해 주세요.");
+  } catch (error) {
+    console.error("Interest notification unsubscribe failed", error);
+    showToast("관심 알림을 해지하지 못했습니다. 로그인 후 나의 정보에서 다시 시도해 주세요.");
+  }
+}
+
 function contentTypeLabel(contentType) {
   if (contentType === "review") return "후기";
   if (contentType === "expectation") return "기대평·질문";
@@ -3306,6 +3769,16 @@ function bindEvents() {
     const searchResidenceButton = event.target.closest("[data-search-residence]");
     const clearResidenceButton = event.target.closest("[data-clear-residence]");
     const reportButton = event.target.closest("[data-report-content]");
+    const addInterestButton = event.target.closest("[data-add-interest]");
+    const removeInterestButton = event.target.closest("[data-remove-interest]");
+    if (addInterestButton) {
+      addInterestSubscription(addInterestButton);
+      return;
+    }
+    if (removeInterestButton) {
+      removeInterestSubscription(removeInterestButton);
+      return;
+    }
     if (searchResidenceButton) {
       openResidencePostcodeSearch(searchResidenceButton);
       return;
@@ -3420,6 +3893,13 @@ function bindEvents() {
   });
 
   document.body.addEventListener("input", (event) => {
+    const interestSearchInput = event.target.closest("[data-interest-search]");
+    if (interestSearchInput) {
+      state.interestSearch = interestSearchInput.value;
+      const results = interestSearchInput.closest("#interestNotificationsForm")?.querySelector("[data-interest-search-results]");
+      if (results) results.innerHTML = renderInterestSearchResults(state.interestSearch);
+      return;
+    }
     const phoneInput = event.target.closest("#applicationForm input[name='phone'], #guestReviewAccessForm input[name='phone']");
     if (!phoneInput) return;
 
@@ -3447,6 +3927,9 @@ function bindEvents() {
     if (event.target.id === "applicationForm") return handleApplicationSubmit(event);
     if (event.target.id === "guestReviewAccessForm") return handleGuestReviewAccessSubmit(event);
     if (event.target.id === "demographicsForm") return handleDemographicsSubmit(event);
+    if (event.target.id === "interestNotificationsForm") return handleInterestNotificationsSubmit(event);
+    if (event.target.matches("[data-course-notification-form]")) return handleCourseNotificationPreferencesSubmit(event);
+    if (event.target.matches("[data-guest-course-notification-form]")) return handleGuestCourseNotificationPreferencesSubmit(event);
     if (event.target.matches("[data-application-note-form]")) return handleApplicationNoteSubmit(event);
     if (event.target.id === "reviewForm") return handleReviewSubmit(event);
     if (event.target.id === "reportForm") return handleReportSubmit(event);
@@ -3483,8 +3966,10 @@ async function initialize() {
   state.guestContact = readGuestContact();
   state.guestAccessTokens = readGuestAccessTokens();
   captureGuestAccessTokenFromUrl();
+  const interestUnsubscribeToken = takeInterestUnsubscribeToken();
   applyRouteFromHash();
   bindEvents();
+  await processInterestUnsubscribe(interestUnsubscribeToken);
   await loadLandingData();
   if (state.activePage !== "courses") {
     await ensureFullDataLoaded({ waitForSupplementary: pageNeedsSupplementaryData(state.activePage) });
