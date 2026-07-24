@@ -90,6 +90,7 @@ const state = {
   contentReports: [],
   draws: [],
   winners: [],
+  demographicSummary: null,
 };
 
 const elements = {
@@ -905,13 +906,26 @@ function renderApplicationRow(application) {
   const attendanceConfirmed = Boolean(application.attendance_confirmed_at);
   const course = courseById(application.course_id);
   const canConfirmAttendance = hasCourseDateArrived(course);
-  const sourceLabel = application.registration_source === "admin_walk_in" ? "현장 등록" : "신청";
+  const sourceLabels = {
+    public: "로그인 신청",
+    guest: "비회원 신청",
+    admin_walk_in: "로그인 현장 등록",
+    admin_guest_walk_in: "비회원 현장 등록",
+  };
+  const sourceLabel = sourceLabels[application.registration_source] || "신청";
+  const sourceBadge = application.registration_source === "guest"
+    ? "비회원"
+    : application.registration_source === "admin_walk_in"
+      ? "현장 등록"
+      : application.registration_source === "admin_guest_walk_in"
+        ? "비회원 현장 등록"
+        : "";
   return `
     <div class="table-row">
       <div class="row-top">
         <strong>${escapeHtml(application.applicant_name || "신청자")}</strong>
         <span class="badge ${attendanceConfirmed ? "green" : "gray"}">${attendanceConfirmed ? "참석 확인" : "신청"}</span>
-        ${application.registration_source === "admin_walk_in" ? `<span class="badge gray">현장 등록</span>` : ""}
+        ${sourceBadge ? `<span class="badge gray">${escapeHtml(sourceBadge)}</span>` : ""}
       </div>
       <div class="muted">${escapeHtml(sourceLabel)}일 ${escapeHtml(shortDate(application.created_at))}</div>
       <p class="muted">이메일: ${escapeHtml(application.email || "없음")} · 전화: ${escapeHtml(application.phone || "없음")}</p>
@@ -1024,6 +1038,17 @@ function renderReportRow(report) {
 function phoneLastFour(phone) {
   const digits = String(phone || "").replace(/\D/g, "");
   return digits.slice(-4);
+}
+
+function formatMobilePhone(value) {
+  const digits = String(value || "").replace(/\D/g, "").slice(0, 11);
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+  return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
+}
+
+function isValidMobilePhone(value) {
+  return /^010\d{8}$/.test(String(value || "").replace(/\D/g, ""));
 }
 
 function compareRosterApplications(a, b) {
@@ -2198,6 +2223,13 @@ async function loadAdminData() {
   state.instructors = instructors;
   state.venues = venues;
 
+  state.demographicSummary = null;
+  if (isOwner()) {
+    const { data, error: demographicError } = await supabase.rpc("get_demographic_summary");
+    if (demographicError) console.warn("[모두의 인문학] 선택 이용자 통계 확인 지연", demographicError);
+    else state.demographicSummary = data || null;
+  }
+
   if (isOwner()) await loadOrganizationAdmins();
   else {
     state.organizationAdmins = [];
@@ -2334,6 +2366,57 @@ async function removeOrganizationAdmin(linkId) {
   showToast("단체 관리자 연결을 해제했습니다. 사용자 계정은 삭제하지 않았습니다.");
 }
 
+const DEMOGRAPHIC_VALUE_LABELS = {
+  female: "여성",
+  male: "남성",
+  other: "그 외",
+  prefer_not: "응답하고 싶지 않음",
+  married: "기혼",
+  unmarried: "미혼",
+};
+
+function demographicGroupHtml(title, items = []) {
+  if (!items.length) return "";
+  return `
+    <div class="demographic-summary-group">
+      <h4>${escapeHtml(title)}</h4>
+      <div class="demographic-summary-items">
+        ${items.map((item) => `
+          <span><strong>${escapeHtml(DEMOGRAPHIC_VALUE_LABELS[item.value] || item.value)}</strong><em>${Number(item.count || 0).toLocaleString("ko-KR")}명</em></span>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderDemographicSummary() {
+  if (!isOwner()) return "";
+  const summary = state.demographicSummary;
+  if (!summary) {
+    return `<div class="section" style="margin-top: 16px;"><h3>선택 이용자 통계</h3><div class="empty compact-empty">선택 이용자 통계를 불러오지 못했습니다.</div></div>`;
+  }
+  const groups = summary.groups || {};
+  const groupSections = [
+    demographicGroupHtml("거주지", groups.residence),
+    demographicGroupHtml("연령대", groups.age_group),
+    demographicGroupHtml("성별", groups.gender),
+    demographicGroupHtml("결혼 여부", groups.marital_status),
+    demographicGroupHtml("자녀 수", groups.children_count),
+  ].filter(Boolean).join("");
+  return `
+    <div class="section" style="margin-top: 16px;">
+      <div class="row-top">
+        <div>
+          <h3>선택 이용자 통계</h3>
+          <p class="muted">로그인 이용자가 선택 동의한 정보만 집계하며 개별 응답 원문은 관리자에게 공개하지 않습니다.</p>
+        </div>
+        <span class="badge gray">응답 ${Number(summary.respondent_count || 0).toLocaleString("ko-KR")}명</span>
+      </div>
+      ${groupSections || `<div class="empty compact-empty">같은 범주에 ${Number(summary.minimum_group_size || 5)}명 이상 모이면 집계가 표시됩니다.</div>`}
+    </div>
+  `;
+}
+
 function renderDashboard() {
   const publicReviews = visibleReviews().length;
   const hiddenReviews = state.reviews.length - publicReviews;
@@ -2354,6 +2437,7 @@ function renderDashboard() {
     </div>
     ${renderDashboardMetricSection("organization")}
     ${renderDashboardMetricSection("instructor")}
+    ${renderDemographicSummary()}
     <div class="section" style="margin-top: 16px;">
       <h3>후기 주요 단어</h3>
       <p class="muted">후기 본문에서 자주 등장한 단어를 간단 집계한 결과입니다. 조사와 일부 일반어는 제외했습니다.</p>
@@ -3107,7 +3191,24 @@ function renderWalkInAttendeeSection(courseId) {
               <span class="badge gray">교육 종료 후 등록 가능</span>
             </div>
           </form>
-          ${renderWalkInSearchResults(courseId)}`
+          ${renderWalkInSearchResults(courseId)}
+          <div class="guest-walk-in-form">
+            <h4>비회원 현장 참석자 바로 등록</h4>
+            <p class="muted">인증 계정이나 이전 신청 기록이 없는 참여자는 본인에게 확인한 이름과 휴대전화번호로 등록합니다. 등록과 동시에 참석 확인이 완료되어 비회원 후기 작성이 열립니다.</p>
+            <form data-guest-walk-in-form>
+              <input type="hidden" name="course_id" value="${escapeHtml(courseId)}">
+              <div class="admin-grid application-contact-grid">
+                <label>참석자명<input name="applicant_name" required maxlength="80" autocomplete="off"></label>
+                <label>휴대전화번호<input name="phone" type="tel" required inputmode="numeric" pattern="[0-9-]*" placeholder="010-0000-0000" maxlength="13" autocomplete="off"></label>
+                <label>이메일(선택)<input name="email" type="email" maxlength="320" placeholder="안내 메일이 필요한 경우" autocomplete="off"></label>
+              </div>
+              <label class="consent-check"><span><input name="privacy_confirmed" type="checkbox" required style="width:auto;min-height:auto;"> 참여자에게 교육 운영을 위한 이름·휴대전화번호·이메일(선택) 수집과 안내 활용 동의를 확인했습니다.</span></label>
+              <div class="actions" style="margin-top: 12px;">
+                <button class="btn small" type="submit">비회원 참석자로 등록</button>
+                <span class="badge gray">교육 종료 후 등록</span>
+              </div>
+            </form>
+          </div>`
         : `<div class="empty">교육 종료 후 현장 참석자 등록이 활성화됩니다.</div>`}
     </div>
   `;
@@ -4230,6 +4331,51 @@ async function addWalkInAttendee(courseId, userId) {
   render();
 }
 
+async function addGuestWalkInAttendee(event) {
+  event.preventDefault();
+  const form = getSubmitForm(event);
+  if (!form) return;
+  const formData = new FormData(form);
+  const courseId = String(formData.get("course_id") || "");
+  const course = courseById(courseId);
+  const applicantName = String(formData.get("applicant_name") || "").trim();
+  const phone = formatMobilePhone(formData.get("phone"));
+  const email = String(formData.get("email") || "").trim().toLowerCase();
+
+  if (!hasCourseEnded(course)) throw new Error("교육 종료 후 현장 참석자를 등록할 수 있습니다.");
+  if (!applicantName) throw new Error("참석자명을 입력해 주세요.");
+  if (!isValidMobilePhone(phone)) throw new Error("010으로 시작하는 휴대전화번호 11자리를 입력해 주세요.");
+  if (formData.get("privacy_confirmed") !== "on") throw new Error("참여자의 개인정보 수집·안내 활용 동의 확인이 필요합니다.");
+
+  const button = form.querySelector("button[type='submit']");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "등록 중...";
+  }
+  try {
+    const { data, error } = await supabase.rpc("add_guest_walk_in_course_attendee", {
+      p_course_id: courseId,
+      p_applicant_name: applicantName,
+      p_phone: phone,
+      p_email: email || null,
+      p_terms_version: "admin-guest-walk-in-2026-07-24",
+    });
+    if (error) throw error;
+    if (!data) throw new Error("참석자 등록 결과를 확인하지 못했습니다.");
+
+    showToast("비회원 현장 참석자를 등록하고 참석 확인을 저장했습니다.");
+    await reload();
+    state.tab = "applications";
+    state.applicationFilters.courseId = courseId;
+    render();
+  } finally {
+    if (button && document.body.contains(button)) {
+      button.disabled = false;
+      button.textContent = "비회원 참석자로 등록";
+    }
+  }
+}
+
 async function runDraw(event) {
   event.preventDefault();
   const form = getSubmitForm(event);
@@ -4792,6 +4938,11 @@ function bindEvents() {
   });
 
   document.body.addEventListener("input", (event) => {
+    const guestWalkInPhone = event.target.closest("[data-guest-walk-in-form] input[name='phone']");
+    if (guestWalkInPhone) {
+      guestWalkInPhone.value = formatMobilePhone(guestWalkInPhone.value);
+      return;
+    }
     if (event.target.matches("[data-dashboard-stat-search]")) {
       const kind = event.target.dataset.dashboardStatSearch;
       state.dashboardStatsSearch[kind] = event.target.value;
@@ -4857,6 +5008,7 @@ function bindEvents() {
       if (event.target.id === "organizationAdminForm") return await inviteOrganizationAdmin(event);
       if (event.target.matches("[data-attendance-document-form]")) return await saveAttendanceDocument(event);
       if (event.target.matches("[data-walk-in-search-form]")) return await searchWalkInCandidates(event);
+      if (event.target.matches("[data-guest-walk-in-form]")) return await addGuestWalkInAttendee(event);
       if (event.target.id === "drawForm") return await runDraw(event);
     } catch (error) {
       showToast(`작업 실패: ${error.message}`);
