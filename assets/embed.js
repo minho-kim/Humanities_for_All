@@ -70,6 +70,27 @@ function showToast(message) {
   window.setTimeout(() => elements.toast.classList.remove("show"), 2600);
 }
 
+function courseAlertKeywords(course = {}) {
+  const values = Array.isArray(course.tags) ? course.tags : [];
+  const fallback = values.length ? values : [course.topic];
+  const seen = new Set();
+  return fallback
+    .map((value) => String(value || "").normalize("NFC").replace(/^#+/, "").trim().replace(/\s+/g, " "))
+    .filter((value) => {
+      const key = value.toLocaleLowerCase("ko-KR");
+      if (!value || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 5);
+}
+
+function alertKeywordBadgesHtml(course = {}) {
+  return courseAlertKeywords(course)
+    .map((keyword) => `<span class="badge keyword-badge">#${escapeHtml(keyword)}</span>`)
+    .join("");
+}
+
 function notifyParentHeight() {
   if (window.parent === window) return;
   const height = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
@@ -450,7 +471,7 @@ function filteredCourses() {
     const haystack = [
       course.title,
       course.subtitle,
-      course.topic,
+      ...courseAlertKeywords(course),
       course.summary,
       course.description,
       course.organization?.name,
@@ -511,7 +532,7 @@ function courseCardHtml(course) {
     <article class="course-card status-${escapeHtml(course.status)}">
       <div class="badge-row">
         <span class="badge ${getStatusClass(course.status)}">${escapeHtml(statusLabels[course.status] || course.status)}</span>
-        ${course.topic ? `<span class="badge">${escapeHtml(course.topic)}</span>` : ""}
+        ${alertKeywordBadgesHtml(course)}
         ${courseSeriesBadgeHtml(course)}
       </div>
       <div class="course-schedule"><span aria-hidden="true">📅</span><strong>${escapeHtml(formatSchedule(courseScheduleStart(course), courseScheduleEnd(course)))}</strong></div>
@@ -640,7 +661,7 @@ function openCourseDetail(courseId) {
 
   elements.detailBadges.innerHTML = `
     <span class="badge ${getStatusClass(course.status)}">${escapeHtml(statusLabels[course.status] || course.status)}</span>
-    ${course.topic ? `<span class="badge">${escapeHtml(course.topic)}</span>` : ""}
+    ${alertKeywordBadgesHtml(course)}
     ${courseSeriesBadgeHtml(course)}
     ${course.organization?.name ? `<span class="badge gray">${escapeHtml(course.organization.name)}</span>` : ""}
   `;

@@ -32,9 +32,9 @@ const state = {
   interestSubscriptions: [],
   interestOptions: {
     instructors: [],
-    topics: [],
   },
   interestSearch: "",
+  interestKeywordInput: "",
   composedCourses: [],
   landingCourses: [],
   stats: {
@@ -116,7 +116,7 @@ const STATUS_SYNC_TIMEOUT_MS = 4000;
 const SESSION_TIMEOUT_MS = 2500;
 const APPLICATION_TERMS_VERSION = "2026-07-24-v6";
 const DEMOGRAPHICS_TERMS_VERSION = "2026-07-24-v3";
-const INTEREST_NOTIFICATION_CONSENT_VERSION = "2026-07-24-v1";
+const INTEREST_NOTIFICATION_CONSENT_VERSION = "2026-07-24-v2";
 const COURSE_NOTIFICATION_TERMS_VERSION = "2026-07-24-v2";
 const GUEST_CONTACT_SESSION_KEY = "humanities-guest-contact";
 const GUEST_ACCESS_TOKEN_SESSION_KEY = "humanities-guest-access-tokens";
@@ -140,6 +140,35 @@ function showToast(message) {
   elements.toast.classList.add("show");
   window.clearTimeout(showToast.timer);
   showToast.timer = window.setTimeout(() => elements.toast.classList.remove("show"), 2800);
+}
+
+function courseAlertKeywords(course = {}) {
+  const values = Array.isArray(course.tags) ? course.tags : [];
+  const fallback = values.length ? values : [course.topic];
+  const seen = new Set();
+  return fallback
+    .map((value) => String(value || "").normalize("NFC").replace(/^#+/, "").trim().replace(/\s+/g, " "))
+    .filter((value) => {
+      const key = value.toLocaleLowerCase("ko-KR");
+      if (!value || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 5);
+}
+
+function alertKeywordBadgesHtml(course = {}) {
+  return courseAlertKeywords(course)
+    .map((keyword) => `<span class="badge keyword-badge">#${escapeHtml(keyword)}</span>`)
+    .join("");
+}
+
+function normalizeInterestKeyword(value) {
+  const label = String(value || "").normalize("NFC").replace(/^#+/, "").trim().replace(/\s+/g, " ");
+  return {
+    label,
+    key: label.toLocaleLowerCase("ko-KR"),
+  };
 }
 
 function readGuestContact() {
@@ -1028,8 +1057,9 @@ function clearApplicationState() {
   state.applications = [];
   state.myReviews = [];
   state.interestSubscriptions = [];
-  state.interestOptions = { instructors: [], topics: [] };
+  state.interestOptions = { instructors: [] };
   state.interestSearch = "";
+  state.interestKeywordInput = "";
 }
 
 async function loadApplicationState(supabase) {
@@ -1108,11 +1138,10 @@ async function loadApplicationState(supabase) {
     const options = interestOptionsResult.value.data || {};
     state.interestOptions = {
       instructors: Array.isArray(options.instructors) ? options.instructors : [],
-      topics: Array.isArray(options.topics) ? options.topics : [],
     };
   } else {
     console.warn("[모두의 인문학] 관심 알림 대상 확인 지연", interestOptionsResult.reason || interestOptionsResult.value?.error);
-    state.interestOptions = { instructors: [], topics: [] };
+    state.interestOptions = { instructors: [] };
   }
 }
 
@@ -1194,7 +1223,7 @@ function filteredCourses() {
     const haystack = [
       course.title,
       course.subtitle,
-      course.topic,
+      ...courseAlertKeywords(course),
       course.summary,
       course.description,
       course.organization?.name,
@@ -1255,7 +1284,7 @@ function courseCardHtml(course) {
       <article class="course-card status-${escapeHtml(course.status)}">
         <div class="badge-row">
           <span class="badge ${getStatusClass(course.status)}">${escapeHtml(statusLabels[course.status] || course.status)}</span>
-          ${course.topic ? `<span class="badge">${escapeHtml(course.topic)}</span>` : ""}
+          ${alertKeywordBadgesHtml(course)}
           ${courseSeriesBadgeHtml(course)}
         </div>
         <div class="course-schedule"><span aria-hidden="true">📅</span><strong>${escapeHtml(formatSchedule(courseScheduleStart(course), courseScheduleEnd(course)))}</strong></div>
@@ -1443,7 +1472,7 @@ function renderCoursesPage() {
   const organizations = publicOrganizations();
   setPageHeader({
     title: "교육 검색",
-    description: "관심 있는 교육을 교육명, 부제, 주제, 강사, 장소, 단체명으로 찾아보세요.",
+    description: "관심 있는 교육을 교육명, 부제, 알림 키워드, 강사, 장소, 단체명으로 찾아보세요.",
     showCourseTools: true,
     summary: state.courses.length
       ? `${courses.length.toLocaleString("ko-KR")}개 교육이 표시됩니다.`
@@ -1969,16 +1998,13 @@ function interestOptionId(targetType, targetKey) {
 }
 
 function allInterestOptions() {
-  return [
-    ...(state.interestOptions.instructors || []),
-    ...(state.interestOptions.topics || []),
-  ];
+  return [...(state.interestOptions.instructors || [])];
 }
 
 function renderInterestSearchResults(query = state.interestSearch) {
   const normalizedQuery = String(query || "").trim().toLocaleLowerCase("ko-KR");
   if (!normalizedQuery) {
-    return `<p class="muted">강사명이나 주제를 입력하면 추가할 대상을 보여드립니다.</p>`;
+    return `<p class="muted">강사명을 입력하면 추가할 대상을 보여드립니다.</p>`;
   }
 
   const selectedIds = new Set(state.interestSubscriptions.map((subscription) => (
@@ -1986,13 +2012,13 @@ function renderInterestSearchResults(query = state.interestSearch) {
   )));
   const results = allInterestOptions()
     .filter((option) => !selectedIds.has(interestOptionId(option.target_type, option.target_key)))
-    .filter((option) => [option.label, option.description, option.target_type === "instructor" ? "강사" : "주제"]
+    .filter((option) => [option.label, option.description, "강사"]
       .join(" ")
       .toLocaleLowerCase("ko-KR")
       .includes(normalizedQuery))
     .slice(0, 10);
 
-  if (!results.length) return `<p class="muted">추가할 수 있는 강사나 주제를 찾지 못했습니다.</p>`;
+  if (!results.length) return `<p class="muted">추가할 수 있는 강사를 찾지 못했습니다.</p>`;
   return results.map((option) => `
     <button class="interest-search-result" type="button"
       data-add-interest
@@ -2002,7 +2028,7 @@ function renderInterestSearchResults(query = state.interestSearch) {
         <strong>${escapeHtml(option.label)}</strong>
         ${option.description ? `<small>${escapeHtml(option.description)}</small>` : ""}
       </span>
-      <span class="badge gray">${option.target_type === "instructor" ? "강사" : "주제"}</span>
+      <span class="badge gray">강사</span>
     </button>
   `).join("");
 }
@@ -2010,7 +2036,7 @@ function renderInterestSearchResults(query = state.interestSearch) {
 function renderInterestSubscriptionRows() {
   const hasSmsPhone = /^010\d{8}$/.test(String(state.applicantProfile?.phone || "").replace(/\D/g, ""));
   if (!state.interestSubscriptions.length) {
-    return `<div class="empty">등록한 관심 강사나 주제가 없습니다.</div>`;
+    return `<div class="empty">등록한 관심 강사나 키워드가 없습니다.</div>`;
   }
 
   return state.interestSubscriptions.map((subscription) => {
@@ -2021,9 +2047,9 @@ function renderInterestSubscriptionRows() {
         data-target-type="${escapeHtml(subscription.target_type)}"
         data-target-key="${escapeHtml(subscription.target_key)}">
         <div class="interest-subscription-target">
-          <span class="badge gray">${subscription.target_type === "instructor" ? "강사" : "주제"}</span>
+          <span class="badge gray">${subscription.target_type === "instructor" ? "강사" : "키워드"}</span>
           <span>
-            <strong>${escapeHtml(subscription.target_label || subscription.target_key)}</strong>
+            <strong>${subscription.target_type === "instructor" ? escapeHtml(subscription.target_label || subscription.target_key) : `#${escapeHtml(subscription.target_label || subscription.target_key)}`}</strong>
             ${subscription.target_description ? `<small>${escapeHtml(subscription.target_description)}</small>` : ""}
           </span>
         </div>
@@ -2043,7 +2069,7 @@ function renderInterestNotificationsForm() {
     <form id="interestNotificationsForm" class="interest-notifications-form">
       <div class="row-top">
         <div>
-          <h3>관심 강사·주제 새 교육 알림</h3>
+          <h3>관심 강사·키워드 새 교육 알림</h3>
           <p class="muted">새 교육이 공개되면 다음 오전 10시에 관심 항목과 일치하는 교육을 한 번에 모아 알려드립니다.</p>
         </div>
         <span class="badge gray">선택 알림</span>
@@ -2055,8 +2081,17 @@ function renderInterestNotificationsForm() {
         ? `<p class="muted">문자 수신 번호: ${escapeHtml(formatPhoneNumber(state.applicantProfile.phone))}</p>`
         : `<p class="muted">문자 알림을 선택하려면 먼저 교육을 신청해 010 휴대전화번호를 저장해 주세요. 이메일 알림은 바로 선택할 수 있습니다.</p>`}
       <div class="interest-search-panel">
-        <label>관심 강사·주제 추가
-          <input type="search" data-interest-search value="${escapeHtml(state.interestSearch)}" placeholder="예: 김민호, 철학">
+        <label>관심 키워드 추가
+          <span class="interest-keyword-input-row">
+            <input type="text" data-interest-keyword-input value="${escapeHtml(state.interestKeywordInput)}" maxlength="31" placeholder="예: 철학" autocomplete="off">
+            <button class="btn small secondary" type="button" data-add-interest-keyword>추가</button>
+          </span>
+          <small>현재 교육에 없는 키워드도 등록할 수 있습니다. 한 번에 하나씩 2~30자로 입력해 주세요.</small>
+        </label>
+      </div>
+      <div class="interest-search-panel">
+        <label>관심 강사 검색
+          <input type="search" data-interest-search value="${escapeHtml(state.interestSearch)}" placeholder="예: 김민호">
         </label>
         <div class="interest-search-results" data-interest-search-results aria-live="polite">
           ${renderInterestSearchResults()}
@@ -2065,9 +2100,10 @@ function renderInterestNotificationsForm() {
       <details class="privacy-details">
         <summary>관심 알림 수신 동의 안내</summary>
         <ul class="plain-list">
-          <li><strong>목적·내용</strong><br>선택한 강사 또는 주제의 새 교육 안내</li>
+          <li><strong>목적·내용</strong><br>선택한 강사 또는 직접 등록한 관심 키워드와 일치하는 새 교육 안내</li>
           <li><strong>수신 채널</strong><br>항목별로 이메일, 문자 또는 두 채널 모두 선택할 수 있습니다.</li>
-          <li><strong>이용 정보</strong><br>인증 이메일, 교육 신청 시 저장한 휴대전화번호, 관심 강사·주제, 채널별 동의·철회 시각</li>
+          <li><strong>이용 정보</strong><br>인증 이메일, 교육 신청 시 저장한 휴대전화번호, 관심 강사·키워드, 채널별 동의·철회 시각</li>
+          <li><strong>일치 기준</strong><br>교육에 관리자가 등록한 알림 키워드에 관심 키워드가 포함되면 일치합니다. 예: 철학 → 서양철학</li>
           <li><strong>보유 기간</strong><br>수신 동의 철회 또는 계정 삭제 때까지 보유합니다. 발송 이력은 중복 방지와 장애 확인을 위해 필요한 기간 동안 제한적으로 보관합니다.</li>
           <li><strong>선택 동의</strong><br>동의하지 않거나 언제든 해지해도 교육 검색·신청·참여에 불이익이 없습니다.</li>
         </ul>
@@ -2526,7 +2562,7 @@ function openCourseDetail(courseId) {
 
   elements.detailBadges.innerHTML = `
     <span class="badge ${getStatusClass(course.status)}">${escapeHtml(statusLabels[course.status] || course.status)}</span>
-    ${course.topic ? `<span class="badge">${escapeHtml(course.topic)}</span>` : ""}
+    ${alertKeywordBadgesHtml(course)}
     ${courseSeriesBadgeHtml(course)}
     <span class="badge gray">${orgSlug ? `<button class="badge-link" type="button" data-open-organization="${escapeHtml(orgSlug)}">${escapeHtml(orgName)}</button>` : escapeHtml(orgName)}</span>
   `;
@@ -3423,6 +3459,38 @@ function addInterestSubscription(button) {
   showToast("관심 대상을 추가했습니다. 채널을 확인한 뒤 설정을 저장해 주세요.");
 }
 
+function addInterestKeyword() {
+  const { label, key } = normalizeInterestKeyword(state.interestKeywordInput);
+  if ([...label].length < 2 || [...label].length > 30 || /[\u0000-\u001f\u007f,，]/.test(label)) {
+    showToast("관심 키워드는 쉼표 없이 2~30자로 입력해 주세요.");
+    document.querySelector("[data-interest-keyword-input]")?.focus();
+    return;
+  }
+  const keywordCount = state.interestSubscriptions.filter((subscription) => subscription.target_type === "keyword").length;
+  if (keywordCount >= 20) {
+    showToast("관심 키워드는 최대 20개까지 등록할 수 있습니다.");
+    return;
+  }
+  if (state.interestSubscriptions.some((subscription) => (
+    subscription.target_type === "keyword" && subscription.target_key === key
+  ))) {
+    showToast("이미 추가한 관심 키워드입니다.");
+    return;
+  }
+  state.interestSubscriptions.push({
+    target_type: "keyword",
+    target_key: key,
+    target_label: label,
+    target_description: "",
+    email_enabled: true,
+    sms_enabled: false,
+  });
+  state.interestKeywordInput = "";
+  openMyInfo();
+  window.setTimeout(() => document.querySelector("[data-interest-keyword-input]")?.focus(), 0);
+  showToast("관심 키워드를 추가했습니다. 채널을 확인한 뒤 설정을 저장해 주세요.");
+}
+
 function removeInterestSubscription(button) {
   const row = button.closest("[data-interest-row]");
   if (!row) return;
@@ -3447,6 +3515,11 @@ async function handleInterestNotificationsSubmit(event) {
   const subscriptions = rows.map((row) => ({
     target_type: String(row.dataset.targetType || ""),
     target_key: String(row.dataset.targetKey || ""),
+    target_label: row.dataset.targetType === "keyword"
+      ? String(state.interestSubscriptions.find((subscription) => (
+        subscription.target_type === "keyword" && subscription.target_key === row.dataset.targetKey
+      ))?.target_label || row.dataset.targetKey || "")
+      : undefined,
     email_enabled: row.querySelector('[data-interest-channel="email"]')?.checked === true,
     sms_enabled: row.querySelector('[data-interest-channel="sms"]')?.checked === true,
   }));
@@ -3500,7 +3573,7 @@ async function processInterestUnsubscribe(token) {
     const { data, error } = await supabase.rpc("unsubscribe_interest_notifications", { p_token: token });
     if (error) throw error;
     showToast(data === true
-      ? "관심 강사·주제 알림을 모두 해지했습니다."
+      ? "관심 강사·키워드 알림을 모두 해지했습니다."
       : "해지 링크가 만료되었거나 올바르지 않습니다. 로그인 후 나의 정보에서 설정을 확인해 주세요.");
   } catch (error) {
     console.error("Interest notification unsubscribe failed", error);
@@ -3770,7 +3843,12 @@ function bindEvents() {
     const clearResidenceButton = event.target.closest("[data-clear-residence]");
     const reportButton = event.target.closest("[data-report-content]");
     const addInterestButton = event.target.closest("[data-add-interest]");
+    const addInterestKeywordButton = event.target.closest("[data-add-interest-keyword]");
     const removeInterestButton = event.target.closest("[data-remove-interest]");
+    if (addInterestKeywordButton) {
+      addInterestKeyword();
+      return;
+    }
     if (addInterestButton) {
       addInterestSubscription(addInterestButton);
       return;
@@ -3893,6 +3971,11 @@ function bindEvents() {
   });
 
   document.body.addEventListener("input", (event) => {
+    const interestKeywordInput = event.target.closest("[data-interest-keyword-input]");
+    if (interestKeywordInput) {
+      state.interestKeywordInput = interestKeywordInput.value;
+      return;
+    }
     const interestSearchInput = event.target.closest("[data-interest-search]");
     if (interestSearchInput) {
       state.interestSearch = interestSearchInput.value;
@@ -3942,6 +4025,12 @@ function bindEvents() {
   });
 
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && event.target.matches("[data-interest-keyword-input]")) {
+      event.preventDefault();
+      state.interestKeywordInput = event.target.value;
+      addInterestKeyword();
+      return;
+    }
     if (event.key === "Escape") document.querySelectorAll(".modal.open").forEach(closeModal);
   });
 
