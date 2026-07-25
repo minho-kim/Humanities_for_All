@@ -2458,7 +2458,7 @@ function renderOrganizationAdmins() {
     <p class="muted">이메일로 관리자를 초대하고 담당 단체를 연결합니다. 초대받은 관리자는 연결된 단체의 교육·신청·후기·아카이브만 관리할 수 있습니다.</p>
     <form id="organizationAdminForm" class="section">
       <div class="admin-grid">
-        <label>관리자 이름<input name="display_name" type="text" placeholder="담당자 이름" autocomplete="name" required maxlength="80"></label>
+        <label>관리자 이름 (선택)<input name="display_name" type="text" placeholder="담당자 이름을 알면 입력" autocomplete="name" maxlength="80"></label>
         <label>관리자 이메일<input name="email" type="email" placeholder="manager@example.com" autocomplete="off" required maxlength="320"></label>
         <label>담당 단체<select name="organization_id" required><option value="">단체 선택</option>${optionList(state.organizations)}</select></label>
       </div>
@@ -2479,10 +2479,10 @@ function renderOrganizationAdmins() {
         : state.organizationAdmins.map((admin) => `
           <div class="table-row">
             <div class="row-top">
-              <strong>${escapeHtml(admin.display_name || "이름 미입력")}</strong>
+              <strong>${escapeHtml(admin.display_name || admin.email || "관리자")}</strong>
               <span class="badge ${admin.is_confirmed ? "green" : "gray"}">${admin.is_confirmed ? "이메일 확인" : "초대 대기"}</span>
             </div>
-            <p class="muted">${escapeHtml(admin.email || "이메일 정보 없음")}</p>
+            ${admin.display_name ? `<p class="muted">${escapeHtml(admin.email || "이메일 정보 없음")}</p>` : ""}
             <p class="muted">담당 단체: ${escapeHtml(admin.organization_name)}</p>
             <div class="actions">
               <button class="btn small secondary" type="button" data-edit-organization-admin="${escapeHtml(admin.id)}">이름·연결 수정</button>
@@ -2502,7 +2502,7 @@ async function inviteOrganizationAdmin(event) {
   const displayName = String(formData.get("display_name") || "").trim();
   const email = String(formData.get("email") || "").trim();
   const organizationId = String(formData.get("organization_id") || "");
-  if (!displayName || !email || !organizationId) return;
+  if (!email || !organizationId) return;
 
   const button = form.querySelector("button[type='submit']");
   if (button) {
