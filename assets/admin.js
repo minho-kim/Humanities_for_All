@@ -2163,7 +2163,7 @@ async function refreshSession() {
         .maybeSingle(),
       supabase
         .from("organization_admins")
-        .select("id,organization_id,user_id,role,created_at")
+        .select("id,organization_id,user_id,display_name,role,created_at")
         .eq("user_id", state.user.id),
     ]);
 
@@ -2199,10 +2199,18 @@ function renderAuthStatus() {
     : state.organizationAdminLinks.length
       ? `단체 관리자 · 연결 단체 ${managedOrganizationIds().size}곳`
       : "관리자 권한 없음";
-  elements.adminStatus.innerHTML = `
-    <p><strong>${escapeHtml(state.user.email || getDisplayName(state.user))}</strong></p>
-    <p class="muted">${escapeHtml(role)}</p>
-  `;
+  const administratorName = state.adminProfile?.display_name
+    || state.organizationAdminLinks.find((link) => link.display_name)?.display_name
+    || "";
+  elements.adminStatus.innerHTML = administratorName
+    ? `
+      <p><strong>${escapeHtml(administratorName)}</strong></p>
+      <p class="muted">${escapeHtml(state.user.email || "이메일 정보 없음")} · ${escapeHtml(role)}</p>
+    `
+    : `
+      <p><strong>${escapeHtml(state.user.email || getDisplayName(state.user))}</strong></p>
+      <p class="muted">${escapeHtml(role)}</p>
+    `;
 
   if (state.adminProfileError) {
     elements.permissionNotice.classList.remove("hidden");
@@ -2450,6 +2458,7 @@ function renderOrganizationAdmins() {
     <p class="muted">이메일로 관리자를 초대하고 담당 단체를 연결합니다. 초대받은 관리자는 연결된 단체의 교육·신청·후기·아카이브만 관리할 수 있습니다.</p>
     <form id="organizationAdminForm" class="section">
       <div class="admin-grid">
+        <label>관리자 이름<input name="display_name" type="text" placeholder="담당자 이름" autocomplete="name" required maxlength="80"></label>
         <label>관리자 이메일<input name="email" type="email" placeholder="manager@example.com" autocomplete="off" required maxlength="320"></label>
         <label>담당 단체<select name="organization_id" required><option value="">단체 선택</option>${optionList(state.organizations)}</select></label>
       </div>
@@ -2470,11 +2479,13 @@ function renderOrganizationAdmins() {
         : state.organizationAdmins.map((admin) => `
           <div class="table-row">
             <div class="row-top">
-              <strong>${escapeHtml(admin.email)}</strong>
+              <strong>${escapeHtml(admin.display_name || "이름 미입력")}</strong>
               <span class="badge ${admin.is_confirmed ? "green" : "gray"}">${admin.is_confirmed ? "이메일 확인" : "초대 대기"}</span>
             </div>
+            <p class="muted">${escapeHtml(admin.email || "이메일 정보 없음")}</p>
             <p class="muted">담당 단체: ${escapeHtml(admin.organization_name)}</p>
             <div class="actions">
+              <button class="btn small secondary" type="button" data-edit-organization-admin="${escapeHtml(admin.id)}">이름·연결 수정</button>
               <button class="btn small danger" type="button" data-remove-organization-admin="${escapeHtml(admin.id)}">연결 해제</button>
             </div>
           </div>
@@ -2488,9 +2499,10 @@ async function inviteOrganizationAdmin(event) {
   const form = getSubmitForm(event);
   if (!form || !isOwner()) return;
   const formData = new FormData(form);
+  const displayName = String(formData.get("display_name") || "").trim();
   const email = String(formData.get("email") || "").trim();
   const organizationId = String(formData.get("organization_id") || "");
-  if (!email || !organizationId) return;
+  if (!displayName || !email || !organizationId) return;
 
   const button = form.querySelector("button[type='submit']");
   if (button) {
@@ -2499,18 +2511,38 @@ async function inviteOrganizationAdmin(event) {
   }
   try {
     const data = await invokeOrganizationAdminFunction("invite", {
+      display_name: displayName,
       email,
       organization_id: organizationId,
     });
     await loadOrganizationAdmins();
     renderOrganizationAdmins();
-    showToast(data.invited ? "관리자 초대 메일을 보내고 단체를 연결했습니다." : "기존 계정에 단체 관리자 권한을 연결했습니다.");
+    showToast(data.invited
+      ? "관리자 초대 메일을 보내고 단체를 연결했습니다."
+      : data.existing_link
+        ? "관리자 이름과 단체 연결 정보를 저장했습니다."
+        : "기존 계정에 단체 관리자 권한을 연결했습니다.");
   } finally {
     if (button && document.body.contains(button)) {
       button.disabled = false;
       button.textContent = "관리자 초대·연결";
     }
   }
+}
+
+function editOrganizationAdmin(linkId) {
+  if (!isOwner()) return;
+  const admin = state.organizationAdmins.find((item) => item.id === linkId);
+  const form = document.getElementById("organizationAdminForm");
+  if (!admin || !(form instanceof HTMLFormElement)) return;
+  const displayNameInput = form.elements.namedItem("display_name");
+  const emailInput = form.elements.namedItem("email");
+  const organizationInput = form.elements.namedItem("organization_id");
+  if (displayNameInput instanceof HTMLInputElement) displayNameInput.value = admin.display_name || "";
+  if (emailInput instanceof HTMLInputElement) emailInput.value = admin.email || "";
+  if (organizationInput instanceof HTMLSelectElement) organizationInput.value = admin.organization_id || "";
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (displayNameInput instanceof HTMLInputElement) displayNameInput.focus();
 }
 
 async function removeOrganizationAdmin(linkId) {
@@ -4806,6 +4838,7 @@ function bindEvents() {
     const detachCourseSeriesButton = event.target.closest("[data-detach-course-series]");
     const confirmDetachCourseSeriesButton = event.target.closest("[data-confirm-detach-course-series]");
     const deleteEntityButton = event.target.closest("[data-delete-entity]");
+    const editOrganizationAdminButton = event.target.closest("[data-edit-organization-admin]");
     const removeOrganizationAdminButton = event.target.closest("[data-remove-organization-admin]");
     const downloadDashboardStatsButton = event.target.closest("[data-download-dashboard-stats]");
     const confirmChangeNotificationButton = event.target.closest("[data-confirm-change-notification]");
@@ -4903,6 +4936,10 @@ function bindEvents() {
     }
     if (detachCourseSeriesButton) {
       openCourseSeriesDetachNotice(detachCourseSeriesButton.dataset.detachCourseSeries);
+      return;
+    }
+    if (editOrganizationAdminButton) {
+      editOrganizationAdmin(editOrganizationAdminButton.dataset.editOrganizationAdmin);
       return;
     }
     if (removeOrganizationAdminButton) {
