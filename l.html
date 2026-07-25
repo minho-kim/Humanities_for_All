@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>교육 안내 링크 확인 | 모두의 인문학</title>
+  <link rel="stylesheet" href="./assets/styles.css">
+</head>
+<body>
+  <main class="page">
+    <section class="panel" aria-labelledby="linkTitle">
+      <span class="eyebrow">모두의 인문학</span>
+      <h1 id="linkTitle">교육 안내 링크를 확인하고 있습니다</h1>
+      <p class="lead" id="linkStatus" role="status" aria-live="polite">잠시만 기다려 주세요.</p>
+      <div class="actions" id="linkFallback" hidden>
+        <button class="btn" type="button" id="retryLinkButton" hidden>다시 시도</button>
+        <a class="btn" href="./index.html">교육 찾아보기</a>
+      </div>
+      <noscript><p>링크를 열려면 브라우저에서 JavaScript를 허용해 주세요.</p></noscript>
+    </section>
+  </main>
+  <script type="module" src="./assets/link-resolver.js"></script>
+</body>
+</html>
