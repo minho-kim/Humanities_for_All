@@ -37,6 +37,10 @@ const state = {
   interestKeywordInput: "",
   composedCourses: [],
   landingCourses: [],
+  landingExpanded: false,
+  visibleCourseCount: 6,
+  coursePageLoading: false,
+  coursePageError: "",
   stats: {
     courses: null,
     organizations: null,
@@ -86,6 +90,9 @@ const elements = {
   searchResetButton: document.getElementById("searchResetButton"),
   resultSummary: document.getElementById("resultSummary"),
   courseResults: document.getElementById("courseResults"),
+  courseLoadMore: document.getElementById("courseLoadMore"),
+  courseLoadMoreButton: document.getElementById("courseLoadMoreButton"),
+  courseLoadMoreStatus: document.getElementById("courseLoadMoreStatus"),
   detailModal: document.getElementById("detailModal"),
   detailBadges: document.getElementById("detailBadges"),
   detailTitle: document.getElementById("detailTitle"),
@@ -114,6 +121,7 @@ const PUBLIC_FETCH_RETRIES = 1;
 const LANDING_SUMMARY_TIMEOUT_MS = 4500;
 const STATUS_SYNC_TIMEOUT_MS = 4000;
 const SESSION_TIMEOUT_MS = 2500;
+const COURSE_PAGE_SIZE = 6;
 const APPLICATION_TERMS_VERSION = "2026-07-24-v6";
 const DEMOGRAPHICS_TERMS_VERSION = "2026-07-24-v3";
 const INTEREST_NOTIFICATION_CONSENT_VERSION = "2026-07-24-v2";
@@ -127,6 +135,7 @@ let supplementaryLoadSequence = 0;
 let supabaseClientPromise = null;
 let residenceSearchPopup = null;
 let residenceSearchForm = null;
+let courseLoadObserver = null;
 
 function getSupabaseClient() {
   if (!supabaseClientPromise) {
@@ -359,60 +368,6 @@ function naverPlaceUrl(venue) {
   return query ? normalizeSafeUrl(`https://map.naver.com/p/search/${encodeURIComponent(query)}`, URL_RULES.naverPlace) : "";
 }
 
-function icsDate(value) {
-  if (!value) return "";
-  return new Date(value).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-}
-
-function escapeIcs(value) {
-  return String(value || "")
-    .replace(/\\/g, "\\\\")
-    .replace(/\n/g, "\\n")
-    .replace(/,/g, "\\,")
-    .replace(/;/g, "\\;");
-}
-
-function calendarLocation(course) {
-  if (!course.venue) return "";
-  return [course.venue.name, course.venue.address, course.venue.detail].filter(Boolean).join(" · ");
-}
-
-function downloadCalendar(course) {
-  const firstSession = course.sessions[0];
-  const startsAt = firstSession?.starts_at || course.starts_at;
-  const endsAt = firstSession?.ends_at || course.ends_at || startsAt;
-  if (!startsAt) {
-    showToast("캘린더에 등록할 일정이 없습니다.");
-    return;
-  }
-  const description = [course.summary, course.description].filter(Boolean).join("\\n\\n");
-  const ics = [
-    "BEGIN:VCALENDAR",
-    "VERSION:2.0",
-    "PRODID:-//Humanities for All//Courses//KO",
-    "BEGIN:VEVENT",
-    `UID:${course.id}@humanities-for-all`,
-    `DTSTAMP:${icsDate(new Date())}`,
-    `DTSTART:${icsDate(startsAt)}`,
-    `DTEND:${icsDate(endsAt)}`,
-    `SUMMARY:${escapeIcs(course.title)}`,
-    `DESCRIPTION:${escapeIcs(description)}`,
-    `LOCATION:${escapeIcs(calendarLocation(course))}`,
-    "END:VEVENT",
-    "END:VCALENDAR",
-  ].join("\r\n");
-  const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `${String(course.title || "course").replace(/[\\/:*?"<>|]/g, "_")}.ics`;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-  showToast("캘린더 파일을 내려받았습니다.");
-}
-
 function populateSelect(select, label, values) {
   select.innerHTML = `<option value="">${escapeHtml(label)}</option>${values.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}`;
 }
@@ -610,6 +565,10 @@ function applyLandingSummary(summary = {}) {
   state.supplementaryLoaded = false;
   composeCourses();
   state.landingCourses = state.composedCourses.slice();
+  state.landingExpanded = false;
+  state.visibleCourseCount = COURSE_PAGE_SIZE;
+  state.coursePageLoading = false;
+  state.coursePageError = "";
   populateFilters();
 }
 
@@ -880,6 +839,7 @@ function setPageHeader({ title, description, showCourseTools = false, summary = 
   elements.courseFilters.classList.toggle("hidden", !showCourseTools);
   elements.viewToggle.classList.toggle("hidden", !showCourseTools);
   elements.resultSummary.textContent = summary;
+  if (!showCourseTools) updateCourseLoadMore();
   document.querySelectorAll(".page-tabs [data-route]").forEach((item) => {
     const route = item.dataset.route;
     const active = state.activePage === route
@@ -1045,6 +1005,7 @@ async function loadSupplementaryData() {
   state.supplementaryLoaded = true;
 
   composeCourses();
+  if (state.landingExpanded) mergeLandingCoursesFromFullData();
   render();
   if (elements.detailModal.classList.contains("open") && state.activeCourseId) {
     openCourseDetail(state.activeCourseId);
@@ -1194,6 +1155,8 @@ function syncCourseFilterInputs(filters = state.appliedFilters) {
 async function applyCourseFilters() {
   state.appliedFilters = readCourseFilterInputs();
   state.searchActivated = true;
+  state.visibleCourseCount = COURSE_PAGE_SIZE;
+  state.coursePageError = "";
   await ensureFullDataLoaded();
   if (state.activePage !== "courses") {
     navigate("courses");
@@ -1205,6 +1168,8 @@ async function applyCourseFilters() {
 function resetCourseFilters() {
   state.appliedFilters = emptyCourseFilters();
   state.searchActivated = false;
+  state.visibleCourseCount = COURSE_PAGE_SIZE;
+  state.coursePageError = "";
   syncCourseFilterInputs();
   if (state.activePage !== "courses") {
     navigate("courses");
@@ -1442,25 +1407,136 @@ function renderCalendar(courses) {
   `).join("");
 }
 
+function courseBrowseRank(course) {
+  if (course?.status === "cancelled") return 2;
+  return course?.status === "finished" || hasCourseEnded(course) ? 1 : 0;
+}
+
+function compareAdditionalLandingCourses(left, right) {
+  const leftRank = courseBrowseRank(left);
+  const rightRank = courseBrowseRank(right);
+  if (leftRank !== rightRank) return leftRank - rightRank;
+
+  const leftTime = new Date(courseScheduleStart(left) || 0).getTime();
+  const rightTime = new Date(courseScheduleStart(right) || 0).getTime();
+  if (leftTime !== rightTime) return leftRank === 0 ? leftTime - rightTime : rightTime - leftTime;
+  return String(left?.title || "").localeCompare(String(right?.title || ""), "ko");
+}
+
+function mergeLandingCoursesFromFullData() {
+  const fullCoursesById = new Map(state.composedCourses.map((course) => [course.id, course]));
+  const existingIds = new Set(state.landingCourses.map((course) => course.id));
+  const existingCourses = state.landingCourses
+    .map((course) => fullCoursesById.get(course.id) || course)
+    .filter((course) => course?.id);
+  const additionalCourses = state.composedCourses
+    .filter((course) => course?.id && course.published !== false && !existingIds.has(course.id))
+    .slice()
+    .sort(compareAdditionalLandingCourses);
+  state.landingCourses = [...existingCourses, ...additionalCourses];
+  state.landingExpanded = true;
+}
+
+function currentCourseResultTotal() {
+  if (state.searchActivated) return filteredCourses().length;
+  if (state.landingExpanded) return state.landingCourses.length;
+  return Math.max(Number(state.stats.courses || 0), state.landingCourses.length);
+}
+
+function updateCourseLoadMore({ total = 0, visible = 0 } = {}) {
+  if (!elements.courseLoadMore || !elements.courseLoadMoreButton || !elements.courseLoadMoreStatus) return;
+  const hasMore = visible < total;
+  const shouldShow = state.activePage === "courses"
+    && (hasMore || state.coursePageLoading || Boolean(state.coursePageError));
+  elements.courseLoadMore.classList.toggle("hidden", !shouldShow);
+  elements.courseLoadMore.setAttribute("aria-busy", state.coursePageLoading ? "true" : "false");
+  elements.courseLoadMoreButton.disabled = state.coursePageLoading;
+  elements.courseLoadMoreButton.textContent = state.coursePageLoading
+    ? "교육 불러오는 중..."
+    : state.coursePageError
+      ? "다시 불러오기"
+      : "교육 더 보기";
+  elements.courseLoadMoreStatus.textContent = state.coursePageLoading
+    ? "다음 교육을 불러오고 있습니다."
+    : state.coursePageError
+      ? state.coursePageError
+      : hasMore
+        ? `${total.toLocaleString("ko-KR")}개 중 ${visible.toLocaleString("ko-KR")}개를 표시했습니다.`
+        : "";
+}
+
+async function loadNextCoursePage() {
+  if (state.activePage !== "courses" || state.coursePageLoading) return;
+  const totalBeforeLoad = currentCourseResultTotal();
+  if (state.visibleCourseCount >= totalBeforeLoad && (state.searchActivated || state.landingExpanded)) return;
+
+  state.coursePageLoading = true;
+  state.coursePageError = "";
+  updateCourseLoadMore({
+    total: totalBeforeLoad,
+    visible: Math.min(state.visibleCourseCount, totalBeforeLoad),
+  });
+
+  try {
+    if (!state.searchActivated && !state.landingExpanded) {
+      const previousCount = state.landingCourses.length;
+      if (!state.fullDataLoaded) await ensureFullDataLoaded();
+      mergeLandingCoursesFromFullData();
+      if (state.landingCourses.length <= previousCount && totalBeforeLoad > previousCount) {
+        state.fullDataLoaded = false;
+        state.landingExpanded = false;
+        throw new Error("추가 교육을 불러오지 못했습니다.");
+      }
+    }
+    const total = currentCourseResultTotal();
+    state.visibleCourseCount = Math.min(total, state.visibleCourseCount + COURSE_PAGE_SIZE);
+  } catch (error) {
+    console.warn("[모두의 인문학] 추가 교육 확인 필요", error);
+    state.coursePageError = "추가 교육을 불러오지 못했습니다. 다시 시도해 주세요.";
+  } finally {
+    state.coursePageLoading = false;
+    if (state.activePage === "courses") renderCoursesPage();
+  }
+}
+
+function setupCourseLoadMore() {
+  elements.courseLoadMoreButton?.addEventListener("click", () => {
+    loadNextCoursePage().catch((error) => console.warn("[모두의 인문학] 추가 교육 확인 필요", error));
+  });
+  if (!("IntersectionObserver" in window) || !elements.courseLoadMore) return;
+  courseLoadObserver = new IntersectionObserver((entries) => {
+    if (entries.some((entry) => entry.isIntersecting) && !state.coursePageError) {
+      loadNextCoursePage().catch((error) => console.warn("[모두의 인문학] 추가 교육 확인 필요", error));
+    }
+  }, { rootMargin: "240px 0px", threshold: 0.01 });
+  courseLoadObserver.observe(elements.courseLoadMore);
+}
+
 function renderLandingCoursesPage() {
-  const featured = state.landingCourses.slice();
+  const total = currentCourseResultTotal();
+  const featured = state.landingCourses.slice(0, state.visibleCourseCount);
   const hasFeatured = featured.length > 0;
   const featuredLabel = state.featuredMode === "reviewed" ? "후기가 많은 종료 교육" : "곧 진행될 교육";
+  const hasMore = featured.length < total;
   setPageHeader({
     title: "교육 검색",
-    description: "필요한 교육을 바로 검색해 보세요. 첫 화면은 전체 목록 대신 가벼운 요약과 추천 교육만 보여줍니다.",
+    description: "필요한 교육을 바로 검색하거나 아래로 내려 더 많은 교육을 둘러보세요.",
     showCourseTools: true,
     summary: hasFeatured
-      ? `${featuredLabel} ${featured.length.toLocaleString("ko-KR")}개를 먼저 보여드립니다. 더 보려면 검색하기를 눌러 주세요.`
+      ? state.landingExpanded
+        ? `${total.toLocaleString("ko-KR")}개 교육 중 ${featured.length.toLocaleString("ko-KR")}개가 표시됩니다.${hasMore ? " 아래로 스크롤하면 더 볼 수 있습니다." : ""}`
+        : `${featuredLabel} ${featured.length.toLocaleString("ko-KR")}개를 먼저 보여드립니다.${hasMore ? " 아래로 스크롤하면 더 볼 수 있습니다." : ""}`
       : "검색어를 입력하거나 필터를 선택한 뒤 검색하기를 눌러 주세요.",
   });
   if (hasFeatured) {
     if (state.activeView === "calendar") renderCalendar(featured);
     else renderCards(featured);
+    updateCourseLoadMore({ total, visible: featured.length });
     return;
   }
   elements.courseResults.className = "content-stack";
   elements.courseResults.innerHTML = `<div class="empty">아직 추천할 교육이 없습니다. 검색하기를 누르면 등록된 교육을 확인할 수 있습니다.</div>`;
+  updateCourseLoadMore({ total, visible: 0 });
 }
 
 function renderCoursesPage() {
@@ -1468,18 +1544,20 @@ function renderCoursesPage() {
     renderLandingCoursesPage();
     return;
   }
-  const courses = filteredCourses();
+  const matchingCourses = filteredCourses();
+  const courses = matchingCourses.slice(0, state.visibleCourseCount);
   const organizations = publicOrganizations();
   setPageHeader({
     title: "교육 검색",
     description: "관심 있는 교육을 교육명, 부제, 알림 키워드, 강사, 장소, 단체명으로 찾아보세요.",
     showCourseTools: true,
     summary: state.courses.length
-      ? `${courses.length.toLocaleString("ko-KR")}개 교육이 표시됩니다.`
+      ? `${matchingCourses.length.toLocaleString("ko-KR")}개 교육 중 ${courses.length.toLocaleString("ko-KR")}개가 표시됩니다.${courses.length < matchingCourses.length ? " 아래로 스크롤하면 더 볼 수 있습니다." : ""}`
       : `등록된 교육은 아직 없고, ${organizations.length.toLocaleString("ko-KR")}개 단체가 등록되어 있습니다.`,
   });
   if (state.activeView === "calendar") renderCalendar(courses);
   else renderCards(courses);
+  updateCourseLoadMore({ total: matchingCourses.length, visible: courses.length });
 }
 
 function renderOrganizationsPage() {
@@ -2558,7 +2636,6 @@ function openCourseDetail(courseId) {
   const naverUrl = naverPlaceUrl(course.venue);
   const canApply = canApplyToCourse(course);
   const canReview = canWriteReviewForCourse(course);
-  const canAddCalendar = !["finished", "cancelled"].includes(course.status);
   const reviewEditorHtml = renderReviewForm(course);
   const postCourseContentHtml = canShowPostCourseContent(course)
     ? `
@@ -2594,7 +2671,6 @@ function openCourseDetail(courseId) {
         </ul>
         <div class="actions" style="margin-top: 14px;">
           ${canApply ? `<button class="btn small" type="button" data-apply-course="${course.id}">신청하기</button>` : `<button class="btn small secondary" type="button" disabled>신청 마감</button>`}
-          ${canAddCalendar ? `<button class="btn small secondary" type="button" data-add-calendar="${course.id}">캘린더 등록</button>` : ""}
           ${canReview ? `<button class="btn small secondary" type="button" data-login-for-review>${currentReviewForCourse(course.id) ? "내 후기 수정" : "후기 쓰기"}</button>` : ""}
         </div>
       </div>
@@ -3840,7 +3916,6 @@ function bindEvents() {
     const organizationButton = event.target.closest("[data-open-organization]");
     const instructorButton = event.target.closest("[data-open-instructor]");
     const instructorCoursesButton = event.target.closest("[data-open-instructor-courses]");
-    const calendarButton = event.target.closest("[data-add-calendar]");
     const closeButton = event.target.closest("[data-close-modal]");
     const loginForReview = event.target.closest("[data-login-for-review]");
     const loginForApplication = event.target.closest("[data-login-for-application]");
@@ -3906,11 +3981,6 @@ function bindEvents() {
     if (instructorCoursesButton) {
       await ensureFullDataLoaded();
       navigate("instructor", instructorCoursesButton.dataset.openInstructorCourses);
-      return;
-    }
-    if (calendarButton) {
-      const course = state.composedCourses.find((item) => item.id === calendarButton.dataset.addCalendar);
-      if (course) downloadCalendar(course);
       return;
     }
     if (applyButton) {
@@ -4074,6 +4144,7 @@ async function initialize() {
   const interestUnsubscribeToken = takeInterestUnsubscribeToken();
   applyRouteFromHash();
   bindEvents();
+  setupCourseLoadMore();
   await processInterestUnsubscribe(interestUnsubscribeToken);
   await loadLandingData();
   if (state.activePage !== "courses") {
