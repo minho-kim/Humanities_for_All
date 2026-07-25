@@ -3234,7 +3234,7 @@ function renderCourseForm(course = {}) {
         <label>교육명<input name="title" value="${escapeHtml(course.title || "")}" required></label>
         <label>부제(선택)<input name="subtitle" value="${escapeHtml(course.subtitle || "")}" maxlength="240" placeholder="제목을 보완하는 설명"></label>
         <label>알림 키워드(선택)<input name="alert_keywords" value="${escapeHtml(courseAlertKeywords(course).join(", "))}" maxlength="200" placeholder="예: 철학, 정치철학, 한나 아렌트"><small>쉼표로 구분해 최대 5개까지 입력합니다. 공개 화면에는 #해시태그로 표시됩니다.</small></label>
-        <label>대상(선택)<input name="audience" value="${escapeHtml(course.audience || "")}" maxlength="160" placeholder="예: 용인 시민, 청소년, 누구나"></label>
+        <label>추천 대상(선택)<input name="audience" value="${escapeHtml(course.audience || "")}" maxlength="160" placeholder="예: 청년, 인문학 입문자, 자녀 교육에 관심 있는 시민"></label>
         <label>형태(선택)<input name="delivery_format" value="${escapeHtml(course.delivery_format || "")}" maxlength="80" placeholder="예: 강연, 참여형 워크숍, 강연 및 토론"></label>
         ${renderCoursePickerField("organization", course.organization_id || "")}
         ${renderCoursePickerField("instructor", course.instructor_id || "")}
@@ -4023,7 +4023,7 @@ async function saveCourse(event) {
   const audience = String(formData.get("audience") || "").trim();
   const deliveryFormat = String(formData.get("delivery_format") || "").trim();
   if ([...audience].length > 160 || /[\u0000-\u001f\u007f]/.test(audience)) {
-    showToast("교육 대상은 160자 이내로 입력해 주세요.");
+    showToast("추천 대상은 160자 이내로 입력해 주세요.");
     form.elements.audience?.focus();
     return;
   }

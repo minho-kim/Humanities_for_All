@@ -459,10 +459,12 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 
 .detail-subtitle { margin: 14px 0 0; font-size: 1.02rem; }
 .detail-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr); gap: 18px; margin-top: 18px; }
-.course-reference-info { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0 0 14px; padding: 11px 12px; border: 1px solid #dbe7f5; border-radius: 0.8rem; background: #f4f8fc; }
+.course-reference-block { margin: 0 0 14px; padding: 11px 12px; border: 1px solid #dbe7f5; border-radius: 0.8rem; background: #f4f8fc; }
+.course-reference-info { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0; }
 .course-reference-info div { display: flex; gap: 8px; align-items: baseline; min-width: min(210px, 100%); }
 .course-reference-info dt { flex: 0 0 auto; color: var(--muted); font-size: 0.86rem; font-weight: 800; }
 .course-reference-info dd { margin: 0; color: var(--ink); font-weight: 700; word-break: keep-all; overflow-wrap: break-word; }
+.course-reference-note { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid #dbe7f5; color: var(--muted); font-size: 0.84rem; line-height: 1.5; word-break: keep-all; }
 .section { padding: 16px; border-radius: 0.9rem; background: #fff; border: 1px solid var(--line); }
 .section h3 { margin: 0 0 10px; }
 .session-list, .review-list, .media-grid, .plain-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }

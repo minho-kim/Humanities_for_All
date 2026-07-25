@@ -640,13 +640,17 @@ function courseSeriesSectionHtml(course) {
 }
 
 function courseReferenceInfoHtml(course) {
+  const audience = String(course?.audience || "").trim();
   const formatLabel = String(course?.delivery_format || "").trim();
-  if (!course?.audience && !formatLabel) return "";
+  if (!audience && !formatLabel) return "";
   return `
-    <dl class="course-reference-info" aria-label="교육 참고 정보">
-      ${course.audience ? `<div><dt>대상</dt><dd>${escapeHtml(course.audience)}</dd></div>` : ""}
-      ${formatLabel ? `<div><dt>형태</dt><dd>${escapeHtml(formatLabel)}</dd></div>` : ""}
-    </dl>
+    <div class="course-reference-block">
+      <dl class="course-reference-info" aria-label="교육 선택 참고 정보">
+        ${audience ? `<div><dt>추천 대상</dt><dd>${escapeHtml(audience)}</dd></div>` : ""}
+        ${formatLabel ? `<div><dt>형태</dt><dd>${escapeHtml(formatLabel)}</dd></div>` : ""}
+      </dl>
+      ${audience ? '<p class="course-reference-note">추천 대상과 관계없이 누구나 참여할 수 있습니다.</p>' : ""}
+    </div>
   `;
 }
 
