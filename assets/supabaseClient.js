@@ -10,7 +10,6 @@ export {
   SUPABASE_URL,
   URL_RULES,
   byId,
-  courseDeliveryFormatLabels,
   escapeHtml,
   formatDate,
   formatDateTime,

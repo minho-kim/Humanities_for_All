@@ -2,7 +2,6 @@ import {
   ARCHIVE_BUCKET,
   ATTENDANCE_DOCUMENT_BUCKET,
   SITE_MEDIA_BUCKET,
-  courseDeliveryFormatLabels,
   escapeHtml,
   formatDateTime,
   getCurrentUrlWithoutHash,
@@ -3216,9 +3215,6 @@ function renderCourseForm(course = {}) {
   const startMinValue = startValue && isBeforeCurrentMinute(new Date(startValue)) ? "" : nowValue;
   const endMinValue = startValue || nowValue;
   const previewStatus = course.status === "cancelled" ? "cancelled" : (hasCourseEnded({ ...course, starts_at: course.starts_at || firstSession.starts_at, ends_at: course.ends_at || firstSession.ends_at }) ? "finished" : "open");
-  const deliveryFormatOptions = Object.entries(courseDeliveryFormatLabels)
-    .map(([value, label]) => `<option value="${escapeHtml(value)}" ${course.delivery_format === value ? "selected" : ""}>${escapeHtml(label)}</option>`)
-    .join("");
   const autoStatusNote = `
     <p class="muted" style="margin-top: 8px;">
       상태는 자동으로 관리됩니다. 교육 전에는 ${statusBadge("open")}으로 저장되고, 종료 일시가 지나면 ${statusBadge("finished")}가 됩니다.
@@ -3239,7 +3235,7 @@ function renderCourseForm(course = {}) {
         <label>부제(선택)<input name="subtitle" value="${escapeHtml(course.subtitle || "")}" maxlength="240" placeholder="제목을 보완하는 설명"></label>
         <label>알림 키워드(선택)<input name="alert_keywords" value="${escapeHtml(courseAlertKeywords(course).join(", "))}" maxlength="200" placeholder="예: 철학, 정치철학, 한나 아렌트"><small>쉼표로 구분해 최대 5개까지 입력합니다. 공개 화면에는 #해시태그로 표시됩니다.</small></label>
         <label>대상(선택)<input name="audience" value="${escapeHtml(course.audience || "")}" maxlength="160" placeholder="예: 용인 시민, 청소년, 누구나"></label>
-        <label>형태(선택)<select name="delivery_format"><option value="">선택하지 않음</option>${deliveryFormatOptions}</select></label>
+        <label>형태(선택)<input name="delivery_format" value="${escapeHtml(course.delivery_format || "")}" maxlength="80" placeholder="예: 강연, 참여형 워크숍, 강연 및 토론"></label>
         ${renderCoursePickerField("organization", course.organization_id || "")}
         ${renderCoursePickerField("instructor", course.instructor_id || "")}
         ${renderCoursePickerField("venue", course.venue_id || "")}
@@ -4031,8 +4027,8 @@ async function saveCourse(event) {
     form.elements.audience?.focus();
     return;
   }
-  if (deliveryFormat && !Object.prototype.hasOwnProperty.call(courseDeliveryFormatLabels, deliveryFormat)) {
-    showToast("교육 형태를 다시 선택해 주세요.");
+  if ([...deliveryFormat].length > 80 || /[\u0000-\u001f\u007f]/.test(deliveryFormat)) {
+    showToast("교육 형태는 80자 이내로 입력해 주세요.");
     form.elements.delivery_format?.focus();
     return;
   }

@@ -10,7 +10,6 @@ import {
   getReviewAuthorName,
   groupBy,
   byId,
-  courseDeliveryFormatLabels,
   normalizeSafeUrl,
   shortDate,
   SUPABASE_PUBLISHABLE_KEY,
@@ -2533,7 +2532,7 @@ function courseSeriesSectionHtml(course) {
 }
 
 function courseReferenceInfoHtml(course) {
-  const formatLabel = courseDeliveryFormatLabels[course?.delivery_format] || "";
+  const formatLabel = String(course?.delivery_format || "").trim();
   if (!course?.audience && !formatLabel) return "";
   return `
     <dl class="course-reference-info" aria-label="교육 참고 정보">
