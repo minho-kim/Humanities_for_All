@@ -3,7 +3,7 @@ export const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_rXN3xjZ2aJGeb00QMEs1KQ_b
 export const ARCHIVE_BUCKET = "archive-media";
 export const SITE_MEDIA_BUCKET = "site-media";
 export const ATTENDANCE_DOCUMENT_BUCKET = "attendance-documents";
-export const APP_VERSION = "2026.07.25.1540";
+export const APP_VERSION = "2026.07.25.1545";
 
 export const URL_RULES = Object.freeze({
   external: Object.freeze({ protocols: ["https:"] }),
@@ -24,6 +24,11 @@ export const statusLabels = {
   finished: "종료",
   cancelled: "취소",
 };
+
+export const courseDeliveryFormatLabels = Object.freeze({
+  lecture: "강연",
+  workshop: "워크숍",
+});
 
 export const verificationLabels = {
   none: "후기",

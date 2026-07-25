@@ -2,6 +2,7 @@ import {
   ARCHIVE_BUCKET,
   ATTENDANCE_DOCUMENT_BUCKET,
   SITE_MEDIA_BUCKET,
+  courseDeliveryFormatLabels,
   escapeHtml,
   formatDateTime,
   getCurrentUrlWithoutHash,
@@ -1670,7 +1671,7 @@ function courseTemplateResultHtml(course) {
       </span>
       ${course.subtitle ? `<span>${escapeHtml(course.subtitle)}</span>` : ""}
       <span class="muted">${escapeHtml(shortDate(course.starts_at))} · ${escapeHtml(courseAlertKeywordText(course) || "알림 키워드 없음")} · ${escapeHtml(organization?.name || "단체 미정")} · ${escapeHtml(instructor?.name || "강사 미정")} · ${escapeHtml(venue?.name || "장소 미정")}</span>
-      <span class="muted">선택하면 단체, 강사, 장소, 알림 키워드, 요약, 상세 설명만 새 교육 입력폼에 복사합니다.</span>
+      <span class="muted">선택하면 단체, 강사, 장소, 알림 키워드, 대상, 형태, 요약, 상세 설명만 새 교육 입력폼에 복사합니다.</span>
     </button>
   `;
 }
@@ -1691,7 +1692,7 @@ function courseTemplateResultsHtml() {
 function renderCourseTemplateModalBody() {
   return `
     <div class="admin-search-picker">
-      <p class="muted">기존 교육의 운영 정보만 새 교육 입력폼으로 가져옵니다. 교육명, 시작·종료 일시, 자료, 신청자, 후기, 아카이브는 복사하지 않습니다.</p>
+      <p class="muted">기존 교육의 운영 정보(단체·강사·장소·알림 키워드·대상·형태·설명)를 새 교육 입력폼으로 가져옵니다. 교육명, 시작·종료 일시, 자료, 신청자, 후기, 아카이브는 복사하지 않습니다.</p>
       <label>불러올 교육 검색<input type="search" data-course-template-search value="${escapeHtml(state.courseTemplate.query || "")}" placeholder="교육명, 부제, 알림 키워드, 단체, 강사, 장소로 검색" autocomplete="off"></label>
       <div data-course-template-results>${courseTemplateResultsHtml()}</div>
     </div>
@@ -1723,6 +1724,8 @@ function courseTemplateDraftFrom(course) {
     title: "",
     subtitle: "",
     tags: courseAlertKeywords(course),
+    audience: course.audience || "",
+    delivery_format: course.delivery_format || "",
     organization_id: course.organization_id || "",
     instructor_id: course.instructor_id || "",
     venue_id: course.venue_id || "",
@@ -3213,6 +3216,9 @@ function renderCourseForm(course = {}) {
   const startMinValue = startValue && isBeforeCurrentMinute(new Date(startValue)) ? "" : nowValue;
   const endMinValue = startValue || nowValue;
   const previewStatus = course.status === "cancelled" ? "cancelled" : (hasCourseEnded({ ...course, starts_at: course.starts_at || firstSession.starts_at, ends_at: course.ends_at || firstSession.ends_at }) ? "finished" : "open");
+  const deliveryFormatOptions = Object.entries(courseDeliveryFormatLabels)
+    .map(([value, label]) => `<option value="${escapeHtml(value)}" ${course.delivery_format === value ? "selected" : ""}>${escapeHtml(label)}</option>`)
+    .join("");
   const autoStatusNote = `
     <p class="muted" style="margin-top: 8px;">
       상태는 자동으로 관리됩니다. 교육 전에는 ${statusBadge("open")}으로 저장되고, 종료 일시가 지나면 ${statusBadge("finished")}가 됩니다.
@@ -3232,6 +3238,8 @@ function renderCourseForm(course = {}) {
         <label>교육명<input name="title" value="${escapeHtml(course.title || "")}" required></label>
         <label>부제(선택)<input name="subtitle" value="${escapeHtml(course.subtitle || "")}" maxlength="240" placeholder="제목을 보완하는 설명"></label>
         <label>알림 키워드(선택)<input name="alert_keywords" value="${escapeHtml(courseAlertKeywords(course).join(", "))}" maxlength="200" placeholder="예: 철학, 정치철학, 한나 아렌트"><small>쉼표로 구분해 최대 5개까지 입력합니다. 공개 화면에는 #해시태그로 표시됩니다.</small></label>
+        <label>대상(선택)<input name="audience" value="${escapeHtml(course.audience || "")}" maxlength="160" placeholder="예: 용인 시민, 청소년, 누구나"></label>
+        <label>형태(선택)<select name="delivery_format"><option value="">선택하지 않음</option>${deliveryFormatOptions}</select></label>
         ${renderCoursePickerField("organization", course.organization_id || "")}
         ${renderCoursePickerField("instructor", course.instructor_id || "")}
         ${renderCoursePickerField("venue", course.venue_id || "")}
@@ -4016,9 +4024,23 @@ async function saveCourse(event) {
     return;
   }
   const alertKeywords = parsedKeywords.keywords;
+  const audience = String(formData.get("audience") || "").trim();
+  const deliveryFormat = String(formData.get("delivery_format") || "").trim();
+  if ([...audience].length > 160 || /[\u0000-\u001f\u007f]/.test(audience)) {
+    showToast("교육 대상은 160자 이내로 입력해 주세요.");
+    form.elements.audience?.focus();
+    return;
+  }
+  if (deliveryFormat && !Object.prototype.hasOwnProperty.call(courseDeliveryFormatLabels, deliveryFormat)) {
+    showToast("교육 형태를 다시 선택해 주세요.");
+    form.elements.delivery_format?.focus();
+    return;
+  }
   const payload = {
     title: String(formData.get("title")).trim(),
     subtitle: String(formData.get("subtitle") || "").trim() || null,
+    audience: audience || null,
+    delivery_format: deliveryFormat || null,
     topic: alertKeywords[0] || null,
     organization_id: String(formData.get("organization_id") || "").trim(),
     instructor_id: formData.get("instructor_id") || null,

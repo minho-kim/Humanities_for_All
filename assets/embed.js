@@ -4,6 +4,7 @@ import {
   SUPABASE_URL,
   URL_RULES,
   byId,
+  courseDeliveryFormatLabels,
   escapeHtml,
   formatDate,
   formatDateTime,
@@ -639,6 +640,17 @@ function courseSeriesSectionHtml(course) {
   `;
 }
 
+function courseReferenceInfoHtml(course) {
+  const formatLabel = courseDeliveryFormatLabels[course?.delivery_format] || "";
+  if (!course?.audience && !formatLabel) return "";
+  return `
+    <dl class="course-reference-info" aria-label="교육 참고 정보">
+      ${course.audience ? `<div><dt>대상</dt><dd>${escapeHtml(course.audience)}</dd></div>` : ""}
+      ${formatLabel ? `<div><dt>형태</dt><dd>${escapeHtml(formatLabel)}</dd></div>` : ""}
+    </dl>
+  `;
+}
+
 function openCourseDetail(courseId) {
   const course = courseById(courseId);
   if (!course) {
@@ -671,6 +683,7 @@ function openCourseDetail(courseId) {
     <div class="detail-grid">
       <div class="section">
         <h3>교육 정보</h3>
+        ${courseReferenceInfoHtml(course)}
         <p>${escapeHtml(course.description || course.summary || "")}</p>
         <ul class="session-list">${sessionListHtml(course)}</ul>
         <div class="actions" style="margin-top: 14px;">
