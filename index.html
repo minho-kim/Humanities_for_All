@@ -65,12 +65,16 @@
         <div class="result-summary" id="resultSummary" aria-live="polite">교육을 불러오는 중입니다.</div>
         <div class="toggle" aria-label="보기 방식">
           <button type="button" class="active" data-view="cards">카드</button>
-          <button type="button" data-view="calendar">달력형</button>
+          <button type="button" data-view="calendar">리스트형</button>
         </div>
       </div>
     </section>
 
     <section id="courseResults" class="course-grid" aria-live="polite"></section>
+    <div class="course-load-more hidden" id="courseLoadMore" aria-busy="false">
+      <button class="btn secondary" id="courseLoadMoreButton" type="button">교육 더 보기</button>
+      <p class="muted" id="courseLoadMoreStatus" aria-live="polite"></p>
+    </div>
   </main>
 
   <footer class="site-footer" aria-label="사이트 정보">
