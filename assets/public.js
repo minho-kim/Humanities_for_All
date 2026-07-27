@@ -2400,6 +2400,50 @@ function renderReviewForm(course) {
   `;
 }
 
+const APPLICATION_CONSENT_REQUIRED_NAMES = Object.freeze([
+  "privacy_agreement",
+  "age_14_confirmation",
+]);
+
+const APPLICATION_CONSENT_OPTIONAL_NAMES = Object.freeze([
+  "review_request_agreement",
+  "roundtable_notice_agreement",
+]);
+
+function updateApplicationConsentPresetState(form) {
+  if (!(form instanceof HTMLFormElement)) return;
+  const inputFor = (name) => form.querySelector(`input[name="${name}"]`);
+  const requiredInputs = APPLICATION_CONSENT_REQUIRED_NAMES.map(inputFor).filter(Boolean);
+  const optionalInputs = APPLICATION_CONSENT_OPTIONAL_NAMES.map(inputFor).filter(Boolean);
+  const requiredChecked = requiredInputs.length > 0 && requiredInputs.every((input) => input.checked);
+  const optionalChecked = optionalInputs.length > 0 && optionalInputs.every((input) => input.checked);
+  const optionalUnchecked = optionalInputs.every((input) => !input.checked);
+
+  form.querySelectorAll("[data-application-consent-preset]").forEach((button) => {
+    const selected = button.dataset.applicationConsentPreset === "all"
+      ? requiredChecked && optionalChecked
+      : requiredChecked && optionalUnchecked;
+    button.setAttribute("aria-pressed", String(selected));
+  });
+}
+
+function applyApplicationConsentPreset(button) {
+  const form = button.closest("form");
+  if (!(form instanceof HTMLFormElement)) return;
+  const preset = button.dataset.applicationConsentPreset;
+  if (preset !== "all" && preset !== "required") return;
+
+  APPLICATION_CONSENT_REQUIRED_NAMES.forEach((name) => {
+    const input = form.querySelector(`input[name="${name}"]`);
+    if (input) input.checked = true;
+  });
+  APPLICATION_CONSENT_OPTIONAL_NAMES.forEach((name) => {
+    const input = form.querySelector(`input[name="${name}"]`);
+    if (input) input.checked = preset === "all";
+  });
+  updateApplicationConsentPresetState(form);
+}
+
 function applicationPrivacyConsentHtml({ guest = false, roundtableEnabled = false } = {}) {
   return `
     <div class="section privacy-consent" style="margin-top: 12px;">
@@ -2420,7 +2464,12 @@ function applicationPrivacyConsentHtml({ guest = false, roundtableEnabled = fals
           <li><strong>전화번호 안내</strong><br>휴대전화번호는 유료 본인 인증 없이 신청자가 입력한 값을 저장하며, 교육 운영 안내 연락에만 사용합니다.</li>
         </ul>
       </details>
-      <label><span><input name="privacy_agreement" type="checkbox" required style="width:auto;min-height:auto;"> 개인정보 수집 및 이용에 동의합니다.</span></label>
+      <div class="actions consent-choice-actions" role="group" aria-label="개인정보 동의 항목 빠른 선택">
+        <button class="btn small secondary" type="button" data-application-consent-preset="all" aria-pressed="false">전체 동의</button>
+        <button class="btn small secondary" type="button" data-application-consent-preset="required" aria-pressed="false">필수 항목만 동의</button>
+      </div>
+      <p class="muted consent-choice-help">전체 동의에는 아래 선택 항목이 포함됩니다. 선택 항목에 동의하지 않아도 교육을 신청할 수 있으며, 각 항목을 따로 바꿀 수 있습니다.</p>
+      <label><span><input name="privacy_agreement" type="checkbox" required style="width:auto;min-height:auto;"> <strong>필수:</strong> 개인정보 수집 및 이용에 동의합니다.</span></label>
       <label style="margin-top: 8px;"><span><input name="age_14_confirmation" type="checkbox" required style="width:auto;min-height:auto;"> <strong>필수:</strong> 만 14세 이상입니다.</span></label>
       <p class="muted">생년월일이나 유료 본인인증을 받지 않는 자기확인 항목입니다.</p>
       <label style="margin-top: 8px;"><span><input name="review_request_agreement" type="checkbox" style="width:auto;min-height:auto;"> <strong>선택:</strong> 참석 확인 후 교육 종료 2일 뒤 후기 작성 요청 문자 1회를 받는 데 동의합니다.</span></label>
@@ -2686,7 +2735,6 @@ function openCourseDetail(courseId) {
   const course = state.composedCourses.find((item) => item.id === courseId);
   if (!course) return;
   state.activeCourseId = courseId;
-  const orgSlug = course.organization?.slug || "";
   const orgName = course.organization?.name || "";
   const orgWebsiteUrl = normalizeSafeUrl(course.organization?.website_url, URL_RULES.external);
   const instructorProfileUrl = normalizeSafeUrl(course.instructor?.profile_url, URL_RULES.external);
@@ -2714,7 +2762,7 @@ function openCourseDetail(courseId) {
     <span class="badge ${getStatusClass(course.status)}">${escapeHtml(statusLabels[course.status] || course.status)}</span>
     ${alertKeywordBadgesHtml(course)}
     ${courseSeriesBadgeHtml(course)}
-    <span class="badge gray">${orgSlug ? `<button class="badge-link" type="button" data-open-organization="${escapeHtml(orgSlug)}">${escapeHtml(orgName)}</button>` : escapeHtml(orgName)}</span>
+    <span class="badge gray">${escapeHtml(orgName)}</span>
   `;
   elements.detailTitle.textContent = course.title;
   elements.detailBody.innerHTML = `
@@ -2753,11 +2801,10 @@ function openCourseDetail(courseId) {
       </div>
       <div class="section">
         <h3>주관 단체</h3>
-        <p><strong>${orgSlug ? `<button class="text-link" type="button" data-open-organization="${escapeHtml(orgSlug)}">${escapeHtml(orgName)}</button>` : escapeHtml(orgName || "단체 미정")}</strong></p>
-        <p>${escapeHtml(course.organization?.description || "단체 소개가 곧 업데이트됩니다.")}</p>
+        <p><strong>${escapeHtml(orgName || "단체 미정")}</strong></p>
+        ${course.organization?.description ? `<p>${escapeHtml(course.organization.description)}</p>` : ""}
         ${course.organization?.contact_email ? `<p class="muted">연락처: ${escapeHtml(course.organization.contact_email)}</p>` : ""}
         <div class="actions" style="margin-top: 10px;">
-          ${orgSlug ? `<button class="btn small secondary" type="button" data-open-organization="${escapeHtml(orgSlug)}">단체 소개</button>` : ""}
           ${orgWebsiteUrl ? `<a class="btn small secondary" href="${escapeHtml(orgWebsiteUrl)}" target="_blank" rel="noreferrer">홈페이지</a>` : ""}
         </div>
       </div>
@@ -4104,6 +4151,11 @@ function bindEvents() {
     const addInterestButton = event.target.closest("[data-add-interest]");
     const addInterestKeywordButton = event.target.closest("[data-add-interest-keyword]");
     const removeInterestButton = event.target.closest("[data-remove-interest]");
+    const applicationConsentPresetButton = event.target.closest("[data-application-consent-preset]");
+    if (applicationConsentPresetButton) {
+      applyApplicationConsentPreset(applicationConsentPresetButton);
+      return;
+    }
     if (addInterestKeywordButton) {
       addInterestKeyword();
       return;
@@ -4258,6 +4310,11 @@ function bindEvents() {
       }
     }
     phoneInput.setSelectionRange(cursor, cursor);
+  });
+
+  document.body.addEventListener("change", (event) => {
+    const consentInput = event.target.closest("#applicationForm input[name='privacy_agreement'], #applicationForm input[name='age_14_confirmation'], #applicationForm input[name='review_request_agreement'], #applicationForm input[name='roundtable_notice_agreement']");
+    if (consentInput) updateApplicationConsentPresetState(consentInput.form);
   });
 
   document.body.addEventListener("submit", (event) => {

@@ -615,6 +615,13 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 .privacy-consent details { margin: 10px 0 12px; }
 .privacy-consent summary { cursor: pointer; color: var(--brand); font-weight: 900; }
 .privacy-consent .plain-list { margin-top: 10px; }
+.consent-choice-actions { margin: 12px 0 0; }
+.consent-choice-actions .btn[aria-pressed="true"] {
+  background: var(--brand);
+  color: #fff;
+  border-color: var(--brand);
+}
+.consent-choice-help { margin: 8px 0 12px; }
 .privacy-details summary { cursor: pointer; color: var(--brand); font-weight: 900; }
 .consent-check { margin-top: 12px; }
 .demographics-form > .row-top { align-items: flex-start; margin-bottom: 12px; }
