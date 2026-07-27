@@ -126,6 +126,7 @@ const APPLICATION_TERMS_VERSION = "2026-07-24-v6";
 const DEMOGRAPHICS_TERMS_VERSION = "2026-07-24-v3";
 const INTEREST_NOTIFICATION_CONSENT_VERSION = "2026-07-24-v2";
 const COURSE_NOTIFICATION_TERMS_VERSION = "2026-07-24-v2";
+const ROUNDTABLE_NOTIFICATION_TERMS_VERSION = "2026-07-27-v1";
 const GUEST_CONTACT_SESSION_KEY = "humanities-guest-contact";
 const GUEST_ACCESS_TOKEN_SESSION_KEY = "humanities-guest-access-tokens";
 const DEMOGRAPHIC_BANNER_DISMISS_KEY = "humanities-demographic-banner-dismissed";
@@ -702,7 +703,7 @@ async function loadGuestAccessForCourse(courseId, { force = false } = {}) {
   state.guestAccessByCourse[courseId] = { loading: true };
   try {
     const supabase = await getSupabaseClient();
-    const { data, error } = await supabase.rpc("get_guest_course_access_v4", {
+    const { data, error } = await supabase.rpc("get_guest_course_access_v5", {
       p_course_id: courseId,
       p_access_token: accessToken,
     });
@@ -1793,6 +1794,7 @@ function renderApplicationHistory() {
             ${isAttendanceConfirmed(application) ? `<p class="muted">참석 인증: ${escapeHtml(shortDate(application.attendance_confirmed_at))}</p>` : ""}
             ${application.note ? `<p><strong>기대평 / 강사에게 하고 싶은 질문</strong><br>${escapeHtml(application.note)}</p>` : ""}
             ${renderCourseNotificationPreferences(application)}
+            ${renderRoundtableConsent(application)}
             ${course ? `<button class="btn small secondary" type="button" data-open-course="${course.id}">교육 보기</button>` : ""}
           </div>
         `;
@@ -1818,6 +1820,52 @@ function renderCourseNotificationPreferences(application) {
         <button class="btn small secondary" type="submit">알림 저장</button>
       </div>
       <p class="muted">체크를 끄고 저장하면 이후 해당 채널의 변경·리마인드 안내는 발송하지 않습니다. 신청·취소 완료와 교육 취소 같은 필수 운영 안내는 별도로 발송될 수 있습니다.</p>
+    </form>
+  `;
+}
+
+function roundtableConsentDetails() {
+  return `
+    <details>
+      <summary>정담회 문자 안내 동의 내용</summary>
+      <p class="muted">참석한 교육의 경험과 의견을 나누는 오프라인 후기 정담회가 열릴 때 일정·장소·참여 방법을 문자로 안내합니다. 교육 신청·참석 정보, 신청자명과 휴대전화번호, 동의·철회 및 발송 기록을 이용하며, 동의 철회 또는 마지막 참석 교육 기준 6개월 뒤 개인정보 파기 중 먼저 도래하는 때까지 보관합니다.</p>
+      <p class="muted">선택 사항이며 동의하지 않거나 철회해도 교육 신청·참여·후기 작성에 불이익이 없습니다.</p>
+    </details>
+  `;
+}
+
+function renderRoundtableConsent(application) {
+  if (!application || isCancelledApplication(application) || !isAttendanceConfirmed(application)) return "";
+  return `
+    <form data-roundtable-consent-form class="course-notice-form">
+      <input type="hidden" name="application_id" value="${escapeHtml(application.id)}">
+      <div>
+        <strong>교육 후기 정담회 안내</strong>
+        <p class="muted">오프라인 후기 정담회가 열릴 때 문자 안내를 받을지 선택하세요.</p>
+      </div>
+      <div class="course-notice-controls">
+        <label><span><input type="checkbox" name="enabled" ${application.roundtable_notice_enabled === true ? "checked" : ""}> 문자 안내 받기</span></label>
+        <button class="btn small secondary" type="submit">동의 저장</button>
+      </div>
+      ${roundtableConsentDetails()}
+    </form>
+  `;
+}
+
+function renderGuestRoundtableConsent(course, access) {
+  if (!course || !access?.attendance_confirmed_at || access.application_status === "cancelled") return "";
+  return `
+    <form data-guest-roundtable-consent-form class="course-notice-form">
+      <input type="hidden" name="course_id" value="${escapeHtml(course.id)}">
+      <div>
+        <strong>교육 후기 정담회 안내</strong>
+        <p class="muted">오프라인 후기 정담회가 열릴 때 문자 안내를 받을지 선택하세요.</p>
+      </div>
+      <div class="course-notice-controls">
+        <label><span><input type="checkbox" name="enabled" ${access.roundtable_notice_enabled === true ? "checked" : ""}> 문자 안내 받기</span></label>
+        <button class="btn small secondary" type="submit">동의 저장</button>
+      </div>
+      ${roundtableConsentDetails()}
     </form>
   `;
 }
@@ -2422,6 +2470,7 @@ function renderGuestApplicationForm(course) {
           <button class="btn small danger" type="button" data-delete-guest-application-note>기대평·질문 삭제</button>
         ` : ""}
         ${renderGuestCourseNotificationPreferences(course, activeGuestAccess)}
+        ${renderGuestRoundtableConsent(course, activeGuestAccess)}
         ${attendanceConfirmed ? `<p class="muted">참석 인증이 완료되어 후기를 작성할 수 있습니다.</p>` : ""}
         ${canCancelApplication ? `<button class="btn small secondary" type="button" data-cancel-guest-application>신청 취소</button>` : ""}
       </div>
@@ -2496,6 +2545,7 @@ function renderApplicationForm(course) {
         </div>
         <p class="muted">신청자: ${escapeHtml(existingApplication.applicant_name)} · 연락처: ${escapeHtml(existingApplication.phone)}</p>
         ${renderCourseNotificationPreferences(existingApplication)}
+        ${renderRoundtableConsent(existingApplication)}
         ${renderApplicationNoteForm(existingApplication, course)}
         ${attendanceConfirmed
           ? `<p class="muted">참석 인증이 완료되어 후기를 작성할 수 있습니다.</p>`
@@ -3001,6 +3051,89 @@ async function handleGuestCourseNotificationPreferencesSubmit(event) {
     if (submitButton && document.body.contains(submitButton)) {
       submitButton.disabled = false;
       submitButton.textContent = "알림 저장";
+    }
+  }
+}
+
+async function handleRoundtableConsentSubmit(event) {
+  event.preventDefault();
+  if (!state.user) {
+    openModal(elements.loginModal);
+    return;
+  }
+  const form = getSubmitForm(event);
+  if (!form) return;
+  const applicationId = String(form.elements.application_id?.value || "");
+  const application = state.applications.find((item) => item.id === applicationId && !isCancelledApplication(item));
+  if (!application || !isAttendanceConfirmed(application)) {
+    showToast("참석 확인된 교육 신청을 찾지 못했습니다.");
+    return;
+  }
+
+  const submitButton = form.querySelector("button[type='submit']");
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "저장 중...";
+  }
+  try {
+    const supabase = await getSupabaseClient();
+    const { error } = await supabase.rpc("set_my_roundtable_consent", {
+      p_application_id: applicationId,
+      p_enabled: form.elements.enabled?.checked === true,
+      p_terms_version: ROUNDTABLE_NOTIFICATION_TERMS_VERSION,
+    });
+    if (error) throw error;
+    await loadApplicationState(supabase);
+    if (elements.profileModal.classList.contains("open") && elements.profileEyebrow.textContent === "나의 정보") openMyInfo();
+    if (elements.detailModal.classList.contains("open") && state.activeCourseId) openCourseDetail(state.activeCourseId);
+    showToast(form.elements.enabled?.checked === true ? "정담회 문자 안내에 동의했습니다." : "정담회 문자 안내 동의를 철회했습니다.");
+  } catch (error) {
+    console.error("Roundtable consent save failed", error);
+    showToast(error?.message || "정담회 안내 동의를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+  } finally {
+    if (submitButton && document.body.contains(submitButton)) {
+      submitButton.disabled = false;
+      submitButton.textContent = "동의 저장";
+    }
+  }
+}
+
+async function handleGuestRoundtableConsentSubmit(event) {
+  event.preventDefault();
+  const form = getSubmitForm(event);
+  if (!form) return;
+  const courseId = String(form.elements.course_id?.value || "");
+  const accessToken = validGuestAccessToken(state.guestAccessTokens[courseId]);
+  const access = activeGuestAccessForCourse(courseId);
+  if (!courseId || !accessToken || !access?.attendance_confirmed_at) {
+    showToast("비회원 신청 확인 링크를 다시 열어 주세요.");
+    return;
+  }
+
+  const submitButton = form.querySelector("button[type='submit']");
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "저장 중...";
+  }
+  try {
+    const supabase = await getSupabaseClient();
+    const { error } = await supabase.rpc("set_guest_roundtable_consent_v1", {
+      p_course_id: courseId,
+      p_access_token: accessToken,
+      p_enabled: form.elements.enabled?.checked === true,
+      p_terms_version: ROUNDTABLE_NOTIFICATION_TERMS_VERSION,
+    });
+    if (error) throw error;
+    await loadGuestAccessForCourse(courseId, { force: true });
+    if (elements.detailModal.classList.contains("open") && state.activeCourseId === courseId) openCourseDetail(courseId);
+    showToast(form.elements.enabled?.checked === true ? "정담회 문자 안내에 동의했습니다." : "정담회 문자 안내 동의를 철회했습니다.");
+  } catch (error) {
+    console.error("Guest roundtable consent save failed", error);
+    showToast(error?.message || "정담회 안내 동의를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+  } finally {
+    if (submitButton && document.body.contains(submitButton)) {
+      submitButton.disabled = false;
+      submitButton.textContent = "동의 저장";
     }
   }
 }
@@ -4099,6 +4232,8 @@ function bindEvents() {
     if (event.target.id === "interestNotificationsForm") return handleInterestNotificationsSubmit(event);
     if (event.target.matches("[data-course-notification-form]")) return handleCourseNotificationPreferencesSubmit(event);
     if (event.target.matches("[data-guest-course-notification-form]")) return handleGuestCourseNotificationPreferencesSubmit(event);
+    if (event.target.matches("[data-roundtable-consent-form]")) return handleRoundtableConsentSubmit(event);
+    if (event.target.matches("[data-guest-roundtable-consent-form]")) return handleGuestRoundtableConsentSubmit(event);
     if (event.target.matches("[data-application-note-form]")) return handleApplicationNoteSubmit(event);
     if (event.target.id === "reviewForm") return handleReviewSubmit(event);
     if (event.target.id === "reportForm") return handleReportSubmit(event);

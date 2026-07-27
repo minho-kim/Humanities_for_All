@@ -78,6 +78,9 @@ const state = {
     organization: "",
     instructor: "",
   },
+  roundtable: {
+    courseId: "",
+  },
   selectedArchiveId: "",
   organizations: [],
   instructors: [],
@@ -93,6 +96,7 @@ const state = {
   winners: [],
   smsDeliveries: [],
   demographicSummary: null,
+  memberSummary: null,
 };
 
 const elements = {
@@ -145,6 +149,7 @@ const ATTENDANCE_DOCUMENT_TYPES = new Map([
 const ATTENDANCE_DOCUMENT_MAX_BYTES = 15 * 1024 * 1024;
 const ADMIN_SEARCH_LIMIT = 10;
 const COURSE_NOTIFICATION_TERMS_VERSION = "2026-07-24-v2";
+const ROUNDTABLE_NOTIFICATION_TERMS_VERSION = "2026-07-27-v1";
 const COURSE_PICKER_LIMIT = 12;
 const SMS_TEST_MESSAGE = "[모두의 인문학] 문자 발송 연동 테스트입니다.";
 const rosterNameSorter = new Intl.Collator("ko-KR", {
@@ -965,6 +970,26 @@ function renderAdminCourseNotificationPreferences(application) {
   `;
 }
 
+function renderAdminRoundtableConsent(application) {
+  if (!application || application.status === "cancelled" || application.registration_source === "anonymized") return "";
+  const attendanceConfirmed = Boolean(application.attendance_confirmed_at);
+  const phoneAvailable = /^010\d{8}$/.test(String(application.phone || "").replace(/\D/g, ""));
+  return `
+    <form data-admin-roundtable-consent-form class="course-notice-form">
+      <input type="hidden" name="application_id" value="${escapeHtml(application.id)}">
+      <div>
+        <strong>후기 정담회 문자 동의</strong>
+        <p class="muted">참여자가 연락해 변경을 요청한 경우에만 대신 켜거나 끄세요. 참석 확인된 참여자만 켤 수 있습니다.</p>
+      </div>
+      <div class="course-notice-controls">
+        <label title="${attendanceConfirmed && phoneAvailable ? "" : "참석 확인과 유효한 010 번호가 필요합니다."}"><span><input type="checkbox" name="enabled" ${application.roundtable_notice_enabled === true ? "checked" : ""} ${attendanceConfirmed && phoneAvailable ? "" : "disabled"}> 정담회 문자 수신</span></label>
+      </div>
+      <label class="consent-check"><span><input type="checkbox" name="participant_request_confirmed" required style="width:auto;min-height:auto;"> 참여자의 동의 변경 요청을 확인했습니다.</span></label>
+      <div class="actions"><button class="btn small secondary" type="submit">정담회 동의 저장</button><span class="muted">관리자·변경 전후 값·시각이 감사 기록에 남습니다.</span></div>
+    </form>
+  `;
+}
+
 function renderApplicationRow(application) {
   const attendanceConfirmed = Boolean(application.attendance_confirmed_at);
   const course = courseById(application.course_id);
@@ -996,8 +1021,9 @@ function renderApplicationRow(application) {
       <div class="muted">${escapeHtml(sourceLabel)}일 ${escapeHtml(shortDate(application.created_at))}</div>
       <p class="muted">이메일: ${escapeHtml(application.email || "없음")} · 전화: ${escapeHtml(application.phone || "없음")}</p>
       ${application.note ? `<p><strong>기대평 / 강사에게 하고 싶은 질문</strong><br>${escapeHtml(application.note)}</p>` : ""}
-      <p class="muted">개인정보 수집 동의 완료 · 교육별 선택 안내: 이메일 ${application.email_course_notice_enabled === true ? "수신" : "미수신"}, 문자 ${application.sms_course_notice_enabled === true ? "수신" : "미수신"}</p>
+      <p class="muted">개인정보 수집 동의 완료 · 교육별 선택 안내: 이메일 ${application.email_course_notice_enabled === true ? "수신" : "미수신"}, 문자 ${application.sms_course_notice_enabled === true ? "수신" : "미수신"} · 정담회 문자 ${application.roundtable_notice_enabled === true ? "동의" : "미동의"}</p>
       ${renderAdminCourseNotificationPreferences(application)}
+      ${renderAdminRoundtableConsent(application)}
       <div class="actions">
         ${attendanceConfirmed
           ? `<span class="badge green">참석 확인 ${escapeHtml(shortDate(application.attendance_confirmed_at))}</span>
@@ -1540,6 +1566,7 @@ function courseFilterTargetLabel(target) {
     application: "신청 관리 교육",
     expectation: "기대평·문의 교육",
     archive: "아카이브 교육",
+    roundtable: "정담회 문자 대상 교육",
   }[target] || "교육";
 }
 
@@ -1547,6 +1574,7 @@ function currentCourseFilterSelectedId(target) {
   if (target === "application") return state.applicationFilters.courseId || "";
   if (target === "expectation") return state.expectationFilters.courseId || "";
   if (target === "archive") return document.querySelector("#archiveForm input[name='course_id']")?.value || "";
+  if (target === "roundtable") return state.roundtable.courseId || "";
   return "";
 }
 
@@ -1654,6 +1682,12 @@ function setCourseFilterSelection(target, courseId = "") {
     if (hiddenInput) hiddenInput.value = courseId;
     updateArchiveCourseFilterSelected();
     closeModal(elements.adminNoticeModal);
+    return;
+  }
+  if (target === "roundtable") {
+    state.roundtable.courseId = courseId;
+    closeModal(elements.adminNoticeModal);
+    renderDashboard();
   }
 }
 
@@ -2301,10 +2335,17 @@ async function loadAdminData() {
   state.venues = venues;
 
   state.demographicSummary = null;
+  state.memberSummary = null;
   if (isOwner()) {
-    const { data, error: demographicError } = await supabase.rpc("get_demographic_summary");
+    const [demographicResult, memberResult] = await Promise.all([
+      supabase.rpc("get_demographic_summary"),
+      supabase.rpc("get_owner_member_summary"),
+    ]);
+    const { data, error: demographicError } = demographicResult;
     if (demographicError) console.warn("[모두의 인문학] 선택 이용자 통계 확인 지연", demographicError);
     else state.demographicSummary = data || null;
+    if (memberResult.error) console.warn("[모두의 인문학] 가입자 현황 확인 지연", memberResult.error);
+    else state.memberSummary = memberResult.data || null;
   }
 
   if (isOwner()) await loadOrganizationAdmins();
@@ -2644,6 +2685,7 @@ const SMS_EVENT_LABELS = {
   course_update: "교육 정보 변경",
   course_cancellation: "교육 취소",
   review_request: "후기 작성 요청",
+  roundtable_invitation: "후기 정담회 안내",
 };
 
 const SMS_STATUS_LABELS = {
@@ -2663,7 +2705,7 @@ function renderSmsDeliveryHistory() {
     <section class="section" style="margin-top: 16px;">
       <div class="row-top">
         <div>
-          <h3>자동 문자 발송 현황</h3>
+          <h3>문자 발송 현황</h3>
           <p class="muted">휴대전화번호는 끝 4자리만 표시합니다. 담당 단체 관리자는 자기 교육의 발송 이력만 볼 수 있습니다.</p>
         </div>
         <div class="actions">
@@ -2680,6 +2722,7 @@ function renderSmsDeliveryHistory() {
           <li><strong>교육 변경·취소</strong><br>교육명·일시·장소·강사가 바뀌거나 교육이 취소되면 변경된 항목을 보냅니다.</li>
           <li><strong>교육 전날</strong><br>교육 전날 오후 6시 이후 일시, 장소, 상세 링크를 보냅니다.</li>
           <li><strong>후기 요청</strong><br>참석 확인된 사람에게 교육 종료 2일 뒤 오전 10시 이후 후기 링크를 보냅니다. 이미 후기를 썼으면 보내지 않습니다.</li>
+          <li><strong>후기 정담회</strong><br>관리자가 교육별로 대상과 내용을 확인해 발송하며, 참석 확인과 별도 수신 동의가 현재 켜진 사람에게만 보냅니다.</li>
         </ul>
       </details>
       <div class="table-list" style="margin-top: 12px;">
@@ -2694,8 +2737,76 @@ function renderSmsDeliveryHistory() {
             ${delivery.message_body ? `<p style="white-space:pre-line;">${escapeHtml(delivery.message_body)}</p>` : ""}
             ${delivery.status === "failed" && delivery.last_error ? `<p class="muted">발송 오류: ${escapeHtml(delivery.last_error)}</p>` : ""}
           </div>
-        `).join("") || `<div class="empty compact-empty">아직 자동 문자 발송 이력이 없습니다.</div>`}
+        `).join("") || `<div class="empty compact-empty">아직 문자 발송 이력이 없습니다.</div>`}
       </div>
+    </section>
+  `;
+}
+
+function roundtableEligibleApplications(courseId = "") {
+  return activeApplications().filter((application) => (
+    (!courseId || application.course_id === courseId)
+    && Boolean(application.attendance_confirmed_at)
+    && application.roundtable_notice_enabled === true
+    && /^010\d{8}$/.test(String(application.phone || "").replace(/\D/g, ""))
+    && application.registration_source !== "anonymized"
+  ));
+}
+
+function uniqueRoundtablePeopleCount(applications) {
+  return new Set(applications.map((application) => String(application.phone || "").replace(/\D/g, ""))).size;
+}
+
+function renderOwnerMemberSummary() {
+  if (!isOwner()) return "";
+  const summary = state.memberSummary;
+  if (!summary) {
+    return `<section class="section" style="margin-top:16px;"><h3>가입자 현황</h3><p class="muted">가입자 집계를 불러오지 못했습니다. 새로고침해 주세요.</p></section>`;
+  }
+  return `
+    <section class="section" style="margin-top:16px;">
+      <div class="row-top">
+        <div>
+          <h3>가입자 현황</h3>
+          <p class="muted">전체 관리자에게만 보이는 익명 집계입니다. 단체·전체 관리자 계정은 이용자 수에서 제외합니다.</p>
+        </div>
+        <span class="badge gray">운영자 계정 ${Number(summary.admin_account_count || 0).toLocaleString("ko-KR")}개</span>
+      </div>
+      <div class="stat-grid">
+        <div class="stat" style="background:#fff;color:var(--ink);"><strong>${Number(summary.member_count || 0).toLocaleString("ko-KR")}</strong><span>이용자 계정</span></div>
+        <div class="stat" style="background:#fff;color:var(--ink);"><strong>${Number(summary.new_member_30d_count || 0).toLocaleString("ko-KR")}</strong><span>최근 30일 가입</span></div>
+        <div class="stat" style="background:#fff;color:var(--ink);"><strong>${Number(summary.today_member_count || 0).toLocaleString("ko-KR")}</strong><span>오늘 가입</span></div>
+        <div class="stat" style="background:#fff;color:var(--ink);"><strong>${Number(summary.profile_completed_count || 0).toLocaleString("ko-KR")}</strong><span>신청 정보 등록</span></div>
+      </div>
+    </section>
+  `;
+}
+
+function renderRoundtableDashboard() {
+  const courseId = state.roundtable.courseId || "";
+  const allCount = uniqueRoundtablePeopleCount(roundtableEligibleApplications());
+  const selectedCount = courseId ? uniqueRoundtablePeopleCount(roundtableEligibleApplications(courseId)) : 0;
+  return `
+    <section class="section" style="margin-top:16px;">
+      <div class="row-top">
+        <div>
+          <h3>후기 정담회 참여 의향</h3>
+          <p class="muted">담당 범위에서 참석 확인과 별도 문자 동의가 모두 유효한 사람을 휴대전화번호 기준으로 중복 없이 셉니다.</p>
+        </div>
+        <span class="badge green">동의 ${allCount.toLocaleString("ko-KR")}명</span>
+      </div>
+      <form data-roundtable-sms-form>
+        <h4>동의자에게 문자 보내기</h4>
+        <p class="muted">오발송을 막기 위해 교육을 하나 선택해야 합니다. 담당 단체 관리자는 자기 단체 교육만 검색·발송할 수 있습니다.</p>
+        ${renderCourseFilterControl("roundtable", courseId, { emptyLabel: "발송할 교육을 선택해 주세요." })}
+        ${courseId ? `<p class="muted">현재 발송 가능 대상: <strong>${selectedCount.toLocaleString("ko-KR")}명</strong></p>` : ""}
+        <label style="margin-top:12px;">문자 내용<textarea name="message" required maxlength="500" rows="5" placeholder="정담회 일시, 장소, 신청 방법과 문의처를 적어 주세요."></textarea><small class="muted">교육명과 수신 설정 링크는 자동으로 덧붙습니다. 500자 이하로 작성해 주세요.</small></label>
+        <label class="consent-check"><span><input type="checkbox" name="send_confirmed" required style="width:auto;min-height:auto;"> 선택한 교육, 대상 인원과 문자 내용을 확인했습니다.</span></label>
+        <div class="actions">
+          <button class="btn small" type="submit" ${courseId && selectedCount > 0 ? "" : "disabled"}>문자 발송 대기열에 등록</button>
+          <span class="muted">등록 뒤 발송 직전에 동의를 다시 확인합니다.</span>
+        </div>
+      </form>
     </section>
   `;
 }
@@ -2704,6 +2815,7 @@ function renderDashboard() {
   const publicReviews = visibleReviews().length;
   const hiddenReviews = state.reviews.length - publicReviews;
   const applications = activeApplications();
+  const roundtablePeople = uniqueRoundtablePeopleCount(roundtableEligibleApplications());
   elements.adminContent.innerHTML = `
     <h2>운영 현황</h2>
     <div class="stat-grid" style="margin-bottom: 16px;">
@@ -2712,12 +2824,15 @@ function renderDashboard() {
       <div class="stat" style="background:#fff;color:var(--ink);"><strong>${applications.length}</strong><span>신청</span></div>
       <div class="stat" style="background:#fff;color:var(--ink);"><strong>${state.archives.length}</strong><span>아카이브</span></div>
       <div class="stat" style="background:#fff;color:var(--ink);"><strong>${state.reviews.length}</strong><span>후기</span></div>
+      <div class="stat" style="background:#fff;color:var(--ink);"><strong>${roundtablePeople}</strong><span>정담회 동의</span></div>
     </div>
     <div class="admin-grid">
       <div class="section"><h3>교육 신청</h3><p>현재 신청 ${applications.length}건</p></div>
       <div class="section"><h3>후기 관리</h3><p>공개 후기 ${publicReviews}개 · 숨김 ${hiddenReviews}개</p></div>
       ${isOwner() ? `<div class="section"><h3>관리자 전용 추첨</h3><p>추첨 기록 ${state.draws.length}건 · 당첨 이력 ${state.winners.length}건</p></div>` : ""}
     </div>
+    ${renderOwnerMemberSummary()}
+    ${renderRoundtableDashboard()}
     ${renderSmsDeliveryHistory()}
     ${renderSkySmsTest()}
     ${renderDashboardMetricSection("organization")}
@@ -4601,6 +4716,85 @@ async function saveAdminCourseNotificationPreferences(event) {
   }
 }
 
+async function saveAdminRoundtableConsent(event) {
+  event.preventDefault();
+  const form = getSubmitForm(event);
+  if (!form) return;
+  const applicationId = String(form.elements.application_id?.value || "");
+  const application = state.applications.find((item) => item.id === applicationId);
+  if (!application) throw new Error("동의를 변경할 교육 참여자를 찾지 못했습니다.");
+  if (form.elements.participant_request_confirmed?.checked !== true) {
+    throw new Error("참여자의 동의 변경 요청을 확인해 주세요.");
+  }
+
+  const submitButton = form.querySelector("button[type='submit']");
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "저장 중...";
+  }
+  try {
+    const { data, error } = await supabase.rpc("admin_set_roundtable_consent", {
+      p_application_id: applicationId,
+      p_enabled: form.elements.enabled?.checked === true,
+      p_participant_request_confirmed: true,
+      p_terms_version: ROUNDTABLE_NOTIFICATION_TERMS_VERSION,
+    });
+    if (error) throw error;
+    application.roundtable_notice_enabled = data?.enabled === true;
+    renderApplications();
+    showToast("참여자 요청에 따른 정담회 문자 동의를 저장하고 감사 기록을 남겼습니다.");
+  } finally {
+    if (submitButton && document.body.contains(submitButton)) {
+      submitButton.disabled = false;
+      submitButton.textContent = "정담회 동의 저장";
+    }
+  }
+}
+
+async function queueRoundtableSms(event) {
+  event.preventDefault();
+  const form = getSubmitForm(event);
+  if (!form) return;
+  const courseId = state.roundtable.courseId || "";
+  const message = String(form.elements.message?.value || "").trim();
+  if (!courseId || !courseById(courseId)) throw new Error("문자를 보낼 교육을 검색해 선택해 주세요.");
+  if (!message || message.length > 500) throw new Error("문자 내용을 1자 이상 500자 이하로 입력해 주세요.");
+  if (form.elements.send_confirmed?.checked !== true) throw new Error("선택한 교육, 대상 인원과 문자 내용을 확인해 주세요.");
+  if (!uniqueRoundtablePeopleCount(roundtableEligibleApplications(courseId))) {
+    throw new Error("현재 이 교육에는 문자 발송이 가능한 정담회 동의자가 없습니다.");
+  }
+
+  const submitButton = form.querySelector("button[type='submit']");
+  const idempotencyKey = form.dataset.idempotencyKey || window.crypto.randomUUID();
+  form.dataset.idempotencyKey = idempotencyKey;
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "등록 중...";
+  }
+  try {
+    const { data, error } = await supabase.rpc("queue_managed_roundtable_sms", {
+      p_course_id: courseId,
+      p_message: message,
+      p_idempotency_key: idempotencyKey,
+    });
+    if (error) throw error;
+    const queuedCount = Number(data?.queued_count || 0);
+    const batchCount = Number(data?.batch_total_count || 0);
+    await loadAdminData();
+    delete form.dataset.idempotencyKey;
+    state.tab = "dashboard";
+    renderDashboard();
+    showToast(queuedCount > 0
+      ? `정담회 문자 ${queuedCount.toLocaleString("ko-KR")}건을 발송 대기열에 등록했습니다.`
+      : `같은 발송 작업 ${batchCount.toLocaleString("ko-KR")}건이 이미 등록되어 중복 등록하지 않았습니다.`);
+  } finally {
+    if (submitButton && document.body.contains(submitButton)) {
+      submitButton.disabled = false;
+      submitButton.textContent = "문자 발송 대기열에 등록";
+    }
+  }
+}
+
 async function confirmApplicationAttendance(applicationId) {
   const application = state.applications.find((item) => item.id === applicationId);
   const course = courseById(application?.course_id);
@@ -4799,6 +4993,7 @@ async function reload() {
     state.winners = [];
     state.smsDeliveries = [];
     state.demographicSummary = null;
+    state.memberSummary = null;
     state.organizationAdmins = [];
     state.organizationAdminsError = "";
     render();
@@ -5410,6 +5605,8 @@ function bindEvents() {
       if (event.target.id === "organizationAdminForm") return await inviteOrganizationAdmin(event);
       if (event.target.matches("[data-application-name-search-form]")) return applyApplicationNameSearch(event);
       if (event.target.matches("[data-admin-course-notification-form]")) return await saveAdminCourseNotificationPreferences(event);
+      if (event.target.matches("[data-admin-roundtable-consent-form]")) return await saveAdminRoundtableConsent(event);
+      if (event.target.matches("[data-roundtable-sms-form]")) return await queueRoundtableSms(event);
       if (event.target.matches("[data-attendance-document-form]")) return await saveAttendanceDocument(event);
       if (event.target.matches("[data-walk-in-search-form]")) return await searchWalkInCandidates(event);
       if (event.target.matches("[data-guest-walk-in-form]")) return await addGuestWalkInAttendee(event);
