@@ -126,7 +126,7 @@ const APPLICATION_TERMS_VERSION = "2026-07-24-v6";
 const DEMOGRAPHICS_TERMS_VERSION = "2026-07-24-v3";
 const INTEREST_NOTIFICATION_CONSENT_VERSION = "2026-07-24-v2";
 const COURSE_NOTIFICATION_TERMS_VERSION = "2026-07-24-v2";
-const ROUNDTABLE_NOTIFICATION_TERMS_VERSION = "2026-07-27-v1";
+const ROUNDTABLE_NOTIFICATION_TERMS_VERSION = "2026-07-27-v2";
 const GUEST_CONTACT_SESSION_KEY = "humanities-guest-contact";
 const GUEST_ACCESS_TOKEN_SESSION_KEY = "humanities-guest-access-tokens";
 const DEMOGRAPHIC_BANNER_DISMISS_KEY = "humanities-demographic-banner-dismissed";
@@ -1828,20 +1828,21 @@ function roundtableConsentDetails() {
   return `
     <details>
       <summary>정담회 문자 안내 동의 내용</summary>
-      <p class="muted">참석한 교육의 경험과 의견을 나누는 오프라인 후기 정담회가 열릴 때 일정·장소·참여 방법을 문자로 안내합니다. 교육 신청·참석 정보, 신청자명과 휴대전화번호, 동의·철회 및 발송 기록을 이용하며, 동의 철회 또는 마지막 참석 교육 기준 6개월 뒤 개인정보 파기 중 먼저 도래하는 때까지 보관합니다.</p>
+      <p class="muted">참석한 교육의 경험과 의견을 나누는 오프라인 후기 정담회가 열릴 때 일정·장소·참여 방법을 문자로 안내합니다. 교육 신청 시 또는 신청 후 동의할 수 있지만 실제 문자는 관리자가 참석을 확인한 사람에게만 보냅니다.</p>
+      <p class="muted">교육 신청·참석 정보, 신청자명과 휴대전화번호, 동의·철회 및 발송 기록을 이용하며, 동의 철회 또는 마지막 참석 교육 기준 6개월 뒤 개인정보 파기 중 먼저 도래하는 때까지 보관합니다.</p>
       <p class="muted">선택 사항이며 동의하지 않거나 철회해도 교육 신청·참여·후기 작성에 불이익이 없습니다.</p>
     </details>
   `;
 }
 
 function renderRoundtableConsent(application) {
-  if (!application || isCancelledApplication(application) || !isAttendanceConfirmed(application)) return "";
+  if (!application || isCancelledApplication(application)) return "";
   return `
     <form data-roundtable-consent-form class="course-notice-form">
       <input type="hidden" name="application_id" value="${escapeHtml(application.id)}">
       <div>
         <strong>교육 후기 정담회 안내</strong>
-        <p class="muted">오프라인 후기 정담회가 열릴 때 문자 안내를 받을지 선택하세요.</p>
+        <p class="muted">신청 단계에서 미리 선택할 수 있으며, 참석 확인된 경우에만 문자 안내 대상이 됩니다.</p>
       </div>
       <div class="course-notice-controls">
         <label><span><input type="checkbox" name="enabled" ${application.roundtable_notice_enabled === true ? "checked" : ""}> 문자 안내 받기</span></label>
@@ -1853,13 +1854,13 @@ function renderRoundtableConsent(application) {
 }
 
 function renderGuestRoundtableConsent(course, access) {
-  if (!course || !access?.attendance_confirmed_at || access.application_status === "cancelled") return "";
+  if (!course || !access || access.application_status === "cancelled") return "";
   return `
     <form data-guest-roundtable-consent-form class="course-notice-form">
       <input type="hidden" name="course_id" value="${escapeHtml(course.id)}">
       <div>
         <strong>교육 후기 정담회 안내</strong>
-        <p class="muted">오프라인 후기 정담회가 열릴 때 문자 안내를 받을지 선택하세요.</p>
+        <p class="muted">신청 단계에서 미리 선택할 수 있으며, 참석 확인된 경우에만 문자 안내 대상이 됩니다.</p>
       </div>
       <div class="course-notice-controls">
         <label><span><input type="checkbox" name="enabled" ${access.roundtable_notice_enabled === true ? "checked" : ""}> 문자 안내 받기</span></label>
@@ -2399,7 +2400,7 @@ function renderReviewForm(course) {
   `;
 }
 
-function applicationPrivacyConsentHtml({ guest = false } = {}) {
+function applicationPrivacyConsentHtml({ guest = false, roundtableEnabled = false } = {}) {
   return `
     <div class="section privacy-consent" style="margin-top: 12px;">
       <h3>개인정보 수집·이용 동의</h3>
@@ -2424,6 +2425,9 @@ function applicationPrivacyConsentHtml({ guest = false } = {}) {
       <p class="muted">생년월일이나 유료 본인인증을 받지 않는 자기확인 항목입니다.</p>
       <label style="margin-top: 8px;"><span><input name="review_request_agreement" type="checkbox" style="width:auto;min-height:auto;"> <strong>선택:</strong> 참석 확인 후 교육 종료 2일 뒤 후기 작성 요청 문자 1회를 받는 데 동의합니다.</span></label>
       <p class="muted">선택 동의를 하지 않아도 교육 신청·참여와 참석 확인 후 후기 작성에는 불이익이 없습니다.</p>
+      <label style="margin-top: 8px;"><span><input name="roundtable_notice_agreement" type="checkbox" style="width:auto;min-height:auto;" ${roundtableEnabled ? "checked" : ""}> <strong>선택:</strong> 참석 후 오프라인 후기 정담회가 열릴 때 문자 안내를 받는 데 동의합니다.</span></label>
+      <p class="muted">신청할 때 미리 선택할 수 있지만 실제 문자는 관리자가 참석을 확인한 사람에게만 보냅니다. 신청 후에도 언제든 수신 여부를 변경할 수 있습니다.</p>
+      ${roundtableConsentDetails()}
     </div>
   `;
 }
@@ -2501,7 +2505,10 @@ function renderGuestApplicationForm(course) {
         </div>
         <p class="muted">이메일을 선택하려면 위 이메일 입력란도 작성해 주세요. 링크를 잃은 경우 운영자에게 설정 변경을 요청할 수 있습니다.</p>
       </fieldset>
-      ${applicationPrivacyConsentHtml({ guest: true })}
+      ${applicationPrivacyConsentHtml({
+        guest: true,
+        roundtableEnabled: guestAccess?.roundtable_notice_enabled === true,
+      })}
       <div class="actions" style="margin-top: 12px;">
         <button class="btn" type="submit">${isReapplication ? "비회원으로 다시 신청하기" : "비회원으로 신청하기"}</button>
         <span class="badge gray">이 접속 중 이름·연락처를 다시 입력하지 않아도 됩니다</span>
@@ -2567,6 +2574,7 @@ function renderApplicationForm(course) {
   const defaultNote = cancelledApplication?.note || "";
   const defaultEmailCourseNotice = cancelledApplication?.email_course_notice_enabled !== false;
   const defaultSmsCourseNotice = cancelledApplication?.sms_course_notice_enabled !== false;
+  const defaultRoundtableNotice = cancelledApplication?.roundtable_notice_enabled === true;
   return `
     <form id="applicationForm">
       <input type="hidden" name="course_id" value="${escapeHtml(course.id)}">
@@ -2597,7 +2605,7 @@ function renderApplicationForm(course) {
           <label><span><input type="checkbox" name="course_sms_notice" ${defaultSmsCourseNotice ? "checked" : ""}> 문자</span></label>
         </div>
       </fieldset>
-      ${applicationPrivacyConsentHtml()}
+      ${applicationPrivacyConsentHtml({ roundtableEnabled: defaultRoundtableNotice })}
       <div class="actions" style="margin-top: 12px;">
         <button class="btn" type="submit">${cancelledApplication ? "교육 다시 신청하기" : "교육 신청하기"}</button>
         <span class="badge green">다음 신청 때 이름과 전화번호가 자동 입력됩니다</span>
@@ -2824,6 +2832,7 @@ async function handleApplicationSubmit(event) {
     return;
   }
   const reviewRequestAgreed = formData.get("review_request_agreement") === "on";
+  const roundtableNoticeAgreed = formData.get("roundtable_notice_agreement") === "on";
   const emailCourseNoticeEnabled = formData.get("course_email_notice") === "on";
   const smsCourseNoticeEnabled = formData.get("course_sms_notice") === "on";
 
@@ -2859,6 +2868,7 @@ async function handleApplicationSubmit(event) {
 
       rememberGuestContact({ applicant_name: applicantName, phone, email });
       let preferenceSaveFailed = false;
+      let roundtableSaveFailed = false;
       const { error: preferenceError } = await supabase.rpc("set_guest_course_notification_preferences_v1", {
         p_course_id: course.id,
         p_access_token: result.access_token,
@@ -2870,11 +2880,25 @@ async function handleApplicationSubmit(event) {
         preferenceSaveFailed = true;
         console.error("Guest course notification preferences save after application failed", preferenceError);
       }
-      state.guestAccessByCourse[course.id] = { ...result, expectation_body: note || null };
+      const { error: roundtableError } = await supabase.rpc("set_guest_roundtable_consent_v2", {
+        p_course_id: course.id,
+        p_access_token: result.access_token,
+        p_enabled: roundtableNoticeAgreed,
+        p_terms_version: ROUNDTABLE_NOTIFICATION_TERMS_VERSION,
+      });
+      if (roundtableError) {
+        roundtableSaveFailed = true;
+        console.error("Guest roundtable consent save after application failed", roundtableError);
+      }
+      state.guestAccessByCourse[course.id] = {
+        ...result,
+        expectation_body: note || null,
+        roundtable_notice_enabled: roundtableNoticeAgreed && !roundtableSaveFailed,
+      };
       await loadGuestAccessForCourse(course.id, { force: true });
       if (state.supplementaryLoaded && note) await loadSupplementaryData();
-      showToast(preferenceSaveFailed
-        ? "교육 신청은 완료됐지만 일정 알림 설정은 저장하지 못했습니다. 확인 링크 화면에서 다시 저장해 주세요."
+      showToast(preferenceSaveFailed || roundtableSaveFailed
+        ? "교육 신청은 완료됐지만 선택 알림 설정 일부를 저장하지 못했습니다. 확인 링크 화면에서 다시 저장해 주세요."
         : result.result_state === "existing"
         ? "이미 접수된 비회원 신청을 확인했습니다."
         : result.result_state === "reapplied"
@@ -2929,6 +2953,7 @@ async function handleApplicationSubmit(event) {
     if (!application?.application_id) throw new Error("신청 저장 결과를 확인하지 못했습니다.");
 
     let preferenceSaveFailed = false;
+    let roundtableSaveFailed = false;
     const { error: preferenceError } = await supabase.rpc("set_my_course_notification_preferences", {
       p_application_id: application.application_id,
       p_email_enabled: emailCourseNoticeEnabled,
@@ -2940,10 +2965,20 @@ async function handleApplicationSubmit(event) {
       console.error("Course notification preferences save after application failed", preferenceError);
     }
 
+    const { error: roundtableError } = await supabase.rpc("set_my_roundtable_consent_v2", {
+      p_application_id: application.application_id,
+      p_enabled: roundtableNoticeAgreed,
+      p_terms_version: ROUNDTABLE_NOTIFICATION_TERMS_VERSION,
+    });
+    if (roundtableError) {
+      roundtableSaveFailed = true;
+      console.error("Roundtable consent save after application failed", roundtableError);
+    }
+
     await loadApplicationState(supabase);
     void requestNotificationDispatch(supabase, "course_application", application.application_id);
-    showToast(preferenceSaveFailed
-      ? "교육 신청은 완료됐지만 일정 알림 설정은 저장하지 못했습니다. 아래 알림 설정을 다시 확인해 주세요."
+    showToast(preferenceSaveFailed || roundtableSaveFailed
+      ? "교육 신청은 완료됐지만 선택 알림 설정 일부를 저장하지 못했습니다. 아래 알림 설정을 다시 확인해 주세요."
       : application.result_state === "existing"
         ? "이미 접수된 교육 신청과 알림 설정을 확인했습니다."
         : application.result_state === "reapplied" || cancelledApplication
@@ -3065,8 +3100,8 @@ async function handleRoundtableConsentSubmit(event) {
   if (!form) return;
   const applicationId = String(form.elements.application_id?.value || "");
   const application = state.applications.find((item) => item.id === applicationId && !isCancelledApplication(item));
-  if (!application || !isAttendanceConfirmed(application)) {
-    showToast("참석 확인된 교육 신청을 찾지 못했습니다.");
+  if (!application) {
+    showToast("정담회 안내를 변경할 교육 신청을 찾지 못했습니다.");
     return;
   }
 
@@ -3077,7 +3112,7 @@ async function handleRoundtableConsentSubmit(event) {
   }
   try {
     const supabase = await getSupabaseClient();
-    const { error } = await supabase.rpc("set_my_roundtable_consent", {
+    const { error } = await supabase.rpc("set_my_roundtable_consent_v2", {
       p_application_id: applicationId,
       p_enabled: form.elements.enabled?.checked === true,
       p_terms_version: ROUNDTABLE_NOTIFICATION_TERMS_VERSION,
@@ -3105,7 +3140,7 @@ async function handleGuestRoundtableConsentSubmit(event) {
   const courseId = String(form.elements.course_id?.value || "");
   const accessToken = validGuestAccessToken(state.guestAccessTokens[courseId]);
   const access = activeGuestAccessForCourse(courseId);
-  if (!courseId || !accessToken || !access?.attendance_confirmed_at) {
+  if (!courseId || !accessToken || !access) {
     showToast("비회원 신청 확인 링크를 다시 열어 주세요.");
     return;
   }
@@ -3117,7 +3152,7 @@ async function handleGuestRoundtableConsentSubmit(event) {
   }
   try {
     const supabase = await getSupabaseClient();
-    const { error } = await supabase.rpc("set_guest_roundtable_consent_v1", {
+    const { error } = await supabase.rpc("set_guest_roundtable_consent_v2", {
       p_course_id: courseId,
       p_access_token: accessToken,
       p_enabled: form.elements.enabled?.checked === true,
