@@ -20,8 +20,10 @@ const state = {
   user: null,
   adminProfile: null,
   adminProfileError: null,
+  isSuperOwner: false,
   organizationAdminLinks: [],
   organizationAdmins: [],
+  platformAdmins: [],
   organizationAdminsError: "",
   organizationAdminsLoading: false,
   isLoggingIn: false,
@@ -205,6 +207,10 @@ function isAdmin() {
 
 function isOwner() {
   return state.adminProfile?.role === "owner";
+}
+
+function isSuperOwner() {
+  return isOwner() && state.isSuperOwner === true;
 }
 
 function managedOrganizationIds() {
@@ -2189,10 +2195,11 @@ async function refreshSession() {
   state.user = data.session?.user || null;
   state.adminProfile = null;
   state.adminProfileError = null;
+  state.isSuperOwner = false;
   state.organizationAdminLinks = [];
 
   if (state.user) {
-    const [profileResult, organizationLinksResult] = await Promise.all([
+    const [profileResult, organizationLinksResult, superOwnerResult] = await Promise.all([
       supabase
         .from("admin_profiles")
         .select("*")
@@ -2202,6 +2209,7 @@ async function refreshSession() {
         .from("organization_admins")
         .select("id,organization_id,user_id,display_name,role,created_at")
         .eq("user_id", state.user.id),
+      supabase.rpc("is_platform_super_owner"),
     ]);
 
     if (profileResult.error || organizationLinksResult.error) {
@@ -2210,6 +2218,11 @@ async function refreshSession() {
     }
     state.adminProfile = profileResult.data || null;
     state.organizationAdminLinks = organizationLinksResult.data || [];
+    if (superOwnerResult.error) {
+      console.warn("[모두의 인문학] 최고 관리자 권한 확인 지연", superOwnerResult.error);
+    } else {
+      state.isSuperOwner = superOwnerResult.data === true;
+    }
   }
 
   updateAdminNavigationVisibility();
@@ -2217,6 +2230,7 @@ async function refreshSession() {
     signedIn: Boolean(state.user),
     email: state.user?.email || null,
     isOwner: isOwner(),
+    isSuperOwner: isSuperOwner(),
     managedOrganizationCount: managedOrganizationIds().size,
     adminProfileError: state.adminProfileError?.message || null,
   });
@@ -2231,11 +2245,13 @@ function renderAuthStatus() {
     return;
   }
 
-  const role = isOwner()
-    ? "전체 관리자"
-    : state.organizationAdminLinks.length
-      ? `단체 관리자 · 연결 단체 ${managedOrganizationIds().size}곳`
-      : "관리자 권한 없음";
+  const role = isSuperOwner()
+    ? "최고 관리자"
+    : isOwner()
+      ? "전체 관리자"
+      : state.organizationAdminLinks.length
+        ? `단체 관리자 · 연결 단체 ${managedOrganizationIds().size}곳`
+        : "관리자 권한 없음";
   const administratorName = state.adminProfile?.display_name
     || state.organizationAdminLinks.find((link) => link.display_name)?.display_name
     || "";
@@ -2352,6 +2368,7 @@ async function loadAdminData() {
   if (isOwner()) await loadOrganizationAdmins();
   else {
     state.organizationAdmins = [];
+    state.platformAdmins = [];
     state.organizationAdminsError = "";
   }
 
@@ -2482,13 +2499,21 @@ async function loadOrganizationAdmins() {
   try {
     const data = await invokeOrganizationAdminFunction("list");
     state.organizationAdmins = data.admins || [];
+    state.platformAdmins = data.platform_admins || [];
   } catch (error) {
     state.organizationAdmins = [];
+    state.platformAdmins = [];
     state.organizationAdminsError = error.message;
     console.error("[모두의 인문학] 단체 관리자 목록 조회 실패", error);
   } finally {
     state.organizationAdminsLoading = false;
   }
+}
+
+function canRemoveOrganizationAdminLink(admin) {
+  if (admin?.platform_role !== "owner") return true;
+  const linkCount = state.organizationAdmins.filter((item) => item.user_id === admin.user_id).length;
+  return linkCount > 1;
 }
 
 function renderOrganizationAdmins() {
@@ -2498,9 +2523,38 @@ function renderOrganizationAdmins() {
   }
 
   elements.adminContent.innerHTML = `
-    <h2>단체 관리자</h2>
-    <p class="muted">이메일로 관리자를 초대하고 담당 단체를 연결합니다. 초대받은 관리자는 연결된 단체의 교육·신청·후기·아카이브만 관리할 수 있습니다.</p>
+    <h2>관리자 관리</h2>
+    <p class="muted">전체 관리자는 단체 관리자를 초대·연결·해제할 수 있습니다. 전체 관리자 권한 자체의 부여와 회수는 최고 관리자만 할 수 있습니다.</p>
+    <section class="section" style="margin-bottom: 18px;">
+      <div class="row-top">
+        <div>
+          <h3>전체 관리자</h3>
+          <p class="muted">모든 단체와 운영 정보를 관리하지만, 최고 관리자가 아니면 전체 관리자 권한은 변경할 수 없습니다.</p>
+        </div>
+        <span class="badge gray">${state.platformAdmins.length.toLocaleString("ko-KR")}명</span>
+      </div>
+      <div class="table-list" style="margin-top: 12px;">
+        ${state.organizationAdminsLoading
+          ? `<div class="empty compact-empty">전체 관리자 목록을 불러오는 중입니다.</div>`
+          : state.platformAdmins.map((admin) => `
+            <div class="table-row">
+              <div class="row-top">
+                <strong>${escapeHtml(admin.display_name || admin.email || "관리자")}</strong>
+                <span class="badge ${admin.is_super_owner ? "green" : "gray"}">${admin.is_super_owner ? "최고 관리자" : "전체 관리자"}</span>
+              </div>
+              ${admin.display_name ? `<p class="muted">${escapeHtml(admin.email || "이메일 정보 없음")}</p>` : ""}
+              <p class="muted">단체 관리자 연결 ${Number(admin.organization_count || 0).toLocaleString("ko-KR")}곳${admin.organization_names ? ` · ${escapeHtml(admin.organization_names)}` : ""}</p>
+              ${isSuperOwner() && !admin.is_super_owner ? `
+                <div class="actions">
+                  <button class="btn small danger" type="button" data-set-platform-admin-role="${escapeHtml(admin.user_id)}" data-platform-admin-enabled="false">전체 관리자 권한 회수</button>
+                </div>
+              ` : ""}
+            </div>
+          `).join("") || `<div class="empty compact-empty">등록된 전체 관리자가 없습니다.</div>`}
+      </div>
+    </section>
     <form id="organizationAdminForm" class="section">
+      <h3>단체 관리자 초대·연결</h3>
       <div class="admin-grid">
         <label>관리자 이름 (선택)<input name="display_name" type="text" placeholder="담당자 이름을 알면 입력" autocomplete="name" maxlength="80"></label>
         <label>관리자 이메일<input name="email" type="email" placeholder="manager@example.com" autocomplete="off" required maxlength="320"></label>
@@ -2513,7 +2567,7 @@ function renderOrganizationAdmins() {
       <p class="muted" style="margin-top: 10px;">기존 회원 이메일이면 바로 연결하고, 가입하지 않은 이메일이면 관리자 초대 메일을 발송합니다.</p>
     </form>
     <div class="row-top" style="margin: 18px 0 10px;">
-      <h3>연결된 관리자</h3>
+      <h3>연결된 단체 관리자</h3>
       <span class="badge gray">${state.organizationAdmins.length.toLocaleString("ko-KR")}건</span>
     </div>
     ${state.organizationAdminsError ? `<div class="empty">목록 조회 실패: ${escapeHtml(state.organizationAdminsError)}</div>` : ""}
@@ -2524,13 +2578,17 @@ function renderOrganizationAdmins() {
           <div class="table-row">
             <div class="row-top">
               <strong>${escapeHtml(admin.display_name || admin.email || "관리자")}</strong>
-              <span class="badge ${admin.is_confirmed ? "green" : "gray"}">${admin.is_confirmed ? "이메일 확인" : "초대 대기"}</span>
+              <span class="actions">
+                ${admin.platform_role === "owner" ? `<span class="badge green">전체 관리자 권한 있음</span>` : ""}
+                <span class="badge ${admin.is_confirmed ? "green" : "gray"}">${admin.is_confirmed ? "이메일 확인" : "초대 대기"}</span>
+              </span>
             </div>
             ${admin.display_name ? `<p class="muted">${escapeHtml(admin.email || "이메일 정보 없음")}</p>` : ""}
             <p class="muted">담당 단체: ${escapeHtml(admin.organization_name)}</p>
             <div class="actions">
               <button class="btn small secondary" type="button" data-edit-organization-admin="${escapeHtml(admin.id)}">이름·연결 수정</button>
-              <button class="btn small danger" type="button" data-remove-organization-admin="${escapeHtml(admin.id)}">연결 해제</button>
+              ${isSuperOwner() && admin.platform_role !== "owner" ? `<button class="btn small" type="button" data-set-platform-admin-role="${escapeHtml(admin.user_id)}" data-platform-admin-enabled="true">전체 관리자 권한 부여</button>` : ""}
+              <button class="btn small danger" type="button" data-remove-organization-admin="${escapeHtml(admin.id)}" ${canRemoveOrganizationAdminLink(admin) ? "" : "disabled"}>${canRemoveOrganizationAdminLink(admin) ? "연결 해제" : "전체 권한 먼저 회수"}</button>
             </div>
           </div>
         `).join("") || `<div class="empty">연결된 단체 관리자가 없습니다.</div>`}
@@ -2595,6 +2653,22 @@ async function removeOrganizationAdmin(linkId) {
   await loadOrganizationAdmins();
   renderOrganizationAdmins();
   showToast("단체 관리자 연결을 해제했습니다. 사용자 계정은 삭제하지 않았습니다.");
+}
+
+async function setPlatformAdminRole(targetUserId, enabled) {
+  if (!isSuperOwner()) throw new Error("최고 관리자만 전체 관리자 권한을 변경할 수 있습니다.");
+  const data = await invokeOrganizationAdminFunction("set_platform_admin_role", {
+    target_user_id: targetUserId,
+    enabled,
+    confirmation: enabled ? "GRANT_PLATFORM_ADMIN" : "REVOKE_PLATFORM_ADMIN",
+  });
+  await loadOrganizationAdmins();
+  renderOrganizationAdmins();
+  showToast(data.changed === false
+    ? enabled ? "이미 전체 관리자 권한이 있습니다." : "이미 전체 관리자 권한이 회수되었습니다."
+    : enabled
+      ? "전체 관리자 권한을 부여했습니다. 기존 단체 관리자 연결도 유지됩니다."
+      : "전체 관리자 권한을 회수했습니다. 기존 단체 관리자 권한은 유지됩니다.");
 }
 
 const DEMOGRAPHIC_VALUE_LABELS = {
@@ -5077,6 +5151,7 @@ async function reload() {
     state.demographicSummary = null;
     state.memberSummary = null;
     state.organizationAdmins = [];
+    state.platformAdmins = [];
     state.organizationAdminsError = "";
     render();
     return;
@@ -5134,6 +5209,7 @@ function bindEvents() {
     const confirmDetachCourseSeriesButton = event.target.closest("[data-confirm-detach-course-series]");
     const deleteEntityButton = event.target.closest("[data-delete-entity]");
     const editOrganizationAdminButton = event.target.closest("[data-edit-organization-admin]");
+    const platformAdminRoleButton = event.target.closest("[data-set-platform-admin-role]");
     const removeOrganizationAdminButton = event.target.closest("[data-remove-organization-admin]");
     const downloadDashboardStatsButton = event.target.closest("[data-download-dashboard-stats]");
     const confirmChangeNotificationButton = event.target.closest("[data-confirm-change-notification]");
@@ -5231,6 +5307,37 @@ function bindEvents() {
     }
     if (detachCourseSeriesButton) {
       openCourseSeriesDetachNotice(detachCourseSeriesButton.dataset.detachCourseSeries);
+      return;
+    }
+    if (platformAdminRoleButton) {
+      const enabled = platformAdminRoleButton.dataset.platformAdminEnabled === "true";
+      const defaultLabel = enabled ? "전체 관리자 권한 부여" : "전체 관리자 권한 회수";
+      if (platformAdminRoleButton.dataset.confirmPlatformAdmin !== "true") {
+        platformAdminRoleButton.dataset.confirmPlatformAdmin = "true";
+        platformAdminRoleButton.textContent = enabled
+          ? "한 번 더 누르면 전체 관리자"
+          : "한 번 더 누르면 권한 회수";
+        showToast(enabled
+          ? "전체 관리자는 모든 단체와 신청자 정보를 관리할 수 있습니다. 한 번 더 눌러 확정하세요."
+          : "회수 후에는 연결된 단체 관리자 권한만 유지됩니다. 한 번 더 눌러 확정하세요.");
+        window.setTimeout(() => {
+          if (platformAdminRoleButton.dataset.confirmPlatformAdmin === "true") {
+            platformAdminRoleButton.dataset.confirmPlatformAdmin = "false";
+            platformAdminRoleButton.textContent = defaultLabel;
+          }
+        }, 5000);
+        return;
+      }
+      try {
+        platformAdminRoleButton.disabled = true;
+        platformAdminRoleButton.textContent = enabled ? "권한 부여 중..." : "권한 회수 중...";
+        await setPlatformAdminRole(platformAdminRoleButton.dataset.setPlatformAdminRole, enabled);
+      } catch (error) {
+        showToast(`전체 관리자 권한 변경 실패: ${error.message}`);
+        platformAdminRoleButton.disabled = false;
+        platformAdminRoleButton.dataset.confirmPlatformAdmin = "false";
+        platformAdminRoleButton.textContent = defaultLabel;
+      }
       return;
     }
     if (editOrganizationAdminButton) {
