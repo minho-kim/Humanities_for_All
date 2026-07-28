@@ -97,15 +97,71 @@ function notifyParentHeight() {
   window.parent.postMessage({ type: EMBED_HEIGHT_MESSAGE, height }, "*");
 }
 
-function openModal(modal) {
+const modalReturnFocus = new WeakMap();
+
+function modalReturnFocusRecord(element) {
+  if (!(element instanceof HTMLElement)) return null;
+  const courseId = element.dataset.openEmbedCourse || "";
+  return { element, courseId };
+}
+
+function restoreModalReturnFocus(record) {
+  if (!record) return;
+  const connectedElement = record.element instanceof HTMLElement && record.element.isConnected
+    ? record.element
+    : null;
+  const replacementElement = connectedElement || (record.courseId
+    ? [...document.querySelectorAll("[data-open-embed-course]")]
+      .find((element) => element.dataset.openEmbedCourse === record.courseId)
+    : null);
+  if (replacementElement instanceof HTMLElement) replacementElement.focus();
+}
+
+function openModal(modal, returnFocusElement = document.activeElement) {
+  if (!modal) return;
+  if (!modal.classList.contains("open")) {
+    modalReturnFocus.set(modal, modalReturnFocusRecord(returnFocusElement));
+  }
   modal.classList.add("open");
+  modal.setAttribute("aria-hidden", "false");
+  document.body.classList.add("modal-open");
   modal.querySelector("button, a")?.focus();
   notifyParentHeight();
 }
 
 function closeModal(modal) {
+  if (!modal) return;
   modal.classList.remove("open");
+  modal.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("modal-open");
+  const returnFocus = modalReturnFocus.get(modal);
+  modalReturnFocus.delete(modal);
+  restoreModalReturnFocus(returnFocus);
   notifyParentHeight();
+}
+
+function trapModalFocus(event, modal) {
+  if (event.key !== "Tab" || !modal?.classList.contains("open")) return;
+  const focusable = [...modal.querySelectorAll("button:not([disabled]), a[href], [tabindex]:not([tabindex='-1'])")]
+    .filter((element) => element instanceof HTMLElement && !element.closest("[hidden], .hidden"));
+  if (!focusable.length) {
+    event.preventDefault();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (!focusable.includes(document.activeElement)) {
+    event.preventDefault();
+    (event.shiftKey ? last : first).focus();
+    return;
+  }
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 function numberText(value) {
@@ -654,7 +710,7 @@ function courseReferenceInfoHtml(course) {
   `;
 }
 
-function openCourseDetail(courseId) {
+function openCourseDetail(courseId, returnFocusElement = null) {
   const course = courseById(courseId);
   if (!course) {
     showToast("교육 정보를 찾지 못했습니다.");
@@ -724,7 +780,7 @@ function openCourseDetail(courseId) {
       </div>
     </div>
   `;
-  openModal(elements.detailModal);
+  openModal(elements.detailModal, returnFocusElement || document.activeElement);
 }
 
 async function handleSearch(event) {
@@ -759,8 +815,9 @@ function bindEvents() {
     const closeButton = event.target.closest("[data-close-embed-modal]");
 
     if (openButton) {
+      const returnFocusElement = openButton;
       await ensureFullDataLoaded();
-      openCourseDetail(openButton.dataset.openEmbedCourse);
+      openCourseDetail(openButton.dataset.openEmbedCourse, returnFocusElement);
       return;
     }
     if (fullButton) {
@@ -772,8 +829,14 @@ function bindEvents() {
     }
   });
 
+  elements.detailModal.setAttribute("aria-hidden", elements.detailModal.classList.contains("open") ? "false" : "true");
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") closeModal(elements.detailModal);
+    if (!elements.detailModal.classList.contains("open")) return;
+    if (event.key === "Escape") {
+      closeModal(elements.detailModal);
+      return;
+    }
+    trapModalFocus(event, elements.detailModal);
   });
 
   if ("ResizeObserver" in window) {

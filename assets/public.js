@@ -325,14 +325,76 @@ async function requestNotificationDispatch(supabase, sourceType, sourceId) {
   if (error) console.warn("[모두의 인문학] 알림 메일 즉시 발송 요청 실패", error);
 }
 
-function openModal(modal) {
+const modalReturnFocus = new WeakMap();
+
+function modalReturnFocusRecord(element) {
+  if (!(element instanceof HTMLElement)) return null;
+  const courseId = element.dataset.openCourse || "";
+  return { element, courseId };
+}
+
+function restoreModalReturnFocus(record) {
+  if (!record) return;
+  const connectedElement = record.element instanceof HTMLElement && record.element.isConnected
+    ? record.element
+    : null;
+  const replacementElement = connectedElement || (record.courseId
+    ? [...document.querySelectorAll("[data-open-course]")]
+      .find((element) => element.dataset.openCourse === record.courseId)
+    : null);
+  if (replacementElement instanceof HTMLElement) replacementElement.focus();
+}
+
+function openModal(modal, returnFocusElement = document.activeElement) {
+  if (!modal) return;
+  if (!modal.classList.contains("open")) {
+    modalReturnFocus.set(modal, modalReturnFocusRecord(returnFocusElement));
+  }
+  document.querySelectorAll(".modal.open").forEach((openModalElement) => {
+    if (openModalElement !== modal) openModalElement.setAttribute("aria-hidden", "true");
+  });
   modal.classList.add("open");
+  modal.setAttribute("aria-hidden", "false");
+  document.body.classList.add("modal-open");
   const focusTarget = modal.querySelector("button, input, textarea, select");
-  if (focusTarget) focusTarget.focus();
+  if (focusTarget instanceof HTMLElement) focusTarget.focus();
 }
 
 function closeModal(modal) {
+  if (!modal) return;
   modal.classList.remove("open");
+  modal.setAttribute("aria-hidden", "true");
+  const remainingOpenModals = [...document.querySelectorAll(".modal.open")];
+  const topModal = remainingOpenModals[remainingOpenModals.length - 1];
+  if (topModal) topModal.setAttribute("aria-hidden", "false");
+  else document.body.classList.remove("modal-open");
+  const returnFocus = modalReturnFocus.get(modal);
+  modalReturnFocus.delete(modal);
+  restoreModalReturnFocus(returnFocus);
+}
+
+function trapModalFocus(event, modal) {
+  if (event.key !== "Tab" || !modal) return;
+  const focusable = [...modal.querySelectorAll("button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])")]
+    .filter((element) => element instanceof HTMLElement && !element.closest("[hidden], .hidden"));
+  if (!focusable.length) {
+    event.preventDefault();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (!focusable.includes(document.activeElement)) {
+    event.preventDefault();
+    (event.shiftKey ? last : first).focus();
+    return;
+  }
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 function getStatusClass(status) {
@@ -961,7 +1023,7 @@ function applyRouteFromHash() {
 
 function navigate(page, slug = "") {
   const nextHash = routeHash(page, slug);
-  document.querySelectorAll(".modal.open").forEach(closeModal);
+  [...document.querySelectorAll(".modal.open")].reverse().forEach(closeModal);
   if (window.location.hash === nextHash) {
     applyRouteFromHash();
     render();
@@ -3046,7 +3108,7 @@ function courseReferenceInfoHtml(course) {
   `;
 }
 
-function openCourseDetail(courseId) {
+function openCourseDetail(courseId, returnFocusElement = null) {
   const course = state.composedCourses.find((item) => item.id === courseId);
   if (!course) return;
   state.activeCourseId = courseId;
@@ -3139,7 +3201,7 @@ function openCourseDetail(courseId) {
       ${postCourseResponseEditorHtml}
     </div>
   `;
-  openModal(elements.detailModal);
+  openModal(elements.detailModal, returnFocusElement || document.activeElement);
   if (state.guestAccessTokens[course.id] && !Object.prototype.hasOwnProperty.call(state.guestAccessByCourse, course.id)) {
     refreshGuestAccessInOpenCourse(course.id);
   }
@@ -4620,9 +4682,10 @@ function bindEvents() {
       return;
     }
     if (openButton) {
+      const returnFocusElement = openButton;
       closeModal(elements.profileModal);
       await ensureFullDataLoaded({ waitForSupplementary: true });
-      openCourseDetail(openButton.dataset.openCourse);
+      openCourseDetail(openButton.dataset.openCourse, returnFocusElement);
       return;
     }
     if (closeButton) closeModal(closeButton.closest(".modal"));
@@ -4705,19 +4768,27 @@ function bindEvents() {
   });
 
   document.querySelectorAll(".modal").forEach((modal) => {
+    modal.setAttribute("aria-hidden", modal.classList.contains("open") ? "false" : "true");
     modal.addEventListener("click", (event) => {
       if (event.target === modal) closeModal(modal);
     });
   });
 
   document.addEventListener("keydown", (event) => {
+    const openModals = [...document.querySelectorAll(".modal.open")];
+    const activeModal = openModals[openModals.length - 1];
+    if (!activeModal) return;
     if (event.key === "Enter" && event.target.matches("[data-interest-keyword-input]")) {
       event.preventDefault();
       state.interestKeywordInput = event.target.value;
       addInterestKeyword();
       return;
     }
-    if (event.key === "Escape") document.querySelectorAll(".modal.open").forEach(closeModal);
+    if (event.key === "Escape") {
+      closeModal(activeModal);
+      return;
+    }
+    trapModalFocus(event, activeModal);
   });
 
   elements.loginButton.addEventListener("click", () => {
