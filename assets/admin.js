@@ -32,6 +32,7 @@ const state = {
     courseId: "",
     applicantQuery: "",
   },
+  activeApplicationId: "",
   expectationFilters: {
     courseId: "",
   },
@@ -115,6 +116,9 @@ const elements = {
   permissionNotice: document.getElementById("permissionNotice"),
   adminContent: document.getElementById("adminContent"),
   refreshButton: document.getElementById("refreshButton"),
+  applicationDetailModal: document.getElementById("applicationDetailModal"),
+  applicationDetailTitle: document.getElementById("applicationDetailTitle"),
+  applicationDetailBody: document.getElementById("applicationDetailBody"),
   adminNoticeModal: document.getElementById("adminNoticeModal"),
   adminNoticeTitle: document.getElementById("adminNoticeTitle"),
   adminNoticeBody: document.getElementById("adminNoticeBody"),
@@ -167,14 +171,58 @@ function showToast(message) {
   showToast.timer = window.setTimeout(() => elements.toast.classList.remove("show"), 3000);
 }
 
+const modalReturnFocus = new WeakMap();
+
 function openModal(modal) {
+  if (!modal) return;
+  if (!modal.classList.contains("open") && document.activeElement instanceof HTMLElement) {
+    modalReturnFocus.set(modal, document.activeElement);
+  }
+  document.querySelectorAll(".modal.open").forEach((openModalElement) => {
+    if (openModalElement !== modal) openModalElement.setAttribute("aria-hidden", "true");
+  });
   modal.classList.add("open");
+  modal.setAttribute("aria-hidden", "false");
+  document.body.classList.add("modal-open");
   const focusTarget = modal.querySelector("button, input, textarea, select");
   if (focusTarget) focusTarget.focus();
 }
 
 function closeModal(modal) {
+  if (!modal) return;
   modal.classList.remove("open");
+  modal.setAttribute("aria-hidden", "true");
+  const remainingOpenModals = [...document.querySelectorAll(".modal.open")];
+  const topModal = remainingOpenModals[remainingOpenModals.length - 1];
+  if (topModal) topModal.setAttribute("aria-hidden", "false");
+  else document.body.classList.remove("modal-open");
+  const returnFocus = modalReturnFocus.get(modal);
+  modalReturnFocus.delete(modal);
+  if (returnFocus instanceof HTMLElement && returnFocus.isConnected) returnFocus.focus();
+}
+
+function trapModalFocus(event, modal) {
+  if (event.key !== "Tab" || !modal) return;
+  const focusable = [...modal.querySelectorAll("button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])")]
+    .filter((element) => element instanceof HTMLElement && !element.closest("[hidden], .hidden"));
+  if (!focusable.length) {
+    event.preventDefault();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (!focusable.includes(document.activeElement)) {
+    event.preventDefault();
+    (event.shiftKey ? last : first).focus();
+    return;
+  }
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 function openAdminNotice(title, bodyHtml) {
@@ -997,10 +1045,7 @@ function renderAdminRoundtableConsent(application) {
   `;
 }
 
-function renderApplicationRow(application) {
-  const attendanceConfirmed = Boolean(application.attendance_confirmed_at);
-  const course = courseById(application.course_id);
-  const canConfirmAttendance = hasCourseDateArrived(course);
+function applicationSourceInfo(application) {
   const sourceLabels = {
     public: "로그인 신청",
     guest: "비회원 신청",
@@ -1008,34 +1053,145 @@ function renderApplicationRow(application) {
     admin_guest_walk_in: "비회원 현장 등록",
     anonymized: "개인정보 파기 완료",
   };
-  const sourceLabel = sourceLabels[application.registration_source] || "신청";
-  const sourceBadge = application.registration_source === "guest"
-    ? "비회원"
-    : application.registration_source === "admin_walk_in"
-      ? "현장 등록"
-      : application.registration_source === "admin_guest_walk_in"
-        ? "비회원 현장 등록"
-        : application.registration_source === "anonymized"
-          ? "비식별 기록"
-          : "";
+  const badgeLabels = {
+    guest: "비회원",
+    admin_walk_in: "현장 등록",
+    admin_guest_walk_in: "비회원 현장 등록",
+    anonymized: "비식별 기록",
+  };
+  return {
+    label: sourceLabels[application?.registration_source] || "신청",
+    badge: badgeLabels[application?.registration_source] || "",
+  };
+}
+
+function applicationNotificationStatusHtml(label, enabled, available = true) {
+  const stateLabel = available ? (enabled ? "수신" : "미수신") : "연락처 없음";
   return `
-    <div class="table-row">
+    <div class="application-notification-status">
+      <span>${escapeHtml(label)}</span>
+      <span class="badge ${enabled && available ? "green" : "gray"}">${escapeHtml(stateLabel)}</span>
+    </div>
+  `;
+}
+
+function applicationConsentStatusHtml(label, recordedAt, { agreedLabel = "확인", missingLabel = "기록 없음" } = {}) {
+  return `
+    <div class="application-notification-status">
+      <span>${escapeHtml(label)}</span>
+      <span class="badge ${recordedAt ? "green" : "gray"}">${escapeHtml(recordedAt ? agreedLabel : missingLabel)}</span>
+    </div>
+  `;
+}
+
+function applicationDetailHtml(application) {
+  const attendanceConfirmed = Boolean(application.attendance_confirmed_at);
+  const course = courseById(application.course_id);
+  const canConfirmAttendance = hasCourseDateArrived(course);
+  const source = applicationSourceInfo(application);
+  const isAnonymized = application.registration_source === "anonymized";
+  const emailAvailable = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(application.email || ""));
+  const phoneAvailable = /^010\d{8}$/.test(String(application.phone || "").replace(/\D/g, ""));
+  const applicationDate = application.created_at ? formatDateTime(application.created_at) : "기록 없음";
+  const notificationUpdatedAt = application.course_notice_preferences_updated_at
+    ? formatDateTime(application.course_notice_preferences_updated_at)
+    : "변경 기록 없음";
+  return `
+    <div class="application-detail-stack">
+      <section class="section">
+        <div class="row-top">
+          <strong>${escapeHtml(courseName(application.course_id))}</strong>
+          <span class="badge ${attendanceConfirmed ? "green" : "gray"}">${attendanceConfirmed ? "참석 확인" : "신청"}</span>
+          ${source.badge ? `<span class="badge gray">${escapeHtml(source.badge)}</span>` : ""}
+        </div>
+        <dl class="application-detail-grid">
+          <div><dt>신청자</dt><dd>${escapeHtml(application.applicant_name || (isAnonymized ? "개인정보 파기 완료" : "신청자"))}</dd></div>
+          <div><dt>신청 방식</dt><dd>${escapeHtml(source.label)}</dd></div>
+          <div><dt>신청일</dt><dd>${escapeHtml(applicationDate)}</dd></div>
+          <div><dt>이메일</dt><dd>${escapeHtml(isAnonymized ? "파기 완료" : (application.email || "없음"))}</dd></div>
+          <div><dt>휴대전화번호</dt><dd>${escapeHtml(isAnonymized ? "파기 완료" : (formatMobilePhone(application.phone) || "없음"))}</dd></div>
+          <div><dt>참석 상태</dt><dd>${attendanceConfirmed ? `확인 · ${escapeHtml(formatDateTime(application.attendance_confirmed_at))}` : "미확인"}</dd></div>
+        </dl>
+        ${application.note ? `<div class="application-note"><strong>기대평 / 강사에게 하고 싶은 질문</strong><p>${escapeHtml(application.note)}</p></div>` : ""}
+        <div class="actions" style="margin-top: 14px;">
+          ${attendanceConfirmed
+            ? `<button class="btn small secondary" type="button" data-unconfirm-attendance="${escapeHtml(application.id)}">참석 확인 취소</button>`
+            : `<button class="btn small" type="button" data-confirm-attendance="${escapeHtml(application.id)}" ${canConfirmAttendance ? "" : "disabled"}>${canConfirmAttendance ? "참석 확인" : "교육일 전"}</button>`}
+        </div>
+      </section>
+
+      <section class="section">
+        <h3>알림 허용 여부</h3>
+        <div class="application-notification-grid">
+          ${applicationNotificationStatusHtml("교육 일정 이메일", application.email_course_notice_enabled === true, emailAvailable)}
+          ${applicationNotificationStatusHtml("교육 일정 문자", application.sms_course_notice_enabled === true, phoneAvailable && Boolean(application.sms_notice_agreed_at))}
+          ${applicationNotificationStatusHtml("후기 작성 요청 문자", Boolean(application.review_request_agreed_at), phoneAvailable)}
+          ${applicationNotificationStatusHtml("후기 정담회 문자", application.roundtable_notice_enabled === true, phoneAvailable)}
+        </div>
+        <p class="muted">교육별 알림 설정 최종 변경: ${escapeHtml(notificationUpdatedAt)}</p>
+        ${renderAdminCourseNotificationPreferences(application)}
+        ${renderAdminRoundtableConsent(application)}
+      </section>
+
+      <section class="section">
+        <h3>동의 기록</h3>
+        <div class="application-notification-grid">
+          ${applicationConsentStatusHtml("개인정보 수집·이용", application.privacy_agreed_at, { agreedLabel: "동의" })}
+          ${applicationConsentStatusHtml("만 14세 이상 자기확인", application.age_14_confirmed_at)}
+          ${applicationConsentStatusHtml("문자 운영 안내 처리", application.sms_notice_agreed_at)}
+          ${applicationConsentStatusHtml("후기 작성 요청", application.review_request_agreed_at, { agreedLabel: "동의", missingLabel: "미동의" })}
+        </div>
+        ${application.terms_version ? `<p class="muted">신청 동의 문구 버전: ${escapeHtml(application.terms_version)}</p>` : ""}
+      </section>
+    </div>
+  `;
+}
+
+function openApplicationDetail(applicationId) {
+  const application = state.applications.find((item) => item.id === applicationId && isActiveApplication(item));
+  if (!application) {
+    closeApplicationDetailModal();
+    showToast("신청자 상세 정보를 찾지 못했습니다.");
+    return;
+  }
+  const wasOpen = elements.applicationDetailModal.classList.contains("open");
+  state.activeApplicationId = applicationId;
+  elements.applicationDetailTitle.textContent = `${application.applicant_name || "신청자"} 신청 상세`;
+  elements.applicationDetailBody.innerHTML = applicationDetailHtml(application);
+  if (!wasOpen) openModal(elements.applicationDetailModal);
+  elements.applicationDetailTitle.focus({ preventScroll: true });
+}
+
+function refreshOpenApplicationDetail(applicationId) {
+  if (state.activeApplicationId === applicationId && elements.applicationDetailModal.classList.contains("open")) {
+    openApplicationDetail(applicationId);
+  }
+}
+
+function closeApplicationDetailModal() {
+  const applicationId = state.activeApplicationId;
+  closeModal(elements.applicationDetailModal);
+  state.activeApplicationId = "";
+  if (applicationId) {
+    document.querySelector(`[data-open-application-detail="${applicationId}"]`)?.focus();
+  }
+}
+
+function renderApplicationRow(application) {
+  const attendanceConfirmed = Boolean(application.attendance_confirmed_at);
+  const source = applicationSourceInfo(application);
+  return `
+    <div class="table-row application-summary-row">
       <div class="row-top">
-        <strong>${escapeHtml(application.applicant_name || "신청자")}</strong>
-        <span class="badge ${attendanceConfirmed ? "green" : "gray"}">${attendanceConfirmed ? "참석 확인" : "신청"}</span>
-        ${sourceBadge ? `<span class="badge gray">${escapeHtml(sourceBadge)}</span>` : ""}
-      </div>
-      <div class="muted">${escapeHtml(sourceLabel)}일 ${escapeHtml(shortDate(application.created_at))}</div>
-      <p class="muted">이메일: ${escapeHtml(application.email || "없음")} · 전화: ${escapeHtml(application.phone || "없음")}</p>
-      ${application.note ? `<p><strong>기대평 / 강사에게 하고 싶은 질문</strong><br>${escapeHtml(application.note)}</p>` : ""}
-      <p class="muted">개인정보 수집 동의 완료 · 교육별 선택 안내: 이메일 ${application.email_course_notice_enabled === true ? "수신" : "미수신"}, 문자 ${application.sms_course_notice_enabled === true ? "수신" : "미수신"} · 정담회 문자 ${application.roundtable_notice_enabled === true ? "동의" : "미동의"}</p>
-      ${renderAdminCourseNotificationPreferences(application)}
-      ${renderAdminRoundtableConsent(application)}
-      <div class="actions">
-        ${attendanceConfirmed
-          ? `<span class="badge green">참석 확인 ${escapeHtml(shortDate(application.attendance_confirmed_at))}</span>
-             <button class="btn small secondary" type="button" data-unconfirm-attendance="${escapeHtml(application.id)}">참석 확인 취소</button>`
-          : `<button class="btn small" type="button" data-confirm-attendance="${escapeHtml(application.id)}" ${canConfirmAttendance ? "" : "disabled"}>${canConfirmAttendance ? "참석 확인" : "교육일 전"}</button>`}
+        <span class="application-summary-main">
+          <strong>${escapeHtml(application.applicant_name || "신청자")}</strong>
+          <span class="muted">${escapeHtml(source.label)} · ${escapeHtml(shortDate(application.created_at))}</span>
+        </span>
+        <span class="actions">
+          <span class="badge ${attendanceConfirmed ? "green" : "gray"}">${attendanceConfirmed ? "참석 확인" : "신청"}</span>
+          ${source.badge ? `<span class="badge gray">${escapeHtml(source.badge)}</span>` : ""}
+          <button class="btn small secondary" type="button" data-open-application-detail="${escapeHtml(application.id)}" aria-haspopup="dialog">상세 보기</button>
+        </span>
       </div>
     </div>
   `;
@@ -3861,6 +4017,9 @@ function renderDraws() {
 }
 
 function render() {
+  if ((!state.user || !isAdmin()) && elements.applicationDetailModal.classList.contains("open")) {
+    closeApplicationDetailModal();
+  }
   updateAdminNavigationVisibility();
   document.querySelectorAll("[data-admin-tab]").forEach((button) => {
     button.classList.toggle("active", button.dataset.adminTab === state.tab);
@@ -3998,6 +4157,8 @@ async function handlePasswordUpdate(event) {
 }
 
 async function handleLogout() {
+  closeApplicationDetailModal();
+  closeModal(elements.adminNoticeModal);
   await supabase.auth.signOut();
   await refreshSession();
   render();
@@ -4845,6 +5006,7 @@ async function saveAdminCourseNotificationPreferences(event) {
       course_notice_terms_version: COURSE_NOTIFICATION_TERMS_VERSION,
     });
     renderApplications();
+    refreshOpenApplicationDetail(applicationId);
     showToast("신청자 요청에 따른 교육별 알림 설정을 저장하고 감사 기록을 남겼습니다.");
   } finally {
     if (submitButton && document.body.contains(submitButton)) {
@@ -4880,6 +5042,7 @@ async function saveAdminRoundtableConsent(event) {
     if (error) throw error;
     application.roundtable_notice_enabled = data?.enabled === true;
     renderApplications();
+    refreshOpenApplicationDetail(applicationId);
     showToast("참여자 요청에 따른 정담회 문자 동의를 저장하고 감사 기록을 남겼습니다.");
   } finally {
     if (submitButton && document.body.contains(submitButton)) {
@@ -4968,6 +5131,7 @@ async function confirmApplicationAttendance(applicationId) {
   await reload();
   state.tab = "applications";
   render();
+  refreshOpenApplicationDetail(applicationId);
 }
 
 async function unconfirmApplicationAttendance(applicationId) {
@@ -4981,6 +5145,7 @@ async function unconfirmApplicationAttendance(applicationId) {
   await reload();
   state.tab = "applications";
   render();
+  refreshOpenApplicationDetail(applicationId);
 }
 
 async function searchWalkInCandidates(event) {
@@ -5214,6 +5379,16 @@ function bindEvents() {
     const downloadDashboardStatsButton = event.target.closest("[data-download-dashboard-stats]");
     const confirmChangeNotificationButton = event.target.closest("[data-confirm-change-notification]");
     const closeAdminNoticeButton = event.target.closest("[data-close-admin-notice]");
+    const openApplicationDetailButton = event.target.closest("[data-open-application-detail]");
+    const closeApplicationDetailButton = event.target.closest("[data-close-application-detail]");
+    if (closeApplicationDetailButton || event.target === elements.applicationDetailModal) {
+      closeApplicationDetailModal();
+      return;
+    }
+    if (openApplicationDetailButton) {
+      openApplicationDetail(openApplicationDetailButton.dataset.openApplicationDetail);
+      return;
+    }
     if (clearApplicantSearchButton) {
       state.applicationFilters.applicantQuery = "";
       renderApplications();
@@ -5779,9 +5954,15 @@ function bindEvents() {
   });
 
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && elements.adminNoticeModal.classList.contains("open")) {
-      closeModal(elements.adminNoticeModal);
+    const openModals = [...document.querySelectorAll(".modal.open")];
+    const activeModal = openModals[openModals.length - 1];
+    if (!activeModal) return;
+    if (event.key === "Escape") {
+      if (activeModal === elements.adminNoticeModal) closeModal(elements.adminNoticeModal);
+      else if (activeModal === elements.applicationDetailModal) closeApplicationDetailModal();
+      return;
     }
+    trapModalFocus(event, activeModal);
   });
 
   document.body.addEventListener("submit", async (event) => {

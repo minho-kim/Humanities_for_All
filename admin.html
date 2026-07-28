@@ -84,7 +84,20 @@
     </div>
   </footer>
 
-  <div class="modal" id="adminNoticeModal" role="dialog" aria-modal="true" aria-labelledby="adminNoticeTitle">
+  <div class="modal application-detail-modal" id="applicationDetailModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="applicationDetailTitle">
+    <article class="modal-card" style="max-width: 820px;">
+      <div class="modal-header">
+        <div><span class="eyebrow">교육 신청 관리</span><h2 id="applicationDetailTitle" tabindex="-1">신청자 상세</h2></div>
+        <button class="icon-btn" type="button" data-close-application-detail aria-label="신청자 상세 닫기">×</button>
+      </div>
+      <div id="applicationDetailBody" style="margin-top: 14px;"></div>
+      <div class="actions" style="margin-top: 18px;">
+        <button class="btn secondary" type="button" data-close-application-detail>닫기</button>
+      </div>
+    </article>
+  </div>
+
+  <div class="modal admin-notice-modal" id="adminNoticeModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="adminNoticeTitle">
     <article class="modal-card" style="max-width: 640px;">
       <div class="modal-header">
         <div><span class="eyebrow">관리 안내</span><h2 id="adminNoticeTitle">안내</h2></div>

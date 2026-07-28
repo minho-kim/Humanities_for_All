@@ -2517,7 +2517,6 @@ function renderGuestApplicationForm(course) {
           <strong>비회원 신청이 확인되었습니다.</strong>
           <span class="badge ${attendanceConfirmed ? "green" : "gray"}">${attendanceConfirmed ? "참석 인증" : "신청"}</span>
         </div>
-        <p class="muted">신청자: ${escapeHtml(contact.applicant_name || "비회원 신청자")} · 연락처: ${escapeHtml(contact.phone || "확인됨")}</p>
         ${expectationBody ? `
           <p><strong>내 기대평 / 강사에게 하고 싶은 질문</strong><br>${escapeHtml(expectationBody)}</p>
           <button class="btn small danger" type="button" data-delete-guest-application-note>기대평·질문 삭제</button>
@@ -2599,7 +2598,6 @@ function renderApplicationForm(course) {
           <strong>이미 신청한 교육입니다.</strong>
           <span class="badge ${attendanceConfirmed ? "green" : "gray"}">${attendanceConfirmed ? "참석 인증" : "신청"}</span>
         </div>
-        <p class="muted">신청자: ${escapeHtml(existingApplication.applicant_name)} · 연락처: ${escapeHtml(existingApplication.phone)}</p>
         ${renderCourseNotificationPreferences(existingApplication)}
         ${renderRoundtableConsent(existingApplication)}
         ${renderApplicationNoteForm(existingApplication, course)}
