@@ -132,6 +132,7 @@ const COURSE_NOTIFICATION_TERMS_VERSION = "2026-07-24-v2";
 const ROUNDTABLE_NOTIFICATION_TERMS_VERSION = "2026-07-27-v2";
 const GUEST_CONTACT_SESSION_KEY = "humanities-guest-contact";
 const GUEST_ACCESS_TOKEN_SESSION_KEY = "humanities-guest-access-tokens";
+const APPLICATION_CLIENT_STORAGE_KEY = "humanities-application-client-id";
 const DEMOGRAPHIC_BANNER_DISMISS_KEY = "humanities-demographic-banner-dismissed";
 const OAUTH_RETURN_STATE_KEY = "humanities-google-oauth-return";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -140,12 +141,70 @@ let supabaseClientPromise = null;
 let residenceSearchPopup = null;
 let residenceSearchForm = null;
 let courseLoadObserver = null;
+let applicationClientIdFallback = "";
 
 function getSupabaseClient() {
   if (!supabaseClientPromise) {
     supabaseClientPromise = import("./supabaseClient.js").then(({ supabase }) => supabase);
   }
   return supabaseClientPromise;
+}
+
+function applicationClientId() {
+  if (UUID_PATTERN.test(applicationClientIdFallback)) return applicationClientIdFallback;
+  try {
+    const stored = window.localStorage.getItem(APPLICATION_CLIENT_STORAGE_KEY);
+    if (UUID_PATTERN.test(stored || "")) {
+      applicationClientIdFallback = stored;
+      return stored;
+    }
+  } catch {
+    // Storage may be unavailable in privacy modes; an in-memory identifier still
+    // prevents ordinary repeated clicks from appearing as unrelated devices.
+  }
+  applicationClientIdFallback = crypto.randomUUID();
+  try {
+    window.localStorage.setItem(APPLICATION_CLIENT_STORAGE_KEY, applicationClientIdFallback);
+  } catch {
+    // The in-memory fallback remains valid for this page session.
+  }
+  return applicationClientIdFallback;
+}
+
+async function applicationFunctionError(error) {
+  const normalized = new Error("교육 신청을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+  normalized.code = "function_error";
+  normalized.status = 0;
+  const response = error?.context instanceof Response ? error.context : null;
+  if (response) {
+    normalized.status = response.status;
+    const payload = await response.clone().json().catch(() => ({}));
+    normalized.message = String(payload?.error || normalized.message);
+    normalized.code = String(payload?.code || normalized.code);
+    normalized.retryAfterSeconds = Number(payload?.retry_after_seconds || 0);
+  }
+  return normalized;
+}
+
+async function submitCourseApplicationThroughGuard(supabase, form, body) {
+  const currentRequestId = String(form.dataset.applicationRequestId || "");
+  const requestId = UUID_PATTERN.test(currentRequestId) ? currentRequestId : crypto.randomUUID();
+  form.dataset.applicationRequestId = requestId;
+  const { data, error } = await supabase.functions.invoke("course-application-submit", {
+    body: {
+      ...body,
+      request_id: requestId,
+      client_id: applicationClientId(),
+    },
+  });
+  if (error) {
+    const normalized = await applicationFunctionError(error);
+    if (normalized.status >= 400 && normalized.status < 500) delete form.dataset.applicationRequestId;
+    throw normalized;
+  }
+  delete form.dataset.applicationRequestId;
+  if (!data?.application?.application_id) throw new Error("신청 저장 결과를 확인하지 못했습니다.");
+  return data.application;
 }
 
 function showToast(message) {
@@ -3152,58 +3211,32 @@ async function handleApplicationSubmit(event) {
     }
     try {
       const supabase = await getSupabaseClient();
-      const { data, error } = await supabase.rpc("submit_guest_course_application_v4", {
-        p_course_id: course.id,
-        p_applicant_name: applicantName,
-        p_phone: phone,
-        p_email: email || null,
-        p_note: note || null,
-        p_terms_version: APPLICATION_TERMS_VERSION,
-        p_review_request_agreed: reviewRequestAgreed,
-        p_age_14_confirmed: true,
+      const result = await submitCourseApplicationThroughGuard(supabase, form, {
+        mode: "guest",
+        course_id: course.id,
+        applicant_name: applicantName,
+        phone,
+        email: email || null,
+        note: note || null,
+        terms_version: APPLICATION_TERMS_VERSION,
+        review_request_agreed: reviewRequestAgreed,
+        age_14_confirmed: true,
+        email_course_notice_enabled: emailCourseNoticeEnabled,
+        sms_course_notice_enabled: smsCourseNoticeEnabled,
+        course_notice_terms_version: COURSE_NOTIFICATION_TERMS_VERSION,
+        roundtable_notice_enabled: roundtableNoticeAgreed,
+        roundtable_terms_version: ROUNDTABLE_NOTIFICATION_TERMS_VERSION,
       });
-      if (error) throw error;
-      const result = Array.isArray(data) ? data[0] : data;
-      if (!result?.application_id || !rememberGuestAccessToken(course.id, result.access_token)) {
+      if (result.result_state === "created" && !rememberGuestAccessToken(course.id, result.access_token)) {
         throw new Error("신청 확인 링크를 저장하지 못했습니다.");
       }
 
       rememberGuestContact({ applicant_name: applicantName, phone, email });
-      let preferenceSaveFailed = false;
-      let roundtableSaveFailed = false;
-      const { error: preferenceError } = await supabase.rpc("set_guest_course_notification_preferences_v1", {
-        p_course_id: course.id,
-        p_access_token: result.access_token,
-        p_email_enabled: emailCourseNoticeEnabled,
-        p_sms_enabled: smsCourseNoticeEnabled,
-        p_terms_version: COURSE_NOTIFICATION_TERMS_VERSION,
-      });
-      if (preferenceError) {
-        preferenceSaveFailed = true;
-        console.error("Guest course notification preferences save after application failed", preferenceError);
-      }
-      const { error: roundtableError } = await supabase.rpc("set_guest_roundtable_consent_v2", {
-        p_course_id: course.id,
-        p_access_token: result.access_token,
-        p_enabled: roundtableNoticeAgreed,
-        p_terms_version: ROUNDTABLE_NOTIFICATION_TERMS_VERSION,
-      });
-      if (roundtableError) {
-        roundtableSaveFailed = true;
-        console.error("Guest roundtable consent save after application failed", roundtableError);
-      }
-      state.guestAccessByCourse[course.id] = {
-        ...result,
-        expectation_body: note || null,
-        roundtable_notice_enabled: roundtableNoticeAgreed && !roundtableSaveFailed,
-      };
-      await loadGuestAccessForCourse(course.id, { force: true });
+      if (state.guestAccessTokens[course.id]) await loadGuestAccessForCourse(course.id, { force: true });
       await loadApplicationSignals([course.id]);
       if (state.supplementaryLoaded && note) await loadSupplementaryData();
-      showToast(preferenceSaveFailed || roundtableSaveFailed
-        ? "교육 신청은 완료됐지만 선택 알림 설정 일부를 저장하지 못했습니다. 확인 링크 화면에서 다시 저장해 주세요."
-        : result.result_state === "existing"
-        ? "이미 접수된 비회원 신청을 확인했습니다."
+      showToast(result.result_state === "existing"
+        ? "이미 접수된 비회원 신청이 있습니다. 기존 확인 링크를 이용해 주세요."
         : result.result_state === "reapplied"
           ? "비회원 신청을 다시 접수했습니다. 확인 문자를 보내드립니다."
           : "비회원 교육 신청이 접수되었습니다. 확인 문자를 보내드립니다.");
@@ -3212,9 +3245,11 @@ async function handleApplicationSubmit(event) {
       console.error("Guest course application failed", error);
       const publicMessage = error?.code === "23505"
         ? "같은 전화번호의 신청 정보가 있습니다. 신청자명을 확인하거나 운영자에게 문의해 주세요."
-        : error?.code === "22023"
+        : error?.status === 429 || error?.code === "submission_temporarily_blocked"
           ? error.message
-          : "비회원 신청을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.";
+          : error?.code === "22023"
+            ? error.message
+            : "비회원 신청을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.";
       showToast(publicMessage);
     } finally {
       if (submitButton && document.body.contains(submitButton)) {
@@ -3242,57 +3277,37 @@ async function handleApplicationSubmit(event) {
   }
 
   try {
-    const { data, error } = await supabase.rpc("submit_my_course_application_v3", {
-      p_course_id: course.id,
-      p_applicant_name: applicantName,
-      p_phone: phone,
-      p_note: note || null,
-      p_terms_version: APPLICATION_TERMS_VERSION,
-      p_review_request_agreed: reviewRequestAgreed,
-      p_age_14_confirmed: true,
+    const application = await submitCourseApplicationThroughGuard(supabase, form, {
+      mode: "account",
+      course_id: course.id,
+      applicant_name: applicantName,
+      phone,
+      note: note || null,
+      terms_version: APPLICATION_TERMS_VERSION,
+      review_request_agreed: reviewRequestAgreed,
+      age_14_confirmed: true,
+      email_course_notice_enabled: emailCourseNoticeEnabled,
+      sms_course_notice_enabled: smsCourseNoticeEnabled,
+      course_notice_terms_version: COURSE_NOTIFICATION_TERMS_VERSION,
+      roundtable_notice_enabled: roundtableNoticeAgreed,
+      roundtable_terms_version: ROUNDTABLE_NOTIFICATION_TERMS_VERSION,
     });
-    if (error) throw error;
-    const application = Array.isArray(data) ? data[0] : data;
-    if (!application?.application_id) throw new Error("신청 저장 결과를 확인하지 못했습니다.");
-
-    let preferenceSaveFailed = false;
-    let roundtableSaveFailed = false;
-    const { error: preferenceError } = await supabase.rpc("set_my_course_notification_preferences", {
-      p_application_id: application.application_id,
-      p_email_enabled: emailCourseNoticeEnabled,
-      p_sms_enabled: smsCourseNoticeEnabled,
-      p_terms_version: COURSE_NOTIFICATION_TERMS_VERSION,
-    });
-    if (preferenceError) {
-      preferenceSaveFailed = true;
-      console.error("Course notification preferences save after application failed", preferenceError);
-    }
-
-    const { error: roundtableError } = await supabase.rpc("set_my_roundtable_consent_v2", {
-      p_application_id: application.application_id,
-      p_enabled: roundtableNoticeAgreed,
-      p_terms_version: ROUNDTABLE_NOTIFICATION_TERMS_VERSION,
-    });
-    if (roundtableError) {
-      roundtableSaveFailed = true;
-      console.error("Roundtable consent save after application failed", roundtableError);
-    }
 
     await Promise.all([
       loadApplicationState(supabase),
       loadApplicationSignals([course.id]),
     ]);
     void requestNotificationDispatch(supabase, "course_application", application.application_id);
-    showToast(preferenceSaveFailed || roundtableSaveFailed
-      ? "교육 신청은 완료됐지만 선택 알림 설정 일부를 저장하지 못했습니다. 아래 알림 설정을 다시 확인해 주세요."
-      : application.result_state === "existing"
-        ? "이미 접수된 교육 신청과 알림 설정을 확인했습니다."
-        : application.result_state === "reapplied" || cancelledApplication
-          ? "교육을 다시 신청했습니다. 확인 메일과 문자를 보내드립니다."
-          : "교육 신청이 접수되었습니다. 확인 메일과 문자를 보내드립니다.");
+    showToast(application.result_state === "existing"
+      ? "이미 접수된 교육 신청과 알림 설정을 확인했습니다."
+      : application.result_state === "reapplied" || cancelledApplication
+        ? "교육을 다시 신청했습니다. 확인 메일과 문자를 보내드립니다."
+        : "교육 신청이 접수되었습니다. 확인 메일과 문자를 보내드립니다.");
     openCourseDetail(course.id);
   } catch (error) {
-    if (error?.code === "23505") {
+    if (error?.status === 429 || error?.code === "submission_temporarily_blocked") {
+      showToast(error.message);
+    } else if (error?.code === "23505") {
       showToast("신청자 정보를 저장하지 못했습니다. 이전에 사용한 로그인 계정이 있다면 그 계정으로 다시 시도하거나 운영자에게 문의해 주세요.");
     } else if (error?.code === "22023") {
       showToast(error.message || "신청 정보를 다시 확인해 주세요.");
