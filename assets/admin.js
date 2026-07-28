@@ -104,7 +104,17 @@ const state = {
   smsDeliveries: [],
   demographicSummary: null,
   memberSummary: null,
+  formDrafts: {},
 };
+
+const ADMIN_DRAFT_FORM_ID_FIELDS = Object.freeze({
+  organizationForm: "organization_id",
+  instructorForm: "instructor_id",
+  venueForm: "venue_id",
+  courseForm: "course_id",
+  archiveForm: "archive_id",
+});
+const adminFormBaselines = new WeakMap();
 
 const elements = {
   adminLoginForm: document.getElementById("adminLoginForm"),
@@ -128,6 +138,116 @@ const elements = {
   adminNoticeBody: document.getElementById("adminNoticeBody"),
   toast: document.getElementById("toast"),
 };
+
+function adminDraftForm() {
+  const form = elements.adminContent.querySelector("form");
+  return form instanceof HTMLFormElement && ADMIN_DRAFT_FORM_ID_FIELDS[form.id] ? form : null;
+}
+
+function adminDraftKey(form) {
+  const idField = ADMIN_DRAFT_FORM_ID_FIELDS[form.id];
+  const entityId = String(form.elements.namedItem(idField)?.value || "").trim();
+  return `${form.id}:${entityId || "new"}`;
+}
+
+function serializeAdminDraftForm(form) {
+  const values = {};
+  Array.from(form.elements).forEach((control) => {
+    if (!(control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement || control instanceof HTMLSelectElement)) return;
+    if (!control.name || control.disabled) return;
+    if (control instanceof HTMLInputElement && ["file", "password", "submit", "button", "reset"].includes(control.type)) return;
+    if (control instanceof HTMLInputElement && ["checkbox", "radio"].includes(control.type)) {
+      values[control.name] = { kind: control.type, checked: control.checked, value: control.value };
+      return;
+    }
+    if (control instanceof HTMLSelectElement && control.multiple) {
+      values[control.name] = { kind: "select-multiple", value: Array.from(control.selectedOptions, (option) => option.value) };
+      return;
+    }
+    values[control.name] = { kind: "value", value: control.value };
+  });
+  return values;
+}
+
+function selectedAdminDraftFileCount(form) {
+  return Array.from(form.querySelectorAll("input[type='file']"))
+    .reduce((count, input) => count + (input.files?.length || 0), 0);
+}
+
+function adminDraftSignature(values) {
+  return JSON.stringify(values);
+}
+
+function captureVisibleAdminFormDraft() {
+  const form = adminDraftForm();
+  if (!form) return { saved: false, fileSelectionDiscarded: false };
+  const key = adminDraftKey(form);
+  const values = serializeAdminDraftForm(form);
+  const fileCount = selectedAdminDraftFileCount(form);
+  const baseline = adminFormBaselines.get(form) || {};
+  const hasChanges = adminDraftSignature(values) !== adminDraftSignature(baseline) || fileCount > 0;
+  if (!hasChanges) {
+    delete state.formDrafts[key];
+    return { saved: false, fileSelectionDiscarded: false };
+  }
+  state.formDrafts[key] = { values, hadFiles: fileCount > 0 };
+  return { saved: true, fileSelectionDiscarded: fileCount > 0 };
+}
+
+function restoreAdminDraftValues(form, values = {}) {
+  Object.entries(values).forEach(([name, saved]) => {
+    const control = form.elements.namedItem(name);
+    if (!(control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement || control instanceof HTMLSelectElement)) return;
+    if (saved.kind === "checkbox" || saved.kind === "radio") {
+      if (control instanceof HTMLInputElement) control.checked = Boolean(saved.checked);
+      return;
+    }
+    if (saved.kind === "select-multiple" && control instanceof HTMLSelectElement) {
+      const selectedValues = new Set(Array.isArray(saved.value) ? saved.value : []);
+      Array.from(control.options).forEach((option) => { option.selected = selectedValues.has(option.value); });
+      return;
+    }
+    control.value = String(saved.value ?? "");
+  });
+}
+
+function addAdminDraftNotice(form, hadFiles = false) {
+  const notice = document.createElement("p");
+  notice.className = "admin-draft-notice";
+  notice.setAttribute("role", "status");
+  notice.textContent = hadFiles
+    ? "작성 중인 내용을 임시 복원했습니다. 보안을 위해 파일 선택은 보관하지 않으므로 다시 선택해 주세요."
+    : "작성 중인 내용을 임시 복원했습니다. 저장하거나 새로고침·로그아웃하기 전까지 이 화면에서만 유지됩니다.";
+  form.prepend(notice);
+}
+
+function prepareVisibleAdminFormDraft() {
+  const form = adminDraftForm();
+  if (!form) return;
+  const baseline = serializeAdminDraftForm(form);
+  adminFormBaselines.set(form, baseline);
+  const draft = state.formDrafts[adminDraftKey(form)];
+  if (!draft) return;
+  restoreAdminDraftValues(form, draft.values);
+  if (form.id === "courseForm") {
+    ["organization", "instructor", "venue", "series"].forEach(updateCoursePickerSelectedField);
+    const startInput = form.elements.namedItem("starts_at");
+    const endInput = form.elements.namedItem("ends_at");
+    if (startInput instanceof HTMLInputElement && endInput instanceof HTMLInputElement) {
+      endInput.min = startInput.value || currentMinuteLocalDateTimeValue();
+    }
+  }
+  if (form.id === "archiveForm") updateArchiveCourseFilterSelected();
+  addAdminDraftNotice(form, Boolean(draft.hadFiles));
+}
+
+function clearAdminFormDraft(form) {
+  if (form instanceof HTMLFormElement && ADMIN_DRAFT_FORM_ID_FIELDS[form.id]) delete state.formDrafts[adminDraftKey(form)];
+}
+
+function clearNewAdminFormDraft(formId) {
+  delete state.formDrafts[`${formId}:new`];
+}
 
 const SITE_IMAGE_TYPES = new Map([
   ["image/jpeg", ".jpg"],
@@ -1985,6 +2105,7 @@ function loadCourseTemplate(courseId) {
   state.courseTemplate.sourceCourseId = course.id;
   state.courseTemplate.sourceTitle = course.title || "교육명 없음";
   state.courseTemplate.draft = courseTemplateDraftFrom(course);
+  clearNewAdminFormDraft("courseForm");
   closeModal(elements.adminNoticeModal);
   renderCourses();
   showToast("기존 교육 내용을 새 교육 입력폼에 불러왔습니다.");
@@ -3253,6 +3374,7 @@ function renderOrganizations() {
     })}
     <div style="margin-top: 14px;">${renderOrganizationForm(selectedOrganization)}</div>
   `;
+  prepareVisibleAdminFormDraft();
 }
 
 function renderInstructorForm(instructor = {}) {
@@ -3304,6 +3426,7 @@ function renderInstructors() {
     })}
     <div style="margin-top: 14px;">${renderInstructorForm(selectedInstructor)}</div>
   `;
+  prepareVisibleAdminFormDraft();
 }
 
 function renderVenueForm(venue = {}) {
@@ -3406,6 +3529,7 @@ function renderVenues() {
     })}
     <div style="margin-top: 14px;">${renderVenueForm(selectedVenue)}</div>
   `;
+  prepareVisibleAdminFormDraft();
 }
 
 function renderCourseSeriesAdmin(course = {}) {
@@ -3756,6 +3880,7 @@ function renderCourses() {
       <div style="margin-top: 14px;">${renderCourseForm(selectedCourse)}</div>
     `}
   `;
+  prepareVisibleAdminFormDraft();
 }
 
 function renderArchive() {
@@ -3805,6 +3930,7 @@ function renderArchive() {
       `).join("") || `<div class="empty">등록된 자료가 없습니다.</div>`}
     </div>
   `;
+  prepareVisibleAdminFormDraft();
 }
 
 function filteredFeedbacks() {
@@ -4296,6 +4422,7 @@ async function handlePasswordUpdate(event) {
 async function handleLogout() {
   closeApplicationDetailModal();
   closeModal(elements.adminNoticeModal);
+  state.formDrafts = {};
   await supabase.auth.signOut();
   await refreshSession();
   render();
@@ -4377,6 +4504,7 @@ async function saveOrganization(event) {
     await removeUploadedSiteImage(previousLogoPath);
   }
 
+  clearAdminFormDraft(form);
   showToast("단체 정보를 저장했습니다.");
   await reload();
   state.tab = "organizations";
@@ -4430,6 +4558,7 @@ async function saveInstructor(event) {
     throw error;
   }
 
+  clearAdminFormDraft(form);
   showToast("강사 정보를 저장했습니다.");
   await reload();
   state.tab = "instructors";
@@ -4495,6 +4624,7 @@ async function saveVenue(event) {
 
   if (notificationPlan) await requestCourseChangeNotificationDispatch();
 
+  clearAdminFormDraft(form);
   showToast(notificationPlan ? "장소 정보를 저장하고 신청자 변경 안내 메일·문자를 등록했습니다." : "장소 정보를 저장했습니다.");
   await reload();
   state.tab = "venues";
@@ -4676,6 +4806,7 @@ async function saveCourse(event) {
 
   const savedMessage = seriesPreviousCourseId ? "교육을 저장하고 연강으로 연결했습니다." : "교육을 저장했습니다.";
   const notificationMessage = notificationPlan ? " 신청자 변경 안내 메일·문자도 등록했습니다." : "";
+  clearAdminFormDraft(form);
   showToast(`${hasSelectedFile(formData.get("course_file")) ? `${savedMessage} 자료도 등록했습니다.` : savedMessage}${notificationMessage}`);
   await reload();
   state.tab = "courses";
@@ -4948,6 +5079,7 @@ async function saveArchive(event) {
     throw error;
   }
 
+  clearAdminFormDraft(form);
   showToast(existingArchive ? "아카이브를 수정했습니다." : "아카이브를 등록했습니다.");
   await reload();
   state.tab = "archive";
@@ -5437,6 +5569,7 @@ async function runDraw(event) {
 async function reload() {
   await refreshSession();
   if (!isAdmin()) {
+    state.formDrafts = {};
     state.organizations = [];
     state.instructors = [];
     state.venues = [];
@@ -5469,6 +5602,8 @@ function bindEvents() {
   elements.adminPasswordUpdateForm.addEventListener("submit", handlePasswordUpdate);
   elements.adminLogoutButton.addEventListener("click", handleLogout);
   elements.refreshButton.addEventListener("click", async () => {
+    const draftResult = captureVisibleAdminFormDraft();
+    if (draftResult.fileSelectionDiscarded) showToast("작성 내용은 임시 보관했지만 파일은 다시 선택해야 합니다.");
     await reload();
     showToast("새로고침했습니다.");
   });
@@ -5602,6 +5737,7 @@ function bindEvents() {
       return;
     }
     if (courseManagementModeButton) {
+      captureVisibleAdminFormDraft();
       state.courseManagement.mode = courseManagementModeButton.dataset.courseManagementMode === "series" ? "series" : "courses";
       renderCourses();
       return;
@@ -5715,6 +5851,7 @@ function bindEvents() {
       return;
     }
     if (adminSelectButton) {
+      captureVisibleAdminFormDraft();
       const kind = adminSelectButton.dataset.adminSelect;
       const entityId = adminSelectButton.dataset.entityId || "";
       if (kind === "organization") {
@@ -5738,6 +5875,7 @@ function bindEvents() {
       return;
     }
     if (adminClearSelectionButton) {
+      captureVisibleAdminFormDraft();
       const kind = adminClearSelectionButton.dataset.adminClearSelection;
       if (kind === "organization") {
         state.adminSelections.organizationId = "";
@@ -5764,6 +5902,8 @@ function bindEvents() {
       return;
     }
     if (tabButton) {
+      const draftResult = captureVisibleAdminFormDraft();
+      if (draftResult.fileSelectionDiscarded) showToast("작성 내용은 임시 보관했지만 파일은 다시 선택해야 합니다.");
       state.tab = tabButton.dataset.adminTab;
       render();
       return;
@@ -5892,6 +6032,7 @@ function bindEvents() {
       return;
     }
     if (editArchiveButton) {
+      captureVisibleAdminFormDraft();
       state.selectedArchiveId = editArchiveButton.dataset.editArchive;
       state.tab = "archive";
       renderArchive();
@@ -5995,6 +6136,8 @@ function bindEvents() {
       return;
     }
     if (event.target.id === "newCourseButton") {
+      captureVisibleAdminFormDraft();
+      clearNewAdminFormDraft("courseForm");
       clearCourseTemplateDraft();
       state.courseManagement.draftPreviousCourseId = "";
       state.adminSelections.courseId = "";
@@ -6002,22 +6145,30 @@ function bindEvents() {
       renderCourses();
     }
     if (event.target.id === "newArchiveButton") {
+      captureVisibleAdminFormDraft();
+      clearNewAdminFormDraft("archiveForm");
       const picker = document.getElementById("archivePicker");
       if (picker) picker.value = "";
       state.selectedArchiveId = "";
       renderArchive();
     }
     if (event.target.id === "newOrganizationButton") {
+      captureVisibleAdminFormDraft();
+      clearNewAdminFormDraft("organizationForm");
       state.adminSelections.organizationId = "";
       state.adminSearch.organization = "";
       renderOrganizations();
     }
     if (event.target.id === "newInstructorButton") {
+      captureVisibleAdminFormDraft();
+      clearNewAdminFormDraft("instructorForm");
       state.adminSelections.instructorId = "";
       state.adminSearch.instructor = "";
       renderInstructors();
     }
     if (event.target.id === "newVenueButton") {
+      captureVisibleAdminFormDraft();
+      clearNewAdminFormDraft("venueForm");
       state.adminSelections.venueId = "";
       state.adminSearch.venue = "";
       renderVenues();
@@ -6026,6 +6177,7 @@ function bindEvents() {
 
   document.body.addEventListener("change", (event) => {
     if (event.target.id === "archivePicker") {
+      captureVisibleAdminFormDraft();
       state.selectedArchiveId = event.target.value;
       renderArchive();
     }

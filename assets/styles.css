@@ -982,6 +982,43 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 }
 .course-notice-controls input { width: auto; min-height: auto; }
 
+.admin-draft-notice {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid rgba(25, 135, 84, 0.28);
+  border-radius: 12px;
+  background: #eaf7f0;
+  color: #146c43;
+  font-size: 0.9rem;
+  font-weight: 750;
+}
+
+.policy-page { width: min(920px, calc(100% - 32px)); }
+.policy-header { margin-bottom: 18px; }
+.policy-header .actions { margin-top: 16px; }
+.policy-card { padding: clamp(20px, 4vw, 38px); }
+.policy-card section + section { margin-top: 34px; padding-top: 28px; border-top: 1px solid var(--line); }
+.policy-card h2 { margin: 0 0 12px; font-size: clamp(1.25rem, 2vw, 1.55rem); }
+.policy-card h3 { margin: 22px 0 8px; font-size: 1.05rem; }
+.policy-card p { margin: 8px 0; }
+.policy-card ul { margin: 8px 0 0; padding-left: 1.3rem; }
+.policy-card li + li { margin-top: 6px; }
+.policy-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 18px 0 0;
+}
+.policy-summary div { padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: #f8f9fa; }
+.policy-summary strong { display: block; margin-bottom: 4px; color: var(--ink); }
+.policy-table-wrap { overflow-x: auto; margin-top: 12px; border: 1px solid var(--line); border-radius: 14px; }
+.policy-table { width: 100%; min-width: 720px; border-collapse: collapse; background: #fff; }
+.policy-table th,
+.policy-table td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; font-size: 0.9rem; }
+.policy-table th { background: #f8f9fa; color: var(--ink); white-space: nowrap; }
+.policy-table tr:last-child td { border-bottom: 0; }
+.policy-note { padding: 12px 14px; border-left: 4px solid var(--brand); border-radius: 8px; background: #eef5ff; }
+
 .site-footer {
   width: min(1180px, calc(100% - 32px));
   margin: 0 auto 28px;
@@ -1110,6 +1147,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
   .site-footer { width: min(100% - 20px, 1180px); margin-bottom: 22px; }
   .site-footer-inner { align-items: flex-start; flex-direction: column; }
   .site-footer-links { justify-content: flex-start; }
+  .policy-page { width: min(100% - 20px, 920px); }
+  .policy-summary { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {
