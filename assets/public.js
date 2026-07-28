@@ -29,6 +29,8 @@ const state = {
   expectations: [],
   myReviews: [],
   applications: [],
+  applicationSignals: {},
+  applicationSignalsLoaded: false,
   interestSubscriptions: [],
   interestOptions: {
     instructors: [],
@@ -573,6 +575,50 @@ function applyLandingSummary(summary = {}) {
   populateFilters();
 }
 
+const APPLICATION_SIGNAL_MESSAGES = Object.freeze({
+  none: "모집 중",
+  some: "참여를 신청하신 분이 있어요. 함께해 보세요!",
+  several: "여러 분이 참여를 신청했어요. 함께해 보세요!",
+  many: "많은 분이 참여를 신청했어요. 함께해 보세요!",
+});
+
+function normalizeApplicationSignal(value) {
+  const signal = String(value || "");
+  return Object.prototype.hasOwnProperty.call(APPLICATION_SIGNAL_MESSAGES, signal) ? signal : "none";
+}
+
+function courseApplicationSignalText(course) {
+  const signal = normalizeApplicationSignal(state.applicationSignals[course?.id]);
+  return APPLICATION_SIGNAL_MESSAGES[signal];
+}
+
+async function loadApplicationSignals(courseIds = null) {
+  const requestedCourseIds = Array.isArray(courseIds)
+    ? [...new Set(courseIds.filter(Boolean))].slice(0, 200)
+    : null;
+  if (requestedCourseIds && !requestedCourseIds.length) return true;
+
+  const { data, error } = await fetchPublicRpc("get_public_course_application_signals", {
+    p_course_ids: requestedCourseIds,
+  });
+  if (error) {
+    console.warn("[모두의 인문학] 공개 신청 현황 확인 필요", error);
+    return false;
+  }
+
+  const nextSignals = requestedCourseIds ? { ...state.applicationSignals } : {};
+  requestedCourseIds?.forEach((courseId) => {
+    nextSignals[courseId] = "none";
+  });
+  (Array.isArray(data) ? data : []).forEach((item) => {
+    if (!item?.course_id) return;
+    nextSignals[item.course_id] = normalizeApplicationSignal(item.application_signal);
+  });
+  state.applicationSignals = nextSignals;
+  if (!requestedCourseIds) state.applicationSignalsLoaded = true;
+  return true;
+}
+
 function archiveTypeLabel(type) {
   if (type === "video") return "영상";
   if (type === "photo") return "사진";
@@ -910,7 +956,11 @@ function composeCourses() {
 
 async function loadLandingData() {
   elements.resultSummary.textContent = "교육 요약을 불러오는 중입니다.";
-  const { data, error } = await fetchPublicRpc("get_public_landing_summary", { p_limit: 6 }, LANDING_SUMMARY_TIMEOUT_MS);
+  const [summaryResult] = await Promise.all([
+    fetchPublicRpc("get_public_landing_summary", { p_limit: 6 }, LANDING_SUMMARY_TIMEOUT_MS),
+    loadApplicationSignals(),
+  ]);
+  const { data, error } = summaryResult;
   if (error) {
     console.warn("[모두의 인문학] 첫 화면 요약 확인 필요", error);
     state.stats = {
@@ -959,6 +1009,8 @@ async function loadData({ waitForSupplementary = false } = {}) {
   state.courses = dataByKey.get("courses") || [];
   state.sessions = dataByKey.get("sessions") || [];
   state.fullDataLoaded = true;
+
+  if (!state.applicationSignalsLoaded) await loadApplicationSignals();
 
   composeCourses();
   populateFilters();
@@ -1245,7 +1297,7 @@ function courseCardNoteHtml(course) {
     return `<span class="review-note">취소된 교육</span>`;
   }
   if (canApplyToCourse(course)) {
-    return `<span class="review-note">신청 가능 · 사전 질문 접수</span>`;
+    return `<span class="review-note">${escapeHtml(courseApplicationSignalText(course))}</span>`;
   }
   return `<span class="review-note">교육 종료 후 후기·기록 공개</span>`;
 }
@@ -2822,6 +2874,7 @@ function openCourseDetail(courseId) {
       ${courseSeriesSectionHtml(course)}
       <div class="section" id="applicationSection" style="grid-column: 1 / -1;">
         <h3>교육 신청</h3>
+        ${canApply ? `<p class="review-note">${escapeHtml(courseApplicationSignalText(course))}</p>` : ""}
         <div class="walk-in-notice"><strong>현장 참여도 가능합니다.</strong><span>사전 신청 없이 교육 당일 현장에서 참여할 수 있습니다. 미리 신청하면 일정 변경과 교육 안내를 받을 수 있습니다.</span></div>
         ${renderApplicationForm(course)}
       </div>
@@ -2954,6 +3007,7 @@ async function handleApplicationSubmit(event) {
         roundtable_notice_enabled: roundtableNoticeAgreed && !roundtableSaveFailed,
       };
       await loadGuestAccessForCourse(course.id, { force: true });
+      await loadApplicationSignals([course.id]);
       if (state.supplementaryLoaded && note) await loadSupplementaryData();
       showToast(preferenceSaveFailed || roundtableSaveFailed
         ? "교육 신청은 완료됐지만 선택 알림 설정 일부를 저장하지 못했습니다. 확인 링크 화면에서 다시 저장해 주세요."
@@ -3033,7 +3087,10 @@ async function handleApplicationSubmit(event) {
       console.error("Roundtable consent save after application failed", roundtableError);
     }
 
-    await loadApplicationState(supabase);
+    await Promise.all([
+      loadApplicationState(supabase),
+      loadApplicationSignals([course.id]),
+    ]);
     void requestNotificationDispatch(supabase, "course_application", application.application_id);
     showToast(preferenceSaveFailed || roundtableSaveFailed
       ? "교육 신청은 완료됐지만 선택 알림 설정 일부를 저장하지 못했습니다. 아래 알림 설정을 다시 확인해 주세요."
@@ -3406,7 +3463,10 @@ async function handleCancelApplication(button) {
   }
 
   void requestNotificationDispatch(supabase, "course_application", applicationId);
-  await loadApplicationState(supabase);
+  await Promise.all([
+    loadApplicationState(supabase),
+    loadApplicationSignals(state.activeCourseId ? [state.activeCourseId] : []),
+  ]);
   showToast("교육 신청을 취소했습니다. 취소 완료 메일과 문자를 보내드립니다.");
   if (state.activeCourseId) openCourseDetail(state.activeCourseId);
   if (elements.profileModal.classList.contains("open") && elements.profileEyebrow.textContent === "나의 정보") {
@@ -3449,7 +3509,10 @@ async function handleGuestApplicationCancel(button) {
     return;
   }
 
-  await loadGuestAccessForCourse(course.id, { force: true });
+  await Promise.all([
+    loadGuestAccessForCourse(course.id, { force: true }),
+    loadApplicationSignals([course.id]),
+  ]);
   showToast("비회원 교육 신청을 취소했습니다. 취소 완료 문자를 보내드리며 같은 정보로 다시 신청할 수 있습니다.");
   openCourseDetail(course.id);
 }
