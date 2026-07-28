@@ -641,16 +641,28 @@ function isAttendanceConfirmed(application) {
   return Boolean(application?.attendance_confirmed_at);
 }
 
+function isOwnApplication(application) {
+  return Boolean(state.user?.id && application?.user_id === state.user.id);
+}
+
 function activeApplications() {
-  return state.applications.filter((application) => !isCancelledApplication(application));
+  return state.applications.filter((application) => isOwnApplication(application) && !isCancelledApplication(application));
 }
 
 function activeApplicationForCourse(courseId) {
-  return state.applications.find((application) => application.course_id === courseId && !isCancelledApplication(application));
+  return state.applications.find((application) => (
+    isOwnApplication(application)
+    && application.course_id === courseId
+    && !isCancelledApplication(application)
+  ));
 }
 
 function cancelledApplicationForCourse(courseId) {
-  return state.applications.find((application) => application.course_id === courseId && isCancelledApplication(application));
+  return state.applications.find((application) => (
+    isOwnApplication(application)
+    && application.course_id === courseId
+    && isCancelledApplication(application)
+  ));
 }
 
 function userApplicationForCourse(courseId) {
@@ -1050,7 +1062,8 @@ async function loadApplicationState(supabase) {
       .maybeSingle(),
     supabase
       .from("course_applications")
-      .select("*")
+      .select("id,course_id,user_id,applicant_name,phone,note,status,created_at,attendance_confirmed_at,email_course_notice_enabled,sms_course_notice_enabled,roundtable_notice_enabled")
+      .eq("user_id", state.user.id)
       .order("created_at", { ascending: false }),
     supabase.rpc("get_my_reviews"),
     supabase.rpc("get_my_interest_subscriptions"),
@@ -1072,7 +1085,7 @@ async function loadApplicationState(supabase) {
   }
 
   if (applicationsResult.status === "fulfilled" && !applicationsResult.value.error) {
-    state.applications = applicationsResult.value.data || [];
+    state.applications = (applicationsResult.value.data || []).filter(isOwnApplication);
   } else {
     console.warn("[모두의 인문학] 교육 신청 내역 확인 지연", applicationsResult.reason || applicationsResult.value?.error);
     state.applications = [];
