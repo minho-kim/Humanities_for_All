@@ -576,7 +576,7 @@ function applyLandingSummary(summary = {}) {
 }
 
 const APPLICATION_SIGNAL_MESSAGES = Object.freeze({
-  none: Object.freeze({ summary: "모집 중", callToAction: "" }),
+  none: Object.freeze({ summary: "지금 신청할 수 있어요.", callToAction: "함께해 보세요!" }),
   some: Object.freeze({ summary: "참여를 신청하신 분이 있어요.", callToAction: "함께해 보세요!" }),
   several: Object.freeze({ summary: "여러 분이 참여를 신청했어요.", callToAction: "함께해 보세요!" }),
   many: Object.freeze({ summary: "많은 분이 참여를 신청했어요.", callToAction: "함께해 보세요!" }),
@@ -1298,7 +1298,7 @@ function courseCardNoteHtml(course) {
     return `<span class="review-note">취소된 교육</span>`;
   }
   if (canApplyToCourse(course)) {
-    return `<span class="review-note">${courseApplicationSignalHtml(course)}</span>`;
+    return `<span class="review-note">참여 신청을 받고 있어요.</span>`;
   }
   return `<span class="review-note">교육 종료 후 후기·기록 공개</span>`;
 }

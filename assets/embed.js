@@ -515,7 +515,7 @@ function courseCardNoteHtml(course) {
     return `<span class="review-note">취소된 교육</span>`;
   }
   if (canApplyToCourse(course)) {
-    return `<span class="review-note">신청 가능 · 사전 질문 접수</span>`;
+    return `<span class="review-note">참여 신청을 받고 있어요.</span>`;
   }
   return `<span class="review-note">교육 종료 후 후기·기록 공개</span>`;
 }
