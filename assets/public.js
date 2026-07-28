@@ -2007,7 +2007,7 @@ function renderApplicationHistory() {
         return `
           <div class="table-row">
             <div class="row-top">
-              <strong>${escapeHtml(course?.title || "교육 정보")}</strong>
+              <strong>${escapeHtml(course?.title || "삭제된 교육")}</strong>
               <span class="badge ${applicationStatusClass(application)}">${escapeHtml(applicationStatusLabel(application))}</span>
             </div>
             <p class="muted">신청일 ${escapeHtml(shortDate(application.created_at))} · 신청자 ${escapeHtml(application.applicant_name || "")}</p>
@@ -2016,6 +2016,7 @@ function renderApplicationHistory() {
             ${renderCourseNotificationPreferences(application)}
             ${renderRoundtableConsent(application)}
             ${course ? `<button class="btn small secondary" type="button" data-open-course="${course.id}">교육 보기</button>` : ""}
+            ${course ? "" : `<p class="muted">교육 원본이 삭제되어 상세 정보는 열 수 없습니다.</p>`}
           </div>
         `;
       }).join("")}
@@ -2142,7 +2143,7 @@ function renderApplicationNoteHistory() {
         return `
           <div class="table-row">
             <div class="row-top">
-              <strong>${escapeHtml(course?.title || "교육 정보")}</strong>
+              <strong>${escapeHtml(course?.title || "삭제된 교육")}</strong>
               <span class="badge ${application.note ? "green" : "gray"}">${application.note ? "작성" : "미작성"}</span>
             </div>
             <p class="muted">신청일 ${escapeHtml(shortDate(application.created_at))}</p>
@@ -2163,7 +2164,7 @@ function renderMyReviewHistory() {
         return `
           <div class="table-row">
             <div class="row-top">
-              <strong>${escapeHtml(course?.title || "교육 정보")}</strong>
+              <strong>${escapeHtml(course?.title || "삭제된 교육")}</strong>
               <span class="badge ${reviewStatusClass(review)}">${escapeHtml(reviewStatusLabel(review))}</span>
             </div>
             <p>${escapeHtml(review.body)}</p>
@@ -2185,7 +2186,7 @@ function renderMyFeedbackHistory() {
         return `
           <div class="table-row">
             <div class="row-top">
-              <strong>${escapeHtml(course?.title || "교육 정보")}</strong>
+              <strong>${escapeHtml(course?.title || "삭제된 교육")}</strong>
               <span class="badge green">${escapeHtml(feedbackRatingLabel(feedback.rating))}</span>
             </div>
             <p class="muted">마지막 작성 ${escapeHtml(shortDate(feedback.updated_at || feedback.created_at))} · 운영진만 확인</p>
