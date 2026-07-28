@@ -590,7 +590,7 @@ function normalizeApplicationSignal(value) {
 function courseApplicationSignalHtml(course) {
   const signal = normalizeApplicationSignal(state.applicationSignals[course?.id]);
   const message = APPLICATION_SIGNAL_MESSAGES[signal];
-  return `${escapeHtml(message.summary)}${message.callToAction ? `<br>${escapeHtml(message.callToAction)}` : ""}`;
+  return `${escapeHtml(message.summary)}${message.callToAction ? ` ${escapeHtml(message.callToAction)}` : ""}`;
 }
 
 async function loadApplicationSignals(courseIds = null) {
