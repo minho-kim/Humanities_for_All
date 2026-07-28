@@ -576,10 +576,10 @@ function applyLandingSummary(summary = {}) {
 }
 
 const APPLICATION_SIGNAL_MESSAGES = Object.freeze({
-  none: "모집 중",
-  some: "참여를 신청하신 분이 있어요. 함께해 보세요!",
-  several: "여러 분이 참여를 신청했어요. 함께해 보세요!",
-  many: "많은 분이 참여를 신청했어요. 함께해 보세요!",
+  none: Object.freeze({ summary: "모집 중", callToAction: "" }),
+  some: Object.freeze({ summary: "참여를 신청하신 분이 있어요.", callToAction: "함께해 보세요!" }),
+  several: Object.freeze({ summary: "여러 분이 참여를 신청했어요.", callToAction: "함께해 보세요!" }),
+  many: Object.freeze({ summary: "많은 분이 참여를 신청했어요.", callToAction: "함께해 보세요!" }),
 });
 
 function normalizeApplicationSignal(value) {
@@ -587,9 +587,10 @@ function normalizeApplicationSignal(value) {
   return Object.prototype.hasOwnProperty.call(APPLICATION_SIGNAL_MESSAGES, signal) ? signal : "none";
 }
 
-function courseApplicationSignalText(course) {
+function courseApplicationSignalHtml(course) {
   const signal = normalizeApplicationSignal(state.applicationSignals[course?.id]);
-  return APPLICATION_SIGNAL_MESSAGES[signal];
+  const message = APPLICATION_SIGNAL_MESSAGES[signal];
+  return `${escapeHtml(message.summary)}${message.callToAction ? `<br>${escapeHtml(message.callToAction)}` : ""}`;
 }
 
 async function loadApplicationSignals(courseIds = null) {
@@ -1297,7 +1298,7 @@ function courseCardNoteHtml(course) {
     return `<span class="review-note">취소된 교육</span>`;
   }
   if (canApplyToCourse(course)) {
-    return `<span class="review-note">${escapeHtml(courseApplicationSignalText(course))}</span>`;
+    return `<span class="review-note">${courseApplicationSignalHtml(course)}</span>`;
   }
   return `<span class="review-note">교육 종료 후 후기·기록 공개</span>`;
 }
@@ -2874,7 +2875,7 @@ function openCourseDetail(courseId) {
       ${courseSeriesSectionHtml(course)}
       <div class="section" id="applicationSection" style="grid-column: 1 / -1;">
         <h3>교육 신청</h3>
-        ${canApply ? `<p class="review-note">${escapeHtml(courseApplicationSignalText(course))}</p>` : ""}
+        ${canApply ? `<p class="review-note">${courseApplicationSignalHtml(course)}</p>` : ""}
         <div class="walk-in-notice"><strong>현장 참여도 가능합니다.</strong><span>사전 신청 없이 교육 당일 현장에서 참여할 수 있습니다. 미리 신청하면 일정 변경과 교육 안내를 받을 수 있습니다.</span></div>
         ${renderApplicationForm(course)}
       </div>
