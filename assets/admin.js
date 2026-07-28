@@ -36,6 +36,9 @@ const state = {
   expectationFilters: {
     courseId: "",
   },
+  feedbackFilters: {
+    courseId: "",
+  },
   walkInSearch: {
     courseId: "",
     query: "",
@@ -94,6 +97,7 @@ const state = {
   applications: [],
   attendanceDocuments: [],
   reviews: [],
+  feedbacks: [],
   contentReports: [],
   draws: [],
   winners: [],
@@ -267,7 +271,7 @@ function managedOrganizationIds() {
 
 function canAccessAdminTab(tab) {
   if (isOwner()) return true;
-  return ["dashboard", "organizations", "venues", "courses", "applications", "expectations", "archive", "reviews", "reports"].includes(tab);
+  return ["dashboard", "organizations", "venues", "courses", "applications", "expectations", "archive", "feedback", "reviews", "reports"].includes(tab);
 }
 
 function updateAdminNavigationVisibility() {
@@ -687,6 +691,35 @@ function reviewVisibilityLabel(review) {
 
 function reviewVisibilityClass(review) {
   return isReviewPublic(review) ? "green" : "red";
+}
+
+const FEEDBACK_RATING_LABELS = Object.freeze({
+  1: "아쉬웠어요",
+  2: "괜찮았어요",
+  3: "좋았어요",
+  4: "정말 좋았어요",
+});
+
+const FEEDBACK_STRENGTH_LABELS = Object.freeze({
+  useful_content: "내용이 유익했어요",
+  new_perspective: "새로운 관점을 얻었어요",
+  instructor_explanation: "강사의 설명이 좋았어요",
+  participation_dialogue: "참여와 대화가 좋았어요",
+  helpful_materials: "자료가 도움이 됐어요",
+  comfortable_operation: "운영이 편안했어요",
+});
+
+const FEEDBACK_IMPROVEMENT_LABELS = Object.freeze({
+  content_depth: "내용의 깊이",
+  pace: "진행 속도",
+  schedule: "교육 시간",
+  venue: "장소",
+  participation_format: "참여 방식",
+  materials: "자료 제공",
+});
+
+function feedbackRatingLabel(value) {
+  return FEEDBACK_RATING_LABELS[Number(value)] || "응답 없음";
 }
 
 function formatNumber(value) {
@@ -1728,6 +1761,7 @@ function courseFilterTargetLabel(target) {
   return {
     application: "신청 관리 교육",
     expectation: "기대평·문의 교육",
+    feedback: "교육 피드백",
     archive: "아카이브 교육",
     roundtable: "정담회 문자 대상 교육",
   }[target] || "교육";
@@ -1736,6 +1770,7 @@ function courseFilterTargetLabel(target) {
 function currentCourseFilterSelectedId(target) {
   if (target === "application") return state.applicationFilters.courseId || "";
   if (target === "expectation") return state.expectationFilters.courseId || "";
+  if (target === "feedback") return state.feedbackFilters.courseId || "";
   if (target === "archive") return document.querySelector("#archiveForm input[name='course_id']")?.value || "";
   if (target === "roundtable") return state.roundtable.courseId || "";
   return "";
@@ -1838,6 +1873,12 @@ function setCourseFilterSelection(target, courseId = "") {
     state.expectationFilters.courseId = courseId;
     closeModal(elements.adminNoticeModal);
     renderExpectations();
+    return;
+  }
+  if (target === "feedback") {
+    state.feedbackFilters.courseId = courseId;
+    closeModal(elements.adminNoticeModal);
+    renderFeedbacks();
     return;
   }
   if (target === "archive") {
@@ -2455,6 +2496,7 @@ async function loadAdminData() {
     supabase.from("course_applications").select("*").order("created_at", { ascending: false }),
     supabase.from("course_attendance_documents").select("*").order("created_at", { ascending: false }),
     supabase.from("reviews").select("*").order("created_at", { ascending: false }),
+    supabase.rpc("get_managed_course_feedback"),
     supabase.from("content_reports").select("*").order("created_at", { ascending: false }),
     supabase.from("review_draws").select("*").order("created_at", { ascending: false }),
     supabase.from("review_draw_winners").select("*").order("created_at", { ascending: false }),
@@ -2473,6 +2515,7 @@ async function loadAdminData() {
     applications,
     attendanceDocuments,
     reviews,
+    feedbacks,
     contentReports,
     draws,
     winners,
@@ -2486,6 +2529,7 @@ async function loadAdminData() {
     state.applications = applications;
     state.attendanceDocuments = attendanceDocuments;
     state.reviews = reviews;
+    state.feedbacks = feedbacks;
     state.contentReports = contentReports;
     state.draws = draws;
     state.winners = winners;
@@ -2500,6 +2544,7 @@ async function loadAdminData() {
     state.applications = applications.filter((application) => courseIds.has(application.course_id));
     state.attendanceDocuments = attendanceDocuments.filter((document) => courseIds.has(document.course_id));
     state.reviews = reviews.filter((review) => courseIds.has(review.course_id));
+    state.feedbacks = feedbacks.filter((feedback) => courseIds.has(feedback.course_id));
     state.contentReports = contentReports.filter((report) => courseIds.has(report.course_id));
     state.draws = [];
     state.winners = [];
@@ -3117,11 +3162,13 @@ function renderDashboard() {
       <div class="stat" style="background:#fff;color:var(--ink);"><strong>${state.courses.length}</strong><span>교육</span></div>
       <div class="stat" style="background:#fff;color:var(--ink);"><strong>${applications.length}</strong><span>신청</span></div>
       <div class="stat" style="background:#fff;color:var(--ink);"><strong>${state.archives.length}</strong><span>아카이브</span></div>
+      <div class="stat" style="background:#fff;color:var(--ink);"><strong>${state.feedbacks.length}</strong><span>교육 피드백</span></div>
       <div class="stat" style="background:#fff;color:var(--ink);"><strong>${state.reviews.length}</strong><span>후기</span></div>
       <div class="stat" style="background:#fff;color:var(--ink);"><strong>${roundtablePeople}</strong><span>정담회 동의</span></div>
     </div>
     <div class="admin-grid">
       <div class="section"><h3>교육 신청</h3><p>현재 신청 ${applications.length}건</p></div>
+      <div class="section"><h3>교육 피드백</h3><p>운영진만 확인하는 응답 ${state.feedbacks.length}건</p></div>
       <div class="section"><h3>후기 관리</h3><p>공개 후기 ${publicReviews}개 · 숨김 ${hiddenReviews}개</p></div>
       ${isOwner() ? `<div class="section"><h3>관리자 전용 추첨</h3><p>추첨 기록 ${state.draws.length}건 · 당첨 이력 ${state.winners.length}건</p></div>` : ""}
     </div>
@@ -3760,6 +3807,95 @@ function renderArchive() {
   `;
 }
 
+function filteredFeedbacks() {
+  return state.feedbacks.filter((feedback) => (
+    !state.feedbackFilters.courseId || feedback.course_id === state.feedbackFilters.courseId
+  ));
+}
+
+function feedbackOptionCounts(feedbacks, property, labels) {
+  const counts = new Map(Object.keys(labels).map((value) => [value, 0]));
+  feedbacks.forEach((feedback) => {
+    const values = Array.isArray(feedback[property]) ? feedback[property] : [];
+    new Set(values).forEach((value) => {
+      if (counts.has(value)) counts.set(value, counts.get(value) + 1);
+    });
+  });
+  return [...counts.entries()]
+    .map(([value, count]) => ({ value, label: labels[value], count }))
+    .filter((item) => item.count > 0)
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "ko"));
+}
+
+function feedbackSummaryTagsHtml(items, emptyLabel) {
+  if (!items.length) return `<p class="muted">${escapeHtml(emptyLabel)}</p>`;
+  return `<div class="feedback-tag-list">${items.map((item) => `<span class="badge gray">${escapeHtml(item.label)} · ${item.count.toLocaleString("ko-KR")}명</span>`).join("")}</div>`;
+}
+
+function feedbackResponseTagsHtml(values, labels) {
+  const items = (Array.isArray(values) ? values : []).filter((value) => labels[value]);
+  if (!items.length) return `<span class="muted">선택 없음</span>`;
+  return `<span class="feedback-tag-list">${items.map((value) => `<span class="badge gray">${escapeHtml(labels[value])}</span>`).join("")}</span>`;
+}
+
+function renderFeedbackResponse(feedback) {
+  return `
+    <div class="table-row">
+      <div class="row-top">
+        <strong>${escapeHtml(courseName(feedback.course_id))}</strong>
+        <span class="badge green">${escapeHtml(feedbackRatingLabel(feedback.rating))}</span>
+      </div>
+      <p class="muted">작성 ${escapeHtml(shortDate(feedback.created_at))}${feedback.updated_at && feedback.updated_at !== feedback.created_at ? ` · 수정 ${escapeHtml(shortDate(feedback.updated_at))}` : ""} · 신청자 식별정보 비표시</p>
+      <p><strong>좋았던 점</strong><br>${feedbackResponseTagsHtml(feedback.strengths, FEEDBACK_STRENGTH_LABELS)}</p>
+      <p><strong>개선되었으면 하는 점</strong><br>${feedbackResponseTagsHtml(feedback.improvements, FEEDBACK_IMPROVEMENT_LABELS)}</p>
+      ${feedback.comment ? `<p><strong>운영진에게 전한 의견</strong><br>${escapeHtml(feedback.comment)}</p>` : `<p class="muted">자유 의견 없음</p>`}
+    </div>
+  `;
+}
+
+function renderFeedbacks() {
+  const feedbacks = filteredFeedbacks();
+  const ratingCounts = Object.keys(FEEDBACK_RATING_LABELS).map((value) => ({
+    value,
+    label: FEEDBACK_RATING_LABELS[value],
+    count: feedbacks.filter((feedback) => Number(feedback.rating) === Number(value)).length,
+  }));
+  const positiveCount = feedbacks.filter((feedback) => Number(feedback.rating) >= 3).length;
+  const positiveRate = feedbacks.length ? positiveCount / feedbacks.length : null;
+  const strengthCounts = feedbackOptionCounts(feedbacks, "strengths", FEEDBACK_STRENGTH_LABELS);
+  const improvementCounts = feedbackOptionCounts(feedbacks, "improvements", FEEDBACK_IMPROVEMENT_LABELS);
+
+  elements.adminContent.innerHTML = `
+    <h2>교육 피드백 관리</h2>
+    <p class="muted">프로그램 개선을 위한 비공개 응답입니다. 전체 관리자와 해당 교육의 단체 관리자만 볼 수 있으며 신청자 이름·이메일·휴대전화번호는 제공하지 않습니다.</p>
+    <div class="section" style="margin: 12px 0 14px;">
+      <h3>교육별 보기</h3>
+      ${renderCourseFilterControl("feedback", state.feedbackFilters.courseId, { emptyLabel: "전체 교육" })}
+      <div class="actions" style="margin-top: 12px;">
+        <span class="badge green">응답 ${feedbacks.length.toLocaleString("ko-KR")}건</span>
+        <span class="badge gray">좋았어요 이상 ${positiveRate === null ? "-" : formatPercent(positiveRate)}</span>
+      </div>
+    </div>
+    <div class="stat-grid" style="margin-bottom: 14px;">
+      ${ratingCounts.map((item) => `<div class="stat" style="background:#fff;color:var(--ink);"><strong>${item.count.toLocaleString("ko-KR")}</strong><span>${escapeHtml(item.label)}</span></div>`).join("")}
+    </div>
+    <div class="admin-grid" style="margin-bottom: 16px;">
+      <section class="section">
+        <h3>좋았던 점</h3>
+        ${feedbackSummaryTagsHtml(strengthCounts, "아직 선택된 항목이 없습니다.")}
+      </section>
+      <section class="section">
+        <h3>개선되었으면 하는 점</h3>
+        ${feedbackSummaryTagsHtml(improvementCounts, "아직 선택된 항목이 없습니다.")}
+      </section>
+    </div>
+    <h3>개별 응답</h3>
+    <div class="table-list">
+      ${feedbacks.map(renderFeedbackResponse).join("") || `<div class="empty">아직 교육 피드백이 없습니다.</div>`}
+    </div>
+  `;
+}
+
 function renderReviews() {
   elements.adminContent.innerHTML = `
     <h2>후기 관리</h2>
@@ -4045,6 +4181,7 @@ function render() {
   else if (state.tab === "applications") renderApplications();
   else if (state.tab === "expectations") renderExpectations();
   else if (state.tab === "archive") renderArchive();
+  else if (state.tab === "feedback") renderFeedbacks();
   else if (state.tab === "reviews") renderReviews();
   else if (state.tab === "reports") renderReports();
   else if (state.tab === "draws") renderDraws();
@@ -5309,6 +5446,7 @@ async function reload() {
     state.applications = [];
     state.attendanceDocuments = [];
     state.reviews = [];
+    state.feedbacks = [];
     state.contentReports = [];
     state.draws = [];
     state.winners = [];

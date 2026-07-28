@@ -28,6 +28,7 @@ const state = {
   reviews: [],
   expectations: [],
   myReviews: [],
+  myFeedback: [],
   applications: [],
   applicationSignals: {},
   applicationSignalsLoaded: false,
@@ -720,6 +721,10 @@ function myReviewForCourse(courseId) {
   return state.myReviews.find((review) => review.course_id === courseId);
 }
 
+function myFeedbackForCourse(courseId) {
+  return state.myFeedback.find((feedback) => feedback.course_id === courseId);
+}
+
 function guestAccessForCourse(courseId) {
   const access = state.guestAccessByCourse[courseId];
   return access && !access.loading ? access : null;
@@ -745,6 +750,24 @@ function currentReviewForCourse(courseId) {
   };
 }
 
+function currentFeedbackForCourse(courseId) {
+  if (state.user) {
+    const signedInFeedback = myFeedbackForCourse(courseId);
+    if (signedInFeedback) return { ...signedInFeedback, identity: "user" };
+  }
+  const guestAccess = activeGuestAccessForCourse(courseId);
+  if (!guestAccess?.feedback_id) return null;
+  return {
+    id: guestAccess.feedback_id,
+    course_id: courseId,
+    rating: Number(guestAccess.feedback_rating || 0),
+    strengths: Array.isArray(guestAccess.feedback_strengths) ? guestAccess.feedback_strengths : [],
+    improvements: Array.isArray(guestAccess.feedback_improvements) ? guestAccess.feedback_improvements : [],
+    comment: guestAccess.feedback_comment || "",
+    identity: "guest",
+  };
+}
+
 function canWriteReviewForCourse(course) {
   if (!course) return false;
   const application = state.user ? activeApplicationForCourse(course.id) : null;
@@ -762,7 +785,7 @@ async function loadGuestAccessForCourse(courseId, { force = false } = {}) {
   state.guestAccessByCourse[courseId] = { loading: true };
   try {
     const supabase = await getSupabaseClient();
-    const { data, error } = await supabase.rpc("get_guest_course_access_v5", {
+    const { data, error } = await supabase.rpc("get_guest_course_access_v6", {
       p_course_id: courseId,
       p_access_token: accessToken,
     });
@@ -1083,6 +1106,7 @@ function clearApplicationState() {
   state.demographics = null;
   state.applications = [];
   state.myReviews = [];
+  state.myFeedback = [];
   state.interestSubscriptions = [];
   state.interestOptions = { instructors: [] };
   state.interestSearch = "";
@@ -1100,6 +1124,7 @@ async function loadApplicationState(supabase) {
     demographicsResult,
     applicationsResult,
     myReviewsResult,
+    myFeedbackResult,
     interestSubscriptionsResult,
     interestOptionsResult,
   ] = await Promise.allSettled([
@@ -1119,6 +1144,7 @@ async function loadApplicationState(supabase) {
       .eq("user_id", state.user.id)
       .order("created_at", { ascending: false }),
     supabase.rpc("get_my_reviews"),
+    supabase.rpc("get_my_course_feedback"),
     supabase.rpc("get_my_interest_subscriptions"),
     supabase.rpc("get_interest_subscription_options"),
   ]);
@@ -1149,6 +1175,13 @@ async function loadApplicationState(supabase) {
   } else {
     console.warn("[모두의 인문학] 내 후기 내역 확인 지연", myReviewsResult.reason || myReviewsResult.value?.error);
     state.myReviews = [];
+  }
+
+  if (myFeedbackResult.status === "fulfilled" && !myFeedbackResult.value.error) {
+    state.myFeedback = myFeedbackResult.value.data || [];
+  } else {
+    console.warn("[모두의 인문학] 내 교육 피드백 확인 지연", myFeedbackResult.reason || myFeedbackResult.value?.error);
+    state.myFeedback = [];
   }
 
   if (interestSubscriptionsResult.status === "fulfilled" && !interestSubscriptionsResult.value.error) {
@@ -2022,6 +2055,27 @@ function renderMyReviewHistory() {
   `;
 }
 
+function renderMyFeedbackHistory() {
+  if (!state.myFeedback.length) return `<div class="empty">아직 남긴 교육 피드백이 없습니다.</div>`;
+  return `
+    <div class="table-list">
+      ${state.myFeedback.map((feedback) => {
+        const course = courseById(feedback.course_id);
+        return `
+          <div class="table-row">
+            <div class="row-top">
+              <strong>${escapeHtml(course?.title || "교육 정보")}</strong>
+              <span class="badge green">${escapeHtml(feedbackRatingLabel(feedback.rating))}</span>
+            </div>
+            <p class="muted">마지막 작성 ${escapeHtml(shortDate(feedback.updated_at || feedback.created_at))} · 운영진만 확인</p>
+            ${course ? `<button class="btn small secondary" type="button" data-open-course="${course.id}">피드백 보기·수정</button>` : ""}
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
 function demographicOption(value, label, selectedValue) {
   return `<option value="${escapeHtml(value)}" ${selectedValue === value ? "selected" : ""}>${escapeHtml(label)}</option>`;
 }
@@ -2352,6 +2406,10 @@ function openMyInfo() {
       ${renderApplicationNoteHistory()}
     </section>
     <section class="section" style="margin-top: 14px;">
+      <h3>교육 피드백 작성 현황</h3>
+      ${renderMyFeedbackHistory()}
+    </section>
+    <section class="section" style="margin-top: 14px;">
       <h3>후기 작성 현황</h3>
       ${renderMyReviewHistory()}
     </section>
@@ -2415,37 +2473,122 @@ function renderCourseExpectations(course) {
   `;
 }
 
-function renderReviewForm(course) {
+const FEEDBACK_RATING_LABELS = Object.freeze({
+  1: "아쉬웠어요",
+  2: "괜찮았어요",
+  3: "좋았어요",
+  4: "정말 좋았어요",
+});
+
+const FEEDBACK_STRENGTH_LABELS = Object.freeze({
+  useful_content: "내용이 유익했어요",
+  new_perspective: "새로운 관점을 얻었어요",
+  instructor_explanation: "강사의 설명이 좋았어요",
+  participation_dialogue: "참여와 대화가 좋았어요",
+  helpful_materials: "자료가 도움이 됐어요",
+  comfortable_operation: "운영이 편안했어요",
+});
+
+const FEEDBACK_IMPROVEMENT_LABELS = Object.freeze({
+  content_depth: "내용의 깊이",
+  pace: "진행 속도",
+  schedule: "교육 시간",
+  venue: "장소",
+  participation_format: "참여 방식",
+  materials: "자료 제공",
+});
+
+function feedbackRatingLabel(value) {
+  return FEEDBACK_RATING_LABELS[Number(value)] || "피드백";
+}
+
+function courseResponseIdentity(course) {
   const signedInApplication = state.user ? activeApplicationForCourse(course.id) : null;
   const signedInEligible = Boolean(signedInApplication && isAttendanceConfirmed(signedInApplication));
   const guestAccess = activeGuestAccessForCourse(course.id);
   const guestEligible = Boolean(guestAccess?.attendance_confirmed_at);
-  const reviewIdentity = signedInEligible ? "user" : guestEligible ? "guest" : "";
-  const existingReview = reviewIdentity === "user"
-    ? myReviewForCourse(course.id)
-    : reviewIdentity === "guest" && guestAccess?.review_id
-      ? { id: guestAccess.review_id, body: guestAccess.review_body || "" }
-      : null;
+  return signedInEligible ? "user" : guestEligible ? "guest" : "";
+}
 
-  if (!reviewIdentity) {
-    if (!canShowPostCourseContent(course)) return "";
-    return `
-      <div class="table-row">
-        <p>비회원 참여자는 신청 확인 문자에 포함된 안전한 확인 링크로 접속하면 참석 확인 후 후기를 작성할 수 있습니다.</p>
-        <span class="badge gray">이름과 전화번호만으로는 후기 권한을 확인하지 않습니다</span>
+function feedbackChoiceHtml(name, value, label, selected, type = "checkbox") {
+  const inputId = `feedback-${name}-${value}`;
+  return `
+    <label class="feedback-choice" for="${escapeHtml(inputId)}">
+      <input id="${escapeHtml(inputId)}" name="${escapeHtml(name)}" type="${escapeHtml(type)}" value="${escapeHtml(value)}" ${selected ? "checked" : ""} ${type === "radio" ? "required" : ""}>
+      <span>${escapeHtml(label)}</span>
+    </label>
+  `;
+}
+
+function renderCourseFeedbackForm(course) {
+  const feedbackIdentity = courseResponseIdentity(course);
+  if (!feedbackIdentity) return "";
+  const existingFeedback = currentFeedbackForCourse(course.id);
+  const strengths = new Set(existingFeedback?.strengths || []);
+  const improvements = new Set(existingFeedback?.improvements || []);
+
+  return `
+    <form id="courseFeedbackForm" class="course-feedback-form">
+      <input type="hidden" name="feedback_identity" value="${escapeHtml(feedbackIdentity)}">
+      <fieldset class="feedback-question">
+        <legend>이번 교육은 어땠나요?</legend>
+        <div class="feedback-choice-grid feedback-rating-grid">
+          ${Object.entries(FEEDBACK_RATING_LABELS).map(([value, label]) => (
+            feedbackChoiceHtml("rating", value, label, Number(existingFeedback?.rating) === Number(value), "radio")
+          )).join("")}
+        </div>
+      </fieldset>
+      <fieldset class="feedback-question">
+        <legend>좋았던 점을 골라주세요 <span class="muted">(여러 개 선택 가능)</span></legend>
+        <div class="feedback-choice-grid">
+          ${Object.entries(FEEDBACK_STRENGTH_LABELS).map(([value, label]) => (
+            feedbackChoiceHtml("strengths", value, label, strengths.has(value))
+          )).join("")}
+        </div>
+      </fieldset>
+      <fieldset class="feedback-question">
+        <legend>개선되었으면 하는 점이 있나요? <span class="muted">(선택)</span></legend>
+        <div class="feedback-choice-grid">
+          ${Object.entries(FEEDBACK_IMPROVEMENT_LABELS).map(([value, label]) => (
+            feedbackChoiceHtml("improvements", value, label, improvements.has(value))
+          )).join("")}
+        </div>
+      </fieldset>
+      <label>운영진에게 전하고 싶은 의견 (선택)
+        <textarea name="comment" maxlength="2000" placeholder="프로그램을 더 좋게 만드는 데 도움이 될 의견을 자유롭게 적어주세요.">${escapeHtml(existingFeedback?.comment || "")}</textarea>
+      </label>
+      <p class="muted">이름이나 연락처 등 본인 또는 다른 사람을 알아볼 수 있는 정보는 적지 마세요.</p>
+      <details class="privacy-details feedback-privacy-details">
+        <summary>피드백 처리 안내</summary>
+        <ul class="plain-list">
+          <li><strong>목적</strong><br>교육 프로그램 개선과 비식별 통계 분석</li>
+          <li><strong>공개 여부</strong><br>사이트에는 공개되지 않으며 전체 관리자와 해당 교육의 단체 관리자만 확인합니다. 관리자 화면에는 신청자 이름·이메일·휴대전화번호를 표시하지 않습니다.</li>
+          <li><strong>보유 기간</strong><br>신청자 직접 식별정보와 선택 자유 의견은 마지막 참석 교육 종료일부터 6개월 뒤 파기합니다. 만족도와 선택형 항목은 신청자 연결을 제거한 통계로 보관합니다.</li>
+          <li><strong>선택 사항</strong><br>작성하지 않아도 교육 신청·참여와 공개 후기 작성에 불이익이 없습니다.</li>
+        </ul>
+      </details>
+      <div class="actions" style="margin-top: 12px;">
+        <button class="btn" type="submit">${existingFeedback ? "교육 피드백 수정" : "교육 피드백 제출"}</button>
+        <span class="badge ${existingFeedback ? "green" : "gray"}">${existingFeedback ? "피드백 완료" : "참석 인증 완료"}</span>
       </div>
-    `;
-  }
+    </form>
+  `;
+}
+
+function renderReviewForm(course) {
+  const reviewIdentity = courseResponseIdentity(course);
+  if (!reviewIdentity) return "";
+  const existingReview = currentReviewForCourse(course.id);
 
   if (existingReview) {
     return `
       <form id="reviewForm">
         <input type="hidden" name="review_id" value="${escapeHtml(existingReview.id)}">
         <input type="hidden" name="review_identity" value="${escapeHtml(reviewIdentity)}">
-        <label>내 후기<textarea name="body" required minlength="10">${escapeHtml(existingReview.body || "")}</textarea></label>
+        <label>내 공개 후기<textarea name="body" required minlength="10">${escapeHtml(existingReview.body || "")}</textarea></label>
         <p class="muted">후기는 글로만 작성합니다. 현장 사진과 영상은 운영자가 확인한 뒤 사진·영상·자료 아카이브에 올립니다.</p>
         <div class="actions" style="margin-top: 12px;">
-          <button class="btn" type="submit">후기 수정</button>
+          <button class="btn" type="submit">공개 후기 수정</button>
           <button class="btn danger" type="button" ${reviewIdentity === "guest" ? "data-delete-guest-review" : `data-delete-review="${escapeHtml(existingReview.id)}"`}>후기 삭제</button>
           <span class="badge green">이미 작성한 후기</span>
         </div>
@@ -2456,13 +2599,62 @@ function renderReviewForm(course) {
   return `
     <form id="reviewForm">
       <input type="hidden" name="review_identity" value="${escapeHtml(reviewIdentity)}">
-      <label>후기<textarea name="body" placeholder="교육에서 좋았던 점, 기억에 남은 질문, 다음 참여자에게 전하고 싶은 말을 적어주세요." required minlength="10"></textarea></label>
+      <label>다음 참여자를 위한 공개 후기<textarea name="body" placeholder="교육에서 좋았던 점, 기억에 남은 질문, 다음 참여자에게 전하고 싶은 말을 적어주세요." required minlength="10"></textarea></label>
       <p class="muted">후기는 글로만 작성합니다. 사진과 영상은 운영자가 확인한 뒤 사진·영상·자료 아카이브에 올립니다.</p>
       <div class="actions" style="margin-top: 12px;">
-        <button class="btn" type="submit">후기 등록</button>
+        <button class="btn" type="submit">공개 후기 등록</button>
         <span class="badge green">참석 인증 완료</span>
       </div>
     </form>
+  `;
+}
+
+function renderPostCourseResponseEditor(course) {
+  const responseIdentity = courseResponseIdentity(course);
+  if (!responseIdentity) {
+    if (!canShowPostCourseContent(course)) return "";
+    const accessGuide = state.user
+      ? "교육 신청과 참석 확인이 완료된 참여자만 교육 피드백과 공개 후기를 작성할 수 있습니다."
+      : "비회원 참여자는 신청 확인 문자에 포함된 안전한 확인 링크로 접속하면 참석 확인 후 교육 피드백과 공개 후기를 작성할 수 있습니다.";
+    const accessBadge = state.user
+      ? "참석 확인이 작성 권한 기준입니다"
+      : "이름과 전화번호만으로는 작성 권한을 확인하지 않습니다";
+    return `
+      <div class="section" style="grid-column: 1 / -1;">
+        <h3>교육 피드백과 후기</h3>
+        <div class="table-row">
+          <p>${escapeHtml(accessGuide)}</p>
+          <span class="badge gray">${escapeHtml(accessBadge)}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="section post-course-response-section" style="grid-column: 1 / -1;">
+      <div class="post-course-response-grid">
+        <section class="post-course-response-card" id="courseFeedbackSection">
+          <div class="response-card-heading">
+            <div>
+              <h3>교육 피드백 남기기</h3>
+              <p>더 나은 프로그램을 위해 의견을 들려주세요.</p>
+            </div>
+            <div class="actions"><span class="badge gray">약 10초</span><span class="badge gray">운영진만 확인</span></div>
+          </div>
+          ${renderCourseFeedbackForm(course)}
+        </section>
+        <section class="post-course-response-card" id="publicReviewSection">
+          <div class="response-card-heading">
+            <div>
+              <h3>공개 후기 남기기</h3>
+              <p>다음 참여자가 교육을 선택하는 데 도움이 되도록 경험을 나눠주세요.</p>
+            </div>
+            <div class="actions"><span class="badge green">사이트에 공개</span></div>
+          </div>
+          ${renderReviewForm(course)}
+        </section>
+      </div>
+    </div>
   `;
 }
 
@@ -2589,7 +2781,7 @@ function renderGuestApplicationForm(course) {
         ` : ""}
         ${renderGuestCourseNotificationPreferences(course, activeGuestAccess)}
         ${renderGuestRoundtableConsent(course, activeGuestAccess)}
-        ${attendanceConfirmed ? `<p class="muted">참석 인증이 완료되어 후기를 작성할 수 있습니다.</p>` : ""}
+        ${attendanceConfirmed ? `<p class="muted">참석 인증이 완료되어 교육 피드백과 공개 후기를 작성할 수 있습니다.</p>` : ""}
         ${canCancelApplication ? `<button class="btn small secondary" type="button" data-cancel-guest-application>신청 취소</button>` : ""}
       </div>
     `;
@@ -2642,7 +2834,7 @@ function renderApplicationForm(course) {
         <section class="application-path-card">
           <span class="badge green">다음 신청이 편리해요</span>
           <h4>로그인하고 신청</h4>
-          <p>Google 또는 이메일로 로그인하면 이름과 전화번호를 저장하고 나의 신청·기대평·후기 현황을 모아볼 수 있습니다.</p>
+          <p>Google 또는 이메일로 로그인하면 이름과 전화번호를 저장하고 나의 신청·기대평·교육 피드백·후기 현황을 모아볼 수 있습니다.</p>
           <button class="btn small" type="button" data-login-for-application>로그인 후 신청하기</button>
         </section>
         <section class="application-path-card">
@@ -2668,7 +2860,7 @@ function renderApplicationForm(course) {
         ${renderRoundtableConsent(existingApplication)}
         ${renderApplicationNoteForm(existingApplication, course)}
         ${attendanceConfirmed
-          ? `<p class="muted">참석 인증이 완료되어 후기를 작성할 수 있습니다.</p>`
+          ? `<p class="muted">참석 인증이 완료되어 교육 피드백과 공개 후기를 작성할 수 있습니다.</p>`
           : canCancelApplication
             ? `<p class="muted">신청 취소는 아래 버튼으로 처리할 수 있습니다. 신청 내용 수정이 필요하면 운영자에게 문의해 주세요.</p>
                <button class="btn small secondary" type="button" data-cancel-application="${escapeHtml(existingApplication.id)}">신청 취소</button>`
@@ -2806,7 +2998,7 @@ function openCourseDetail(courseId) {
   const naverUrl = naverPlaceUrl(course.venue);
   const canApply = canApplyToCourse(course);
   const canReview = canWriteReviewForCourse(course);
-  const reviewEditorHtml = renderReviewForm(course);
+  const postCourseResponseEditorHtml = renderPostCourseResponseEditor(course);
   const postCourseContentHtml = canShowPostCourseContent(course)
     ? `
       <div class="section">
@@ -2841,7 +3033,8 @@ function openCourseDetail(courseId) {
         </ul>
         <div class="actions" style="margin-top: 14px;">
           ${canApply ? `<button class="btn small" type="button" data-apply-course="${course.id}">신청하기</button>` : `<button class="btn small secondary" type="button" disabled>신청 마감</button>`}
-          ${canReview ? `<button class="btn small secondary" type="button" data-login-for-review>${currentReviewForCourse(course.id) ? "내 후기 수정" : "후기 쓰기"}</button>` : ""}
+          ${canReview ? `<button class="btn small secondary" type="button" data-login-for-feedback>${currentFeedbackForCourse(course.id) ? "교육 피드백 수정" : "교육 피드백"}</button>` : ""}
+          ${canReview ? `<button class="btn small secondary" type="button" data-login-for-review>${currentReviewForCourse(course.id) ? "공개 후기 수정" : "공개 후기"}</button>` : ""}
         </div>
       </div>
       <aside class="section">
@@ -2884,10 +3077,7 @@ function openCourseDetail(courseId) {
         ${renderCourseExpectations(course)}
       </div>
       ${postCourseContentHtml}
-      ${reviewEditorHtml ? `<div class="section" style="grid-column: 1 / -1;">
-        <h3>후기 작성</h3>
-        ${reviewEditorHtml}
-      </div>` : ""}
+      ${postCourseResponseEditorHtml}
     </div>
   `;
   openModal(elements.detailModal);
@@ -3551,12 +3741,97 @@ async function handleGuestReviewAccessSubmit(event) {
       showToast("신청은 확인했지만 아직 관리자의 참석 확인이 완료되지 않았습니다.");
       return;
     }
-    showToast("참석 정보를 확인했습니다. 후기를 작성해 주세요.");
+    showToast("참석 정보를 확인했습니다. 교육 피드백과 공개 후기를 남길 수 있습니다.");
     openCourseDetail(course.id);
   } finally {
     if (button && document.body.contains(button)) {
       button.disabled = false;
-      button.textContent = "참석 확인하고 후기 쓰기";
+      button.textContent = "참석 확인하고 의견 남기기";
+    }
+  }
+}
+
+async function handleCourseFeedbackSubmit(event) {
+  event.preventDefault();
+  const course = state.composedCourses.find((item) => item.id === state.activeCourseId);
+  const form = getSubmitForm(event);
+  if (!course || !form) return;
+
+  const formData = new FormData(form);
+  const feedbackIdentity = String(formData.get("feedback_identity") || "user");
+  const hadFeedback = Boolean(currentFeedbackForCourse(course.id));
+  const rating = Number(formData.get("rating"));
+  const strengths = formData.getAll("strengths").map(String).filter((value) => Object.prototype.hasOwnProperty.call(FEEDBACK_STRENGTH_LABELS, value));
+  const improvements = formData.getAll("improvements").map(String).filter((value) => Object.prototype.hasOwnProperty.call(FEEDBACK_IMPROVEMENT_LABELS, value));
+  const comment = String(formData.get("comment") || "").trim();
+
+  if (!Number.isInteger(rating) || !Object.prototype.hasOwnProperty.call(FEEDBACK_RATING_LABELS, rating)) {
+    showToast("이번 교육이 어땠는지 선택해 주세요.");
+    return;
+  }
+  if (comment.length > 2000) {
+    showToast("자유 의견은 2000자 이하로 입력해 주세요.");
+    return;
+  }
+
+  const submitButton = form.querySelector("button[type='submit']");
+  const defaultLabel = submitButton?.textContent || "교육 피드백 제출";
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "저장 중...";
+  }
+
+  try {
+    const supabase = await getSupabaseClient();
+    if (feedbackIdentity === "guest") {
+      const accessToken = validGuestAccessToken(state.guestAccessTokens[course.id]);
+      const access = activeGuestAccessForCourse(course.id);
+      if (!accessToken || !access?.attendance_confirmed_at) {
+        showToast("신청 확인 문자에 포함된 안전한 링크로 참석 정보를 다시 확인해 주세요.");
+        return;
+      }
+      const { error } = await supabase.rpc("save_guest_course_feedback_v1", {
+        p_course_id: course.id,
+        p_access_token: accessToken,
+        p_rating: rating,
+        p_strengths: strengths,
+        p_improvements: improvements,
+        p_comment: comment || null,
+      });
+      if (error) throw error;
+      await loadGuestAccessForCourse(course.id, { force: true });
+    } else {
+      if (!state.user) {
+        openModal(elements.loginModal);
+        return;
+      }
+      const application = activeApplicationForCourse(course.id);
+      if (!application || !isAttendanceConfirmed(application)) {
+        showToast("참석 인증이 완료된 뒤 교육 피드백을 남길 수 있습니다.");
+        return;
+      }
+      const { error } = await supabase.rpc("save_my_course_feedback", {
+        p_course_id: course.id,
+        p_rating: rating,
+        p_strengths: strengths,
+        p_improvements: improvements,
+        p_comment: comment || null,
+      });
+      if (error) throw error;
+      await loadApplicationState(supabase);
+    }
+
+    openCourseDetail(course.id);
+    showToast(hadFeedback ? "교육 피드백을 수정했습니다." : "교육 피드백을 등록했습니다.");
+  } catch (error) {
+    console.error("Course feedback submission failed", error);
+    showToast(["22023", "42501"].includes(error?.code)
+      ? error.message
+      : "교육 피드백을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+  } finally {
+    if (submitButton && document.body.contains(submitButton)) {
+      submitButton.disabled = false;
+      submitButton.textContent = defaultLabel;
     }
   }
 }
@@ -4207,6 +4482,7 @@ function bindEvents() {
     const instructorButton = event.target.closest("[data-open-instructor]");
     const instructorCoursesButton = event.target.closest("[data-open-instructor-courses]");
     const closeButton = event.target.closest("[data-close-modal]");
+    const loginForFeedback = event.target.closest("[data-login-for-feedback]");
     const loginForReview = event.target.closest("[data-login-for-review]");
     const loginForApplication = event.target.closest("[data-login-for-application]");
     const applyButton = event.target.closest("[data-apply-course]");
@@ -4335,6 +4611,12 @@ function bindEvents() {
       return;
     }
     if (closeButton) closeModal(closeButton.closest(".modal"));
+    if (loginForFeedback) {
+      const feedbackForm = document.getElementById("courseFeedbackForm");
+      if (feedbackForm) feedbackForm.scrollIntoView({ behavior: "smooth", block: "start" });
+      else openModal(elements.loginModal);
+      return;
+    }
     if (loginForReview) {
       const reviewForm = document.getElementById("reviewForm") || document.getElementById("guestReviewAccessForm");
       if (reviewForm) reviewForm.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -4402,6 +4684,7 @@ function bindEvents() {
     if (event.target.matches("[data-roundtable-consent-form]")) return handleRoundtableConsentSubmit(event);
     if (event.target.matches("[data-guest-roundtable-consent-form]")) return handleGuestRoundtableConsentSubmit(event);
     if (event.target.matches("[data-application-note-form]")) return handleApplicationNoteSubmit(event);
+    if (event.target.id === "courseFeedbackForm") return handleCourseFeedbackSubmit(event);
     if (event.target.id === "reviewForm") return handleReviewSubmit(event);
     if (event.target.id === "reportForm") return handleReportSubmit(event);
   });
