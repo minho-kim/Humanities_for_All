@@ -217,7 +217,7 @@ function addAdminDraftNotice(form, hadFiles = false) {
   notice.setAttribute("role", "status");
   notice.textContent = hadFiles
     ? "작성 중인 내용을 임시 복원했습니다. 보안을 위해 파일 선택은 보관하지 않으므로 다시 선택해 주세요."
-    : "작성 중인 내용을 임시 복원했습니다. 저장하거나 새로고침·로그아웃하기 전까지 이 화면에서만 유지됩니다.";
+    : "작성 중인 내용을 임시 복원했습니다. 관리 메뉴를 이동해도 유지되며, 브라우저 자체를 새로고침하거나 닫거나 로그아웃하면 사라집니다.";
   form.prepend(notice);
 }
 
