@@ -104,6 +104,8 @@ const state = {
   smsDeliveries: [],
   demographicSummary: null,
   memberSummary: null,
+  operationalHealth: null,
+  operationalHealthError: "",
   formDrafts: {},
 };
 
@@ -2675,16 +2677,25 @@ async function loadAdminData() {
 
   state.demographicSummary = null;
   state.memberSummary = null;
+  state.operationalHealth = null;
+  state.operationalHealthError = "";
   if (isOwner()) {
-    const [demographicResult, memberResult] = await Promise.all([
+    const [demographicResult, memberResult, operationalHealthResult] = await Promise.all([
       supabase.rpc("get_demographic_summary"),
       supabase.rpc("get_owner_member_summary"),
+      supabase.rpc("get_owner_operational_health_v1"),
     ]);
     const { data, error: demographicError } = demographicResult;
     if (demographicError) console.warn("[모두의 인문학] 선택 이용자 통계 확인 지연", demographicError);
     else state.demographicSummary = data || null;
     if (memberResult.error) console.warn("[모두의 인문학] 가입자 현황 확인 지연", memberResult.error);
     else state.memberSummary = memberResult.data || null;
+    if (operationalHealthResult.error) {
+      state.operationalHealthError = operationalHealthResult.error.message || "운영 상태를 불러오지 못했습니다.";
+      console.warn("[모두의 인문학] 운영 상태 확인 지연", operationalHealthResult.error);
+    } else {
+      state.operationalHealth = operationalHealthResult.data || null;
+    }
   }
 
   if (isOwner()) await loadOrganizationAdmins();
@@ -3226,6 +3237,80 @@ function renderOwnerMemberSummary() {
   `;
 }
 
+const OPERATIONAL_HEALTH_LABELS = Object.freeze({
+  normal: { label: "정상", badgeClass: "green" },
+  warning: { label: "확인 필요", badgeClass: "gray" },
+  danger: { label: "위험", badgeClass: "red" },
+});
+
+function operationalHealthCount(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number.toLocaleString("ko-KR") : "0";
+}
+
+function renderOwnerOperationalHealth() {
+  if (!isOwner()) return "";
+  const health = state.operationalHealth;
+  if (!health) {
+    return `
+      <section class="section" style="margin-top:16px;">
+        <div class="row-top">
+          <div><h3>시스템 운영 상태</h3><p class="muted">전체 관리자에게만 보이는 개인정보 없는 운영 집계입니다.</p></div>
+          <span class="badge ${state.operationalHealthError ? "red" : "gray"}">${state.operationalHealthError ? "확인 실패" : "확인 중"}</span>
+        </div>
+        <p class="muted">${state.operationalHealthError ? "운영 상태를 불러오지 못했습니다. 잠시 뒤 새로고침해 주세요." : "운영 상태를 확인하고 있습니다."}</p>
+      </section>
+    `;
+  }
+
+  const status = OPERATIONAL_HEALTH_LABELS[health.status] || OPERATIONAL_HEALTH_LABELS.warning;
+  const email = health.email || {};
+  const sms = health.sms || {};
+  const security = health.security || {};
+  const privacy = health.privacy || {};
+  const cronJobs = Array.isArray(health.cron_jobs) ? health.cron_jobs : [];
+  const reasons = Array.isArray(health.reasons) ? health.reasons : [];
+  const securityAlertCount = Number(security.warning_alerts_24h || 0) + Number(security.danger_alerts_24h || 0);
+  return `
+    <section class="section" style="margin-top:16px;">
+      <div class="row-top">
+        <div>
+          <h3>시스템 운영 상태</h3>
+          <p class="muted">전체 관리자에게만 보이는 집계입니다. 연락처·메시지 내용·접속 정보는 표시하지 않습니다.</p>
+        </div>
+        <div class="actions">
+          <span class="badge ${status.badgeClass}">${status.label}</span>
+          <span class="muted">확인 ${escapeHtml(formatDateTime(health.checked_at))}</span>
+        </div>
+      </div>
+      <ul class="plain-list">
+        ${reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}
+      </ul>
+      <div class="stat-grid" style="margin-top:12px;">
+        <div class="stat" style="background:#fff;color:var(--ink);"><strong>${operationalHealthCount(email.pending_due)}</strong><span>이메일 처리 대기</span><small>24시간 실패 ${operationalHealthCount(email.failed_24h)}건</small></div>
+        <div class="stat" style="background:#fff;color:var(--ink);"><strong>${operationalHealthCount(sms.pending_due)}</strong><span>문자 처리 대기</span><small>24시간 실패 ${operationalHealthCount(sms.failed_24h)}건</small></div>
+        <div class="stat" style="background:#fff;color:var(--ink);"><strong>${operationalHealthCount(securityAlertCount)}</strong><span>24시간 보안 경고</span><small>현재 임시 차단 ${operationalHealthCount(security.active_blocks)}건</small></div>
+        <div class="stat" style="background:#fff;color:var(--ink);"><strong>${privacy.last_run_at ? escapeHtml(formatDateTime(privacy.last_run_at)) : "기록 없음"}</strong><span>개인정보 파기 실행</span><small>최근 처리 ${operationalHealthCount(privacy.last_deleted_count)}건</small></div>
+      </div>
+      <details class="admin-subdetails" style="margin-top:12px;">
+        <summary>자동 작업 3개 상세 보기</summary>
+        <div class="table-list" style="margin-top:10px;">
+          ${cronJobs.map((job) => `
+            <div class="table-row">
+              <div class="row-top">
+                <strong>${escapeHtml(job.label || "자동 작업")}</strong>
+                <span class="badge ${job.healthy ? "green" : "red"}">${job.healthy ? "정상" : "확인 필요"}</span>
+              </div>
+              <p class="muted">최근 완료 ${job.last_finished_at ? escapeHtml(formatDateTime(job.last_finished_at)) : "기록 없음"} · 실행 주기 ${escapeHtml(job.schedule || "등록 안 됨")}</p>
+            </div>
+          `).join("") || `<div class="empty compact-empty">자동 작업 정보를 찾지 못했습니다.</div>`}
+        </div>
+      </details>
+      <p class="media-upload-note">위험 또는 확인 필요가 표시되면 먼저 새로고침하고, 계속되면 발송 대기열·자동 작업·보안 경고를 순서대로 점검하세요.</p>
+    </section>
+  `;
+}
+
 function renderRoundtableDashboard() {
   const courseId = state.roundtable.courseId || "";
   const allCount = roundtableAllEligibleApplications().length;
@@ -3293,6 +3378,7 @@ function renderDashboard() {
       <div class="section"><h3>후기 관리</h3><p>공개 후기 ${publicReviews}개 · 숨김 ${hiddenReviews}개</p></div>
       ${isOwner() ? `<div class="section"><h3>관리자 전용 추첨</h3><p>추첨 기록 ${state.draws.length}건 · 당첨 이력 ${state.winners.length}건</p></div>` : ""}
     </div>
+    ${renderOwnerOperationalHealth()}
     ${renderOwnerMemberSummary()}
     ${renderRoundtableDashboard()}
     ${renderSmsDeliveryHistory()}
@@ -5586,6 +5672,8 @@ async function reload() {
     state.smsDeliveries = [];
     state.demographicSummary = null;
     state.memberSummary = null;
+    state.operationalHealth = null;
+    state.operationalHealthError = "";
     state.organizationAdmins = [];
     state.platformAdmins = [];
     state.organizationAdminsError = "";
