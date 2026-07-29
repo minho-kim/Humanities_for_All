@@ -779,7 +779,7 @@ function requireChangeNotificationConfirmation(form, plan) {
       <p><strong>${escapeHtml(plan.changedLabels.join(", "))}</strong> 정보가 변경됩니다.</p>
       <p>저장하면 관련 교육 ${escapeHtml(affectedCourseCount)}개, 활성 신청 ${escapeHtml(plan.recipientCount)}건에 변경 안내 메일·문자가 등록됩니다.</p>
       ${courseItems || remainingCourseCount ? `<ul>${courseItems}${remainingCourseCount ? `<li>그 외 ${escapeHtml(remainingCourseCount)}개 교육</li>` : ""}</ul>` : ""}
-      <p class="muted">변경 전·후 내용을 함께 안내하며, 즉시 발송에 실패해도 예약 작업이 자동으로 다시 시도합니다.</p>
+      <p class="muted">변경 전·후 내용을 함께 안내합니다. 메일은 즉시 발송을 시도하고, 문자는 한국시간 오전 9시부터 오후 9시 전까지 발송합니다. 야간에 여러 번 수정하면 마지막 변경 내용만 안내하며, 발송 실패 시 예약 작업이 자동으로 다시 시도합니다.</p>
       <div class="actions" style="margin-top: 16px;">
         <button class="btn" type="button" data-confirm-change-notification="${escapeHtml(form.id)}">저장하고 안내 등록</button>
       </div>
