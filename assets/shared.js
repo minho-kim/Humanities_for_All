@@ -3,7 +3,97 @@ export const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_rXN3xjZ2aJGeb00QMEs1KQ_b
 export const ARCHIVE_BUCKET = "archive-media";
 export const SITE_MEDIA_BUCKET = "site-media";
 export const ATTENDANCE_DOCUMENT_BUCKET = "attendance-documents";
-export const APP_VERSION = "2026.07.29.0921";
+export const APP_VERSION = "2026.07.30.2304";
+
+export const THEME_STORAGE_KEY = "humanities-theme-preference";
+export const THEME_PREFERENCES = Object.freeze(["system", "light", "dark"]);
+
+const themeMediaQuery = window.matchMedia?.("(prefers-color-scheme: dark)") || null;
+
+function normalizeThemePreference(value) {
+  return THEME_PREFERENCES.includes(value) ? value : "system";
+}
+
+export function getThemePreference() {
+  try {
+    return normalizeThemePreference(window.localStorage.getItem(THEME_STORAGE_KEY));
+  } catch {
+    return "system";
+  }
+}
+
+function resolveTheme(preference) {
+  if (preference === "dark") return "dark";
+  if (preference === "light") return "light";
+  return themeMediaQuery?.matches ? "dark" : "light";
+}
+
+function syncThemeButtons(preference) {
+  document.querySelectorAll("[data-theme-choice]").forEach((button) => {
+    const selected = button.dataset.themeChoice === preference;
+    button.setAttribute("aria-pressed", String(selected));
+  });
+}
+
+export function applyThemePreference(preference = getThemePreference()) {
+  const normalized = normalizeThemePreference(preference);
+  const resolved = resolveTheme(normalized);
+  const root = document.documentElement;
+  root.dataset.theme = resolved;
+  root.dataset.themePreference = normalized;
+  root.setAttribute("data-bs-theme", resolved);
+  root.style.colorScheme = resolved;
+  syncThemeButtons(normalized);
+  return resolved;
+}
+
+export function setThemePreference(preference) {
+  const normalized = normalizeThemePreference(preference);
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, normalized);
+  } catch {
+    // 저장소가 차단된 환경에서도 현재 탭의 테마 전환은 유지한다.
+  }
+  applyThemePreference(normalized);
+}
+
+function mountThemeSwitcher() {
+  if (document.body.classList.contains("embed-page") || document.querySelector("[data-theme-switcher]")) return;
+  const page = document.querySelector("main.page");
+  if (!page) return;
+
+  const switcher = document.createElement("div");
+  switcher.className = "theme-toolbar";
+  switcher.dataset.themeSwitcher = "";
+  switcher.innerHTML = `
+    <span class="theme-toolbar-label" id="themeToolbarLabel">화면 모드</span>
+    <div class="theme-switcher" role="group" aria-labelledby="themeToolbarLabel">
+      <button type="button" data-theme-choice="system" aria-pressed="false" title="기기 화면 설정을 따릅니다">기기</button>
+      <button type="button" data-theme-choice="light" aria-pressed="false" title="밝은 화면을 사용합니다">주간</button>
+      <button type="button" data-theme-choice="dark" aria-pressed="false" title="어두운 화면을 사용합니다">야간</button>
+    </div>
+  `;
+  switcher.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-theme-choice]");
+    if (!button) return;
+    setThemePreference(button.dataset.themeChoice);
+  });
+  page.prepend(switcher);
+  syncThemeButtons(getThemePreference());
+}
+
+applyThemePreference();
+themeMediaQuery?.addEventListener?.("change", () => {
+  if (getThemePreference() === "system") applyThemePreference("system");
+});
+window.addEventListener("storage", (event) => {
+  if (event.key === THEME_STORAGE_KEY) applyThemePreference(getThemePreference());
+});
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", mountThemeSwitcher, { once: true });
+} else {
+  mountThemeSwitcher();
+}
 
 export const URL_RULES = Object.freeze({
   external: Object.freeze({ protocols: ["https:"] }),

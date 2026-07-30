@@ -34,6 +34,51 @@ a { color: inherit; }
   padding: 20px 0 48px;
 }
 
+.theme-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+.theme-toolbar-label {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.theme-switcher {
+  display: inline-flex;
+  gap: 3px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 0.25rem 0.8rem rgba(33, 37, 41, 0.06);
+}
+
+.theme-switcher button {
+  min-height: 34px;
+  padding: 6px 11px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.theme-switcher button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--card);
+}
+
+.theme-switcher button:focus-visible {
+  outline: 3px solid rgba(13, 110, 253, 0.28);
+  outline-offset: 2px;
+}
+
 .hero {
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
@@ -1122,6 +1167,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 
 @media (max-width: 640px) {
   .page { width: min(100% - 20px, 1180px); padding-top: 12px; }
+  .theme-toolbar { align-items: flex-end; flex-direction: column; gap: 5px; }
   .hero-card, .panel, .modal-card, .admin-card { padding: 18px; border-radius: 20px; }
   .filter-grid, .course-grid, .stat-grid, .media-grid, .admin-grid, .organization-grid, .resource-grid, .my-info-grid, .feedback-choice-grid { grid-template-columns: 1fr; }
   .demographic-banner { align-items: stretch; flex-direction: column; }
@@ -1149,6 +1195,261 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
   .site-footer-links { justify-content: flex-start; }
   .policy-page { width: min(100% - 20px, 920px); }
   .policy-summary { grid-template-columns: 1fr; }
+}
+
+:root[data-theme="dark"] {
+  --bg: #0d1420;
+  --card: #182231;
+  --ink: #f2f5f9;
+  --muted: #b7c1cf;
+  --line: #3a4759;
+  --brand: #78aaff;
+  --brand-2: #b49aff;
+  --green: #75dba7;
+  --green-soft: #183c2b;
+  --red: #ff7b86;
+  --shadow: 0 0.9rem 2.2rem rgba(0, 0, 0, 0.28);
+  --bs-body-color: var(--ink);
+  --bs-body-bg: var(--bg);
+  --bs-border-color: var(--line);
+  --bs-secondary-color: var(--muted);
+  --bs-tertiary-bg: #202c3c;
+  --bs-emphasis-color: #ffffff;
+  --bs-link-color: var(--brand);
+  --bs-link-hover-color: #a8c7ff;
+}
+
+:root[data-theme="dark"] body {
+  background: radial-gradient(circle at top left, rgba(73, 128, 224, 0.18), transparent 30rem), linear-gradient(180deg, #101927, var(--bg));
+}
+
+:root[data-theme="dark"] .hero-card,
+:root[data-theme="dark"] .panel,
+:root[data-theme="dark"] .course-card,
+:root[data-theme="dark"] .modal-card,
+:root[data-theme="dark"] .admin-card,
+:root[data-theme="dark"] .organization-card,
+:root[data-theme="dark"] .review-card,
+:root[data-theme="dark"] .calendar-item,
+:root[data-theme="dark"] .calendar-month-heading,
+:root[data-theme="dark"] .admin-accordion,
+:root[data-theme="dark"] .theme-switcher,
+:root[data-theme="dark"] .empty {
+  border-color: var(--line);
+  background: rgba(24, 34, 49, 0.96);
+}
+
+:root[data-theme="dark"] .hero-card::after {
+  background: rgba(120, 170, 255, 0.09);
+}
+
+:root[data-theme="dark"] .eyebrow,
+:root[data-theme="dark"] input,
+:root[data-theme="dark"] select,
+:root[data-theme="dark"] textarea,
+:root[data-theme="dark"] .btn.secondary,
+:root[data-theme="dark"] .toggle,
+:root[data-theme="dark"] .page-tabs a,
+:root[data-theme="dark"] .icon-btn,
+:root[data-theme="dark"] .section,
+:root[data-theme="dark"] .post-course-response-card,
+:root[data-theme="dark"] .feedback-choice span,
+:root[data-theme="dark"] .series-course-list button,
+:root[data-theme="dark"] .admin-search-result,
+:root[data-theme="dark"] .residence-selection-summary p,
+:root[data-theme="dark"] .application-path-card,
+:root[data-theme="dark"] .demographic-summary-items span,
+:root[data-theme="dark"] .admin-subdetails,
+:root[data-theme="dark"] .roundtable-send-card,
+:root[data-theme="dark"] .series-admin-list li,
+:root[data-theme="dark"] .series-management-list li,
+:root[data-theme="dark"] .series-create-selected-list li,
+:root[data-theme="dark"] .table-row,
+:root[data-theme="dark"] .application-notification-status,
+:root[data-theme="dark"] .metric-table-wrap,
+:root[data-theme="dark"] .interest-subscription-row,
+:root[data-theme="dark"] .interest-search-result,
+:root[data-theme="dark"] .course-notice-controls label > span,
+:root[data-theme="dark"] .policy-table,
+:root[data-theme="dark"] .site-footer-links a,
+:root[data-theme="dark"] .site-footer-links span {
+  border-color: var(--line);
+  background: #1a2636;
+  color: var(--ink);
+}
+
+:root[data-theme="dark"] input::placeholder,
+:root[data-theme="dark"] textarea::placeholder {
+  color: #8f9bac;
+  opacity: 1;
+}
+
+:root[data-theme="dark"] .btn:not(.secondary):not(.ghost):not(.danger) {
+  color: #091425;
+}
+
+:root[data-theme="dark"] .btn.ghost,
+:root[data-theme="dark"] .btn.secondary {
+  color: var(--brand);
+}
+
+:root[data-theme="dark"] .page-tabs a.active,
+:root[data-theme="dark"] .toggle button.active,
+:root[data-theme="dark"] .admin-nav button.active,
+:root[data-theme="dark"] .consent-choice-actions .btn[aria-pressed="true"],
+:root[data-theme="dark"] .theme-switcher button[aria-pressed="true"] {
+  border-color: var(--brand);
+  background: var(--brand);
+  color: #091425;
+}
+
+:root[data-theme="dark"] .btn.danger {
+  background: #bd3d49;
+  color: #ffffff;
+}
+
+:root[data-theme="dark"] .eyebrow.home-link:hover,
+:root[data-theme="dark"] .eyebrow.home-link:focus-visible,
+:root[data-theme="dark"] .course-schedule,
+:root[data-theme="dark"] .date-box,
+:root[data-theme="dark"] .series-course-list li.current button,
+:root[data-theme="dark"] .series-course-number,
+:root[data-theme="dark"] .series-management-order,
+:root[data-theme="dark"] .policy-note {
+  border-color: #46648f;
+  background: #1a3150;
+  color: #c4d9ff;
+}
+
+:root[data-theme="dark"] .date-box small,
+:root[data-theme="dark"] .session-schedule {
+  color: #c4d9ff;
+}
+
+:root[data-theme="dark"] .demographic-banner {
+  border-color: #4d5e87;
+  background: linear-gradient(135deg, #1b3150, #2c2746);
+}
+
+:root[data-theme="dark"] .post-course-response-section,
+:root[data-theme="dark"] .feedback-privacy-details,
+:root[data-theme="dark"] .course-reference-block,
+:root[data-theme="dark"] .session-list li,
+:root[data-theme="dark"] .review-item,
+:root[data-theme="dark"] .plain-list li,
+:root[data-theme="dark"] .admin-search-selected,
+:root[data-theme="dark"] .admin-search-results,
+:root[data-theme="dark"] .residence-search-panel,
+:root[data-theme="dark"] .sms-message-sample,
+:root[data-theme="dark"] .sms-test-panel,
+:root[data-theme="dark"] .series-management-panel,
+:root[data-theme="dark"] .application-detail-grid > div,
+:root[data-theme="dark"] .application-note,
+:root[data-theme="dark"] .media-preview,
+:root[data-theme="dark"] .interest-channel-controls label > span,
+:root[data-theme="dark"] .interest-search-panel,
+:root[data-theme="dark"] .course-notice-form,
+:root[data-theme="dark"] .course-notice-signup-options,
+:root[data-theme="dark"] .policy-summary div,
+:root[data-theme="dark"] .policy-table th {
+  border-color: var(--line);
+  background: #202c3c;
+  color: var(--ink);
+}
+
+:root[data-theme="dark"] .course-subtitle,
+:root[data-theme="dark"] .calendar-subtitle,
+:root[data-theme="dark"] .course-summary,
+:root[data-theme="dark"] .feedback-choice span {
+  color: var(--muted);
+}
+
+:root[data-theme="dark"] .feedback-choice input:checked + span {
+  border-color: var(--brand);
+  background: #1a3150;
+  color: #d7e5ff;
+}
+
+:root[data-theme="dark"] .badge {
+  background: #1a3150;
+  color: #c4d9ff;
+}
+
+:root[data-theme="dark"] .badge.gray {
+  background: #303b4a;
+  color: #d0d7e1;
+}
+
+:root[data-theme="dark"] .badge.red {
+  background: #4c242b;
+  color: #ffb8bf;
+}
+
+:root[data-theme="dark"] .badge.series-badge {
+  background: #362d55;
+  color: #d6c8ff;
+}
+
+:root[data-theme="dark"] .badge.keyword-badge {
+  background: #473c1f;
+  color: #ffe39a;
+}
+
+:root[data-theme="dark"] .walk-in-notice,
+:root[data-theme="dark"] .admin-draft-notice,
+:root[data-theme="dark"] .sms-test-result[data-status="success"] {
+  border-color: #315f49;
+  background: #173a2b;
+  color: #a6ebc7;
+}
+
+:root[data-theme="dark"] .walk-in-notice span {
+  color: #b7ddc9;
+}
+
+:root[data-theme="dark"] .roundtable-send-all,
+:root[data-theme="dark"] .sms-test-result[data-status="error"] {
+  border-color: #684149;
+  background: #45252b;
+  color: #ffc1c6;
+}
+
+:root[data-theme="dark"] .series-admin-panel {
+  border-color: #554b75;
+  background: #29243d;
+}
+
+:root[data-theme="dark"] .series-admin-list li.current {
+  background: #3a3158;
+}
+
+:root[data-theme="dark"] .admin-accordion > summary::after,
+:root[data-theme="dark"] .keyword-bar {
+  background: #303b4a;
+  color: var(--ink);
+}
+
+:root[data-theme="dark"] .metric-table th,
+:root[data-theme="dark"] .metric-table td,
+:root[data-theme="dark"] .policy-table th,
+:root[data-theme="dark"] .policy-table td {
+  border-color: var(--line);
+}
+
+:root[data-theme="dark"] .media-preview img,
+:root[data-theme="dark"] .admin-thumb,
+:root[data-theme="dark"] .org-logo,
+:root[data-theme="dark"] .profile-photo {
+  border-color: var(--line);
+}
+
+:root[data-theme="dark"] .modal {
+  background: rgba(3, 8, 15, 0.76);
+}
+
+:root[data-theme="dark"] .toast {
+  background: #e8eef8;
+  color: #111827;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -3,9 +3,26 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>모두의 인문학</title>
+  <script>
+    (() => {
+      const key = "humanities-theme-preference";
+      let preference = "system";
+      try {
+        const saved = window.localStorage.getItem(key);
+        if (["system", "light", "dark"].includes(saved)) preference = saved;
+      } catch {}
+      const systemDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+      const resolved = preference === "dark" || (preference === "system" && systemDark) ? "dark" : "light";
+      document.documentElement.dataset.theme = resolved;
+      document.documentElement.dataset.themePreference = preference;
+      document.documentElement.setAttribute("data-bs-theme", resolved);
+      document.documentElement.style.colorScheme = resolved;
+    })();
+  </script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
-  <link rel="stylesheet" href="./assets/styles.css">
+  <link rel="stylesheet" href="./assets/styles.css?v=202607302304">
 </head>
 <body>
   <main class="page">
@@ -176,6 +193,6 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <!-- public.js를 변경해 배포할 때 v 값도 함께 올려 기존 브라우저 캐시를 교체한다. -->
-  <script type="module" src="./assets/public.js?v=202607290901"></script>
+  <script type="module" src="./assets/public.js?v=202607302304"></script>
 </body>
 </html>
