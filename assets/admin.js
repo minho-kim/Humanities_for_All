@@ -58,6 +58,10 @@ const state = {
     venue: "",
     course: "",
   },
+  adminBrowse: {
+    kind: "",
+    query: "",
+  },
   coursePicker: {
     kind: "",
     query: "",
@@ -2357,10 +2361,13 @@ function renderAdminSearchResultsContent({
 }
 
 function renderAdminSearchPicker(config) {
-  const { kind, label, placeholder, query, selectedItem } = config;
+  const { kind, label, placeholder, query, selectedItem, items } = config;
   return `
     <div class="admin-search-picker">
-      <label>${escapeHtml(label)}<input type="search" data-admin-search="${escapeHtml(kind)}" value="${escapeHtml(query || "")}" placeholder="${escapeHtml(placeholder)}" autocomplete="off"></label>
+      <div class="admin-search-toolbar">
+        <label>${escapeHtml(label)}<input type="search" data-admin-search="${escapeHtml(kind)}" value="${escapeHtml(query || "")}" placeholder="${escapeHtml(placeholder)}" autocomplete="off"></label>
+        <button class="btn secondary" type="button" data-open-admin-browse="${escapeHtml(kind)}" ${items.length ? "" : "disabled"}>전체 목록 보기 (${items.length.toLocaleString("ko-KR")})</button>
+      </div>
       ${selectedItem?.id ? `
         <div class="admin-search-selected">
           <span>수정 중: <strong>${escapeHtml(adminSearchSelectedLabel(kind, selectedItem))}</strong></span>
@@ -2428,6 +2435,77 @@ function adminSearchResultConfig(kind) {
     };
   }
   return null;
+}
+
+function adminBrowseKindLabel(kind) {
+  return {
+    organization: "단체",
+    instructor: "강사",
+    venue: "장소",
+    course: "교육",
+  }[kind] || "항목";
+}
+
+function adminBrowseSearchPlaceholder(kind) {
+  return {
+    organization: "단체명, 소개, 홈페이지, 연락처로 목록 좁히기",
+    instructor: "강사명, 직함, 소개, 홈페이지/SNS로 목록 좁히기",
+    venue: "장소명, 주소, 세부 장소, 소유 단체로 목록 좁히기",
+    course: "교육명, 부제, 알림 키워드, 단체, 강사, 장소로 목록 좁히기",
+  }[kind] || "목록에서 검색";
+}
+
+function sortedAdminBrowseItems(kind, items) {
+  return items.slice().sort((a, b) => {
+    if (kind === "course") {
+      const timeDifference = new Date(b.starts_at || 0).getTime() - new Date(a.starts_at || 0).getTime();
+      if (timeDifference) return timeDifference;
+    }
+    return rosterNameSorter.compare(adminSearchSelectedLabel(kind, a), adminSearchSelectedLabel(kind, b));
+  });
+}
+
+function adminBrowseResultsHtml(kind) {
+  const config = adminSearchResultConfig(kind);
+  if (!config) return `<div class="empty">전체 목록을 불러오지 못했습니다.</div>`;
+  const query = state.adminBrowse.kind === kind ? state.adminBrowse.query : "";
+  const items = sortedAdminBrowseItems(kind, config.items);
+  const results = items.filter((item) => itemMatchesSearch(item, query, config.textBuilder));
+  const label = adminBrowseKindLabel(kind);
+  return `
+    <p class="admin-browse-summary" role="status">전체 ${items.length.toLocaleString("ko-KR")}개 중 ${results.length.toLocaleString("ko-KR")}개 표시</p>
+    <div class="admin-search-results admin-browse-results">
+      ${results.map((item) => config.resultBuilder(item, config.selectedItem?.id || "")).join("") || `<div class="empty">조건에 맞는 ${escapeHtml(label)}가 없습니다.</div>`}
+    </div>
+  `;
+}
+
+function renderAdminBrowseModalBody(kind) {
+  const label = adminBrowseKindLabel(kind);
+  const query = state.adminBrowse.kind === kind ? state.adminBrowse.query : "";
+  return `
+    <div class="admin-search-picker">
+      <p class="muted">검색어를 입력하지 않아도 현재 관리 범위의 ${escapeHtml(label)} 전체를 볼 수 있습니다. 항목을 선택하면 관리 입력폼으로 불러옵니다.</p>
+      <label>${escapeHtml(label)} 목록 검색<input type="search" data-admin-browse-search="${escapeHtml(kind)}" value="${escapeHtml(query)}" placeholder="${escapeHtml(adminBrowseSearchPlaceholder(kind))}" autocomplete="off"></label>
+      <div data-admin-browse-results="${escapeHtml(kind)}">${adminBrowseResultsHtml(kind)}</div>
+    </div>
+  `;
+}
+
+function openAdminBrowseModal(kind) {
+  if (!adminSearchResultConfig(kind)) return;
+  state.adminBrowse.kind = kind;
+  state.adminBrowse.query = "";
+  openAdminNotice(`${adminBrowseKindLabel(kind)} 전체 목록`, renderAdminBrowseModalBody(kind));
+  window.requestAnimationFrame(() => {
+    document.querySelector(`[data-admin-browse-search="${kind}"]`)?.focus();
+  });
+}
+
+function updateAdminBrowseResults(kind) {
+  const resultsContainer = document.querySelector(`[data-admin-browse-results="${kind}"]`);
+  if (!resultsContainer) return;
+  resultsContainer.innerHTML = adminBrowseResultsHtml(kind);
 }
 
 function updateAdminSearchResults(kind) {
@@ -3228,10 +3306,10 @@ function renderOwnerMemberSummary() {
         <span class="badge gray">운영자 계정 ${Number(summary.admin_account_count || 0).toLocaleString("ko-KR")}개</span>
       </div>
       <div class="stat-grid">
-        <div class="stat" style="background:#fff;color:var(--ink);"><strong>${Number(summary.member_count || 0).toLocaleString("ko-KR")}</strong><span>이용자 계정</span></div>
-        <div class="stat" style="background:#fff;color:var(--ink);"><strong>${Number(summary.new_member_30d_count || 0).toLocaleString("ko-KR")}</strong><span>최근 30일 가입</span></div>
-        <div class="stat" style="background:#fff;color:var(--ink);"><strong>${Number(summary.today_member_count || 0).toLocaleString("ko-KR")}</strong><span>오늘 가입</span></div>
-        <div class="stat" style="background:#fff;color:var(--ink);"><strong>${Number(summary.profile_completed_count || 0).toLocaleString("ko-KR")}</strong><span>신청 정보 등록</span></div>
+        <div class="stat admin-stat-card"><strong>${Number(summary.member_count || 0).toLocaleString("ko-KR")}</strong><span>이용자 계정</span></div>
+        <div class="stat admin-stat-card"><strong>${Number(summary.new_member_30d_count || 0).toLocaleString("ko-KR")}</strong><span>최근 30일 가입</span></div>
+        <div class="stat admin-stat-card"><strong>${Number(summary.today_member_count || 0).toLocaleString("ko-KR")}</strong><span>오늘 가입</span></div>
+        <div class="stat admin-stat-card"><strong>${Number(summary.profile_completed_count || 0).toLocaleString("ko-KR")}</strong><span>신청 정보 등록</span></div>
       </div>
     </section>
   `;
@@ -3287,10 +3365,10 @@ function renderOwnerOperationalHealth() {
         ${reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}
       </ul>
       <div class="stat-grid" style="margin-top:12px;">
-        <div class="stat" style="background:#fff;color:var(--ink);"><strong>${operationalHealthCount(email.pending_due)}</strong><span>이메일 처리 대기</span><small>24시간 실패 ${operationalHealthCount(email.failed_24h)}건</small></div>
-        <div class="stat" style="background:#fff;color:var(--ink);"><strong>${operationalHealthCount(sms.pending_due)}</strong><span>문자 처리 대기</span><small>24시간 실패 ${operationalHealthCount(sms.failed_24h)}건</small></div>
-        <div class="stat" style="background:#fff;color:var(--ink);"><strong>${operationalHealthCount(securityAlertCount)}</strong><span>24시간 보안 경고</span><small>현재 임시 차단 ${operationalHealthCount(security.active_blocks)}건</small></div>
-        <div class="stat" style="background:#fff;color:var(--ink);"><strong>${privacy.last_run_at ? escapeHtml(formatDateTime(privacy.last_run_at)) : "기록 없음"}</strong><span>개인정보 파기 실행</span><small>최근 처리 ${operationalHealthCount(privacy.last_deleted_count)}건</small></div>
+        <div class="stat admin-stat-card"><strong>${operationalHealthCount(email.pending_due)}</strong><span>이메일 처리 대기</span><small>24시간 실패 ${operationalHealthCount(email.failed_24h)}건</small></div>
+        <div class="stat admin-stat-card"><strong>${operationalHealthCount(sms.pending_due)}</strong><span>문자 처리 대기</span><small>24시간 실패 ${operationalHealthCount(sms.failed_24h)}건</small></div>
+        <div class="stat admin-stat-card"><strong>${operationalHealthCount(securityAlertCount)}</strong><span>24시간 보안 경고</span><small>현재 임시 차단 ${operationalHealthCount(security.active_blocks)}건</small></div>
+        <div class="stat admin-stat-card"><strong>${privacy.last_run_at ? escapeHtml(formatDateTime(privacy.last_run_at)) : "기록 없음"}</strong><span>개인정보 파기 실행</span><small>최근 처리 ${operationalHealthCount(privacy.last_deleted_count)}건</small></div>
       </div>
       <details class="admin-subdetails" style="margin-top:12px;">
         <summary>자동 작업 3개 상세 보기</summary>
@@ -3364,13 +3442,13 @@ function renderDashboard() {
   elements.adminContent.innerHTML = `
     <h2>운영 현황</h2>
     <div class="stat-grid" style="margin-bottom: 16px;">
-      <div class="stat" style="background:#fff;color:var(--ink);"><strong>${state.organizations.length}</strong><span>단체</span></div>
-      <div class="stat" style="background:#fff;color:var(--ink);"><strong>${state.courses.length}</strong><span>교육</span></div>
-      <div class="stat" style="background:#fff;color:var(--ink);"><strong>${applications.length}</strong><span>신청</span></div>
-      <div class="stat" style="background:#fff;color:var(--ink);"><strong>${state.archives.length}</strong><span>아카이브</span></div>
-      <div class="stat" style="background:#fff;color:var(--ink);"><strong>${state.feedbacks.length}</strong><span>교육 피드백</span></div>
-      <div class="stat" style="background:#fff;color:var(--ink);"><strong>${state.reviews.length}</strong><span>후기</span></div>
-      <div class="stat" style="background:#fff;color:var(--ink);"><strong>${roundtablePeople}</strong><span>정담회 동의</span></div>
+      <div class="stat admin-stat-card"><strong>${state.organizations.length}</strong><span>단체</span></div>
+      <div class="stat admin-stat-card"><strong>${state.courses.length}</strong><span>교육</span></div>
+      <div class="stat admin-stat-card"><strong>${applications.length}</strong><span>신청</span></div>
+      <div class="stat admin-stat-card"><strong>${state.archives.length}</strong><span>아카이브</span></div>
+      <div class="stat admin-stat-card"><strong>${state.feedbacks.length}</strong><span>교육 피드백</span></div>
+      <div class="stat admin-stat-card"><strong>${state.reviews.length}</strong><span>후기</span></div>
+      <div class="stat admin-stat-card"><strong>${roundtablePeople}</strong><span>정담회 동의</span></div>
     </div>
     <div class="admin-grid">
       <div class="section"><h3>교육 신청</h3><p>현재 신청 ${applications.length}건</p></div>
@@ -4089,7 +4167,7 @@ function renderFeedbacks() {
       </div>
     </div>
     <div class="stat-grid" style="margin-bottom: 14px;">
-      ${ratingCounts.map((item) => `<div class="stat" style="background:#fff;color:var(--ink);"><strong>${item.count.toLocaleString("ko-KR")}</strong><span>${escapeHtml(item.label)}</span></div>`).join("")}
+      ${ratingCounts.map((item) => `<div class="stat admin-stat-card"><strong>${item.count.toLocaleString("ko-KR")}</strong><span>${escapeHtml(item.label)}</span></div>`).join("")}
     </div>
     <div class="admin-grid" style="margin-bottom: 16px;">
       <section class="section">
@@ -5700,6 +5778,7 @@ function bindEvents() {
     const tabButton = event.target.closest("[data-admin-tab]");
     const adminSelectButton = event.target.closest("[data-admin-select]");
     const adminClearSelectionButton = event.target.closest("[data-admin-clear-selection]");
+    const openAdminBrowseButton = event.target.closest("[data-open-admin-browse]");
     const openCoursePickerButton = event.target.closest("[data-open-course-picker]");
     const clearCoursePickerButton = event.target.closest("[data-clear-course-picker]");
     const coursePickerSelectButton = event.target.closest("[data-course-picker-select]");
@@ -5938,10 +6017,15 @@ function bindEvents() {
       setCourseFilterSelection(courseFilterSelectButton.dataset.courseFilterSelect, courseFilterSelectButton.dataset.courseId || "");
       return;
     }
+    if (openAdminBrowseButton) {
+      openAdminBrowseModal(openAdminBrowseButton.dataset.openAdminBrowse);
+      return;
+    }
     if (adminSelectButton) {
       captureVisibleAdminFormDraft();
       const kind = adminSelectButton.dataset.adminSelect;
       const entityId = adminSelectButton.dataset.entityId || "";
+      if (adminSelectButton.closest("[data-admin-browse-results]")) closeModal(elements.adminNoticeModal);
       if (kind === "organization") {
         state.adminSelections.organizationId = entityId;
         renderOrganizations();
@@ -6286,6 +6370,13 @@ function bindEvents() {
       const kind = event.target.dataset.dashboardStatSearch;
       state.dashboardStatsSearch[kind] = event.target.value;
       updateDashboardMetricResults(kind);
+      return;
+    }
+    if (event.target.matches("[data-admin-browse-search]")) {
+      const kind = event.target.dataset.adminBrowseSearch;
+      state.adminBrowse.kind = kind;
+      state.adminBrowse.query = event.target.value;
+      updateAdminBrowseResults(kind);
       return;
     }
     const adminSearchInput = event.target.closest("[data-admin-search]");
