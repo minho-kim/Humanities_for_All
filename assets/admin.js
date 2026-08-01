@@ -15,6 +15,8 @@ import {
   URL_RULES,
 } from "./supabaseClient.js";
 
+const PUBLIC_SITE_URL = "https://humanities.yll.or.kr/";
+
 const state = {
   tab: "dashboard",
   user: null,
@@ -1644,6 +1646,12 @@ function makeUniqueOrganizationSlug(proposedSlug, organizationName, organization
     suffix += 1;
   }
   return candidate;
+}
+
+function organizationPromotionUrl(organization) {
+  const slug = String(organization?.slug || "").trim();
+  if (!organization?.id || !slug) return "";
+  return `${PUBLIC_SITE_URL}#organization/${encodeURIComponent(slug)}`;
 }
 
 async function uploadSiteImage(file, folder, baseName) {
@@ -3474,6 +3482,7 @@ function renderDashboard() {
 
 function renderOrganizationForm(organization = {}) {
   const logoUrl = normalizeSafeUrl(organization.logo_url, URL_RULES.image);
+  const promotionUrl = organizationPromotionUrl(organization);
   const isEditing = Boolean(organization.id);
   const canManageStructure = isOwner();
   if (!canManageStructure && !isEditing) {
@@ -3485,11 +3494,23 @@ function renderOrganizationForm(organization = {}) {
       <div class="admin-grid">
         ${canManageStructure
           ? `<label>단체명<input name="name" value="${escapeHtml(organization.name || "")}" required></label>
-             <label>주소 이름(선택)<input name="slug" value="${escapeHtml(organization.slug || "")}" placeholder="비워두면 자동 생성"></label>
+             ${isEditing
+               ? `<label>주소 이름<input name="slug" value="${escapeHtml(organization.slug || "")}" readonly><small class="muted">홍보용 주소와 QR 코드를 유지하기 위해 최초 지정 후 변경할 수 없습니다.</small></label>`
+               : `<label>주소 이름(선택)<input name="slug" value="" placeholder="비워두면 자동 생성"><small class="muted">단체를 저장한 뒤에는 변경할 수 없습니다.</small></label>`}
              <label>정렬 순서<input name="sort_order" type="number" value="${escapeHtml(organization.sort_order ?? 0)}"></label>`
           : `<label>단체명<input value="${escapeHtml(organization.name || "")}" readonly></label>`}
         <label>홈페이지<input name="website_url" value="${escapeHtml(organization.website_url || "")}" placeholder="https://"></label>
       </div>
+      ${promotionUrl ? `
+        <div style="margin-top: 10px;">
+          <label>홍보용 단체 교육 주소<input value="${escapeHtml(promotionUrl)}" readonly></label>
+          <div class="actions" style="margin-top: 8px;">
+            <a class="btn small secondary" href="${escapeHtml(promotionUrl)}" target="_blank" rel="noreferrer">주소 열기</a>
+            <button class="btn small secondary" type="button" data-copy-organization-url="${escapeHtml(promotionUrl)}">QR 코드용 주소 복사</button>
+          </div>
+          <p class="media-upload-note">이 주소를 QR 코드로 만들면 이 단체의 공개 교육만 표시됩니다. 저장된 주소 이름은 변경할 수 없습니다.</p>
+        </div>
+      ` : ""}
       <label style="margin-top: 10px;">단체 소개<textarea name="description" placeholder="공개 페이지에 표시할 단체 소개를 입력하세요.">${escapeHtml(organization.description || "")}</textarea></label>
       ${logoUrl ? `<div class="media-preview"><img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(organization.name || "단체")} 로고"><a href="${escapeHtml(logoUrl)}" target="_blank" rel="noreferrer">현재 로고 보기</a></div>` : ""}
       <label style="margin-top: 10px;">로고 이미지 업로드<input name="logo_file" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>
@@ -5821,6 +5842,17 @@ function bindEvents() {
     const closeAdminNoticeButton = event.target.closest("[data-close-admin-notice]");
     const openApplicationDetailButton = event.target.closest("[data-open-application-detail]");
     const closeApplicationDetailButton = event.target.closest("[data-close-application-detail]");
+    const copyOrganizationUrlButton = event.target.closest("[data-copy-organization-url]");
+    if (copyOrganizationUrlButton) {
+      try {
+        await navigator.clipboard.writeText(copyOrganizationUrlButton.dataset.copyOrganizationUrl);
+        showToast("홍보용 단체 교육 주소를 복사했습니다.");
+      } catch (error) {
+        console.warn("Organization promotion URL copy failed", error);
+        showToast("주소를 복사하지 못했습니다. 위 주소를 선택해 직접 복사해 주세요.");
+      }
+      return;
+    }
     if (closeApplicationDetailButton || event.target === elements.applicationDetailModal) {
       closeApplicationDetailModal();
       return;
