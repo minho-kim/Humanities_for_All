@@ -4112,28 +4112,41 @@ async function handleDemographicsSubmit(event) {
     return;
   }
 
-  const supabase = await getSupabaseClient();
-  const { error } = await supabase.from("user_demographics").upsert({
-    user_id: state.user.id,
-    residence_district: residenceDistrict || null,
-    residence_neighborhood: residenceNeighborhood || null,
-    birth_year: birthYear,
-    gender: gender || null,
-    marital_status: maritalStatus || null,
-    children_count: childrenCount,
-    optional_consent_at: new Date().toISOString(),
-    terms_version: DEMOGRAPHICS_TERMS_VERSION,
-  }, { onConflict: "user_id" });
-  if (error) {
-    console.error("Demographics save failed", error);
-    showToast("선택 이용자 정보를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.");
-    return;
+  const submitButton = form.querySelector("button[type='submit']");
+  const submitLabel = submitButton?.textContent || "선택 정보 저장";
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "저장 중...";
   }
 
-  await loadApplicationState(supabase);
-  render();
-  openMyInfo();
-  showToast("선택 이용자 정보를 저장했습니다.");
+  try {
+    const supabase = await getSupabaseClient();
+    const { error } = await supabase.from("user_demographics").upsert({
+      user_id: state.user.id,
+      residence_district: residenceDistrict || null,
+      residence_neighborhood: residenceNeighborhood || null,
+      birth_year: birthYear,
+      gender: gender || null,
+      marital_status: maritalStatus || null,
+      children_count: childrenCount,
+      optional_consent_at: new Date().toISOString(),
+      terms_version: DEMOGRAPHICS_TERMS_VERSION,
+    }, { onConflict: "user_id" });
+    if (error) throw error;
+
+    await loadApplicationState(supabase);
+    render();
+    openMyInfo();
+    showToast("선택 이용자 정보를 저장했습니다.");
+  } catch (error) {
+    console.error("Demographics save failed", error);
+    showToast("선택 이용자 정보를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+  } finally {
+    if (submitButton && document.body.contains(submitButton)) {
+      submitButton.disabled = false;
+      submitButton.textContent = submitLabel;
+    }
+  }
 }
 
 async function handleDemographicsDelete(button) {

@@ -42,6 +42,8 @@ if (!window.opener || window.opener.closed) {
 } else if (typeof Postcode !== "function") {
   showError("주소검색을 불러오지 못했습니다. 인터넷 연결을 확인한 뒤 다시 시도해 주세요.");
 } else {
+  const container = document.getElementById("postcode");
+  container.replaceChildren();
   new Postcode({
     oncomplete(data) {
       const selection = residenceSelectionFromPostcode(data);
@@ -60,5 +62,5 @@ if (!window.opener || window.opener.closed) {
     },
     width: "100%",
     height: "100%",
-  }).embed(document.getElementById("postcode"));
+  }).embed(container);
 }
