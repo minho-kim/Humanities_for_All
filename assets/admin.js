@@ -1489,70 +1489,21 @@ function compareRosterApplications(a, b) {
 
 function printApplicationRoster(courseId) {
   const course = courseById(courseId);
-  const applications = activeApplications()
-    .filter((application) => application.course_id === courseId)
-    .slice()
-    .sort(compareRosterApplications);
-
-  const title = courseName(courseId);
-  const totalRowCount = Math.max(30, applications.length + 10);
-  const blankRowCount = totalRowCount - applications.length;
-  const densePrintClass = totalRowCount >= 40 ? "dense" : "";
-  const rows = Array.from({ length: totalRowCount }, (_, index) => {
-    const application = applications[index];
-    return `
-    <tr>
-      <td>${index + 1}</td>
-      <td>${escapeHtml(title)}</td>
-      <td>${escapeHtml(application?.applicant_name || "")}</td>
-      <td>${escapeHtml(phoneLastFour(application?.phone))}</td>
-      <td class="signature"></td>
-    </tr>
-  `;
-  }).join("");
-  const printWindow = window.open("", "_blank", "width=980,height=720");
-  if (!printWindow) {
-    showToast("팝업 차단을 해제한 뒤 다시 시도해 주세요.");
+  if (!course) {
+    showToast("출력할 교육을 찾지 못했습니다.");
     return;
   }
-
-  printWindow.document.write(`<!doctype html>
-    <html lang="ko">
-    <head>
-      <meta charset="utf-8">
-      <title>${escapeHtml(title)} 참가자 명단</title>
-      <style>
-        @page { size: A4 portrait; margin: 12mm; }
-        body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 24px; color: #111; }
-        h1 { margin: 0 0 6px; font-size: 22px; }
-        p { margin: 0 0 14px; color: #555; }
-        table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-        thead { display: table-header-group; }
-        tr { break-inside: avoid; page-break-inside: avoid; }
-        th, td { border: 1px solid #222; padding: 9px 8px; text-align: center; min-height: 38px; }
-        th { background: #f1f3f5; font-weight: 800; }
-        th:nth-child(1), td:nth-child(1) { width: 52px; }
-        th:nth-child(2), td:nth-child(2) { width: 36%; text-align: left; }
-        th:nth-child(5), td:nth-child(5) { width: 22%; }
-        .signature { height: 42px; }
-        body.dense h1 { font-size: 20px; }
-        body.dense p { margin-bottom: 10px; }
-        body.dense th, body.dense td { padding: 6px 6px; font-size: 12px; min-height: 30px; }
-        body.dense .signature { height: 32px; }
-        @media print { button { display: none; } body { margin: 0; } }
-      </style>
-    </head>
-    <body class="${densePrintClass}">
-      <h1>${escapeHtml(title)} 참가자 명단</h1>
-      <p>${escapeHtml(course?.starts_at ? shortDate(course.starts_at) : "일정 미정")} · 등록 참가자 ${applications.length}명 · 현장 기입칸 ${blankRowCount}개 · 총 ${totalRowCount}칸</p>
-      <table>
-        <thead><tr><th>번호</th><th>교육제목</th><th>성명</th><th>본인확인</th><th>서명</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      <script>window.addEventListener("load", () => window.print());</script>
-    </body>
-    </html>`);
-  printWindow.document.close();
+  try {
+    printCourseCheckinDocument(
+      course,
+      "",
+      organizationById(course.organization_id)?.name || "모두의 인문학",
+      false,
+      true,
+    );
+  } catch (error) {
+    showToast(error.message || "출석부를 만들지 못했습니다.");
+  }
 }
 
 function localDateTimeValue(value) {
@@ -4446,18 +4397,29 @@ function courseCheckinRosterPrintHtml(course) {
     .filter((application) => application.course_id === course.id)
     .slice()
     .sort(compareRosterApplications);
-  const totalRowCount = Math.max(30, applications.length + 10);
-  const rows = Array.from({ length: totalRowCount }, (_, index) => {
-    const application = applications[index];
-    return `<tr><td>${index + 1}</td><td>${escapeHtml(application?.applicant_name || "")}</td><td>${escapeHtml(phoneLastFour(application?.phone))}</td><td class="signature"></td></tr>`;
+  const venue = venueById(course.venue_id);
+  const location = [venue?.name, venue?.address, venue?.detail].filter(Boolean).join(" · ") || "장소 미정";
+  const rowsPerPage = 15;
+  const totalRowCount = Math.max(30, Math.ceil(applications.length / rowsPerPage) * rowsPerPage);
+  return Array.from({ length: Math.ceil(totalRowCount / rowsPerPage) }, (_, pageIndex) => {
+    const pageStart = pageIndex * rowsPerPage;
+    const rows = Array.from({ length: rowsPerPage }, (__, rowIndex) => {
+      const index = pageStart + rowIndex;
+      const application = applications[index];
+      return `<tr><td>${index + 1}</td><td>${escapeHtml(application?.applicant_name || "")}</td><td>${escapeHtml(phoneLastFour(application?.phone))}</td><td class="signature"></td><td></td></tr>`;
+    }).join("");
+    return `<section class="roster-page"><h1>${escapeHtml(course.title || "교육")}</h1><div class="roster-gap"></div><div class="roster-heading">출석부</div><div class="roster-meta"><div><strong>교육일시</strong> ${escapeHtml(formatDateTime(course.starts_at))}</div><div><strong>장소</strong> ${escapeHtml(location)}</div></div><table><thead><tr><th>번호</th><th>성명(가나다순)</th><th>본인확인</th><th>서명</th><th>비고</th></tr></thead><tbody>${rows}</tbody></table><p class="roster-page-number">${pageIndex + 1} / ${Math.ceil(totalRowCount / rowsPerPage)}</p></section>`;
   }).join("");
-  return `<section class="roster-page"><h1>${escapeHtml(course.title || "교육")} 출석부</h1><p>${escapeHtml(course?.starts_at ? shortDate(course.starts_at) : "일정 미정")} · 신청자 ${applications.length.toLocaleString()}명 · 현장 기입 포함 ${totalRowCount.toLocaleString()}칸</p><table><thead><tr><th>번호</th><th>성명</th><th>본인확인</th><th>서명</th></tr></thead><tbody>${rows}</tbody></table></section>`;
 }
 
-function printCourseCheckinDocument(course, imageUrl, organizationName, includeRoster = false) {
+function printCourseCheckinDocument(course, imageUrl, organizationName, includeRoster = false, rosterOnly = false) {
   const popup = window.open("", "humanities-course-checkin-print", "width=820,height=980");
   if (!popup) throw new Error("인쇄 창이 차단되었습니다. 팝업을 허용해 주세요.");
-  popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>교육 QR 체크인${includeRoster ? "·출석부" : ""}</title><style>@page{size:A4;margin:14mm}*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;color:#172033;margin:0}.qr-page{text-align:center;min-height:260mm;break-after:${includeRoster ? "page" : "auto"}}.qr-page h1{font-size:30px;margin:36px 0 16px}.qr-page p{font-size:18px;line-height:1.55;margin:8px 0}.qr-page img{width:400px;height:400px;margin:24px auto 16px}.org{margin-top:34px;font-weight:800;font-size:22px}.note{color:#5d6775!important;font-size:14px!important}.roster-page{break-before:page;text-align:left}.roster-page h1{font-size:22px;margin:0 0 6px}.roster-page>p{margin:0 0 12px;color:#555}table{width:100%;border-collapse:collapse;table-layout:fixed}thead{display:table-header-group}tr{break-inside:avoid}th,td{border:1px solid #222;padding:8px 7px;text-align:center;height:36px}th{background:#f1f3f5;font-weight:800}th:first-child,td:first-child{width:50px}th:nth-child(3),td:nth-child(3){width:90px}th:last-child,td:last-child{width:25%}.signature{height:40px}@media print{body{margin:0}}</style></head><body><section class="qr-page"><p>교육 출석 QR</p><h1>${escapeHtml(course.title || "교육")}</h1><p>${escapeHtml(formatDateTime(course.starts_at))}</p><img src="${imageUrl}" alt="교육 체크인 QR"><p>QR을 스캔한 뒤 로그인하거나 이름과 휴대전화번호를 입력해 주세요.</p><p class="note">개인정보는 교육 종료 후 6개월 이내 보관 후 익명화합니다.</p><div class="org">${escapeHtml(organizationName)}</div></section>${includeRoster ? courseCheckinRosterPrintHtml(course) : ""}<script>window.onload=()=>window.print()<\/script></body></html>`);
+  const venue = venueById(course.venue_id);
+  const location = [venue?.name, venue?.address, venue?.detail].filter(Boolean).join(" · ") || "장소 미정";
+  const qrPage = rosterOnly ? "" : `<section class="qr-page"><header><p>교육 출석 QR</p><h1>${escapeHtml(course.title || "교육")}</h1></header><div class="qr-meta"><div><strong>교육일시</strong><span>${escapeHtml(formatDateTime(course.starts_at))}</span></div><div><strong>장소</strong><span>${escapeHtml(location)}</span></div></div><main><img src="${imageUrl}" alt="교육 체크인 QR"><p class="guide">휴대전화 카메라로 QR을 찍어 출석해 주세요.</p><p class="note">교육 시작 1시간 전부터 종료 1시간 후까지 사용할 수 있습니다.</p></main><footer><div class="org">${escapeHtml(organizationName)}</div><p class="note">이 QR은 위 교육의 출석 확인에만 사용됩니다.</p></footer></section>`;
+  const rosterPages = includeRoster || rosterOnly ? courseCheckinRosterPrintHtml(course) : "";
+  popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${rosterOnly ? "교육 출석부" : `교육 QR 체크인${includeRoster ? "·출석부" : ""}`}</title><style>@page{size:A4 portrait;margin:0}*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;color:#172033;margin:0}.qr-page{width:210mm;min-height:297mm;padding:14mm 16mm 12mm;display:flex;flex-direction:column;text-align:center;break-after:${includeRoster ? "page" : "auto"}.qr-page header{border-bottom:4px solid #15803d;padding-bottom:5mm}.qr-page header>p{margin:0 0 2mm;color:#15803d;font-size:15px;font-weight:800;letter-spacing:.08em}.qr-page h1{font-size:34px;line-height:1.25;margin:0;word-break:keep-all}.qr-meta{display:grid;grid-template-columns:1fr 1fr;gap:5mm;margin:8mm 0 3mm;text-align:left}.qr-meta>div{display:grid;grid-template-columns:24mm 1fr;gap:2mm;font-size:15px}.qr-meta strong{color:#475569}.qr-page main{display:flex;flex:1;min-height:0;flex-direction:column;align-items:center;justify-content:center}.qr-page img{width:112mm;height:112mm;padding:4mm;border:4px solid #172033}.guide{font-size:21px;font-weight:800;margin:6mm 0 2mm}.org{font-weight:850;font-size:20px}.note{color:#5d6775;font-size:13px;margin:2mm 0}.qr-page footer{border-top:1px solid #cbd5e1;padding-top:5mm}.roster-page{width:210mm;min-height:297mm;padding:14mm;text-align:left;break-before:${rosterOnly ? "auto" : "page"};break-after:page;position:relative}.roster-page:last-child{break-after:auto}.roster-page h1{font-size:30px;line-height:1.25;margin:0;text-align:center;word-break:keep-all}.roster-gap{height:8mm}.roster-heading{font-size:21px;font-weight:850;margin-bottom:4mm}.roster-meta{display:grid;grid-template-columns:1fr 1fr;gap:4mm 8mm;margin-bottom:6mm;font-size:13px}.roster-meta strong{margin-right:3mm}.roster-page table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px}.roster-page thead{display:table-header-group}.roster-page tr{break-inside:avoid}.roster-page th,.roster-page td{border:1px solid #222;padding:6px 5px;text-align:center;height:12mm}.roster-page th{background:#f1f3f5;font-weight:800;height:10mm}.roster-page th:first-child,.roster-page td:first-child{width:12mm}.roster-page th:nth-child(2),.roster-page td:nth-child(2){width:43mm}.roster-page th:nth-child(3),.roster-page td:nth-child(3){width:26mm}.roster-page th:nth-child(4),.roster-page td:nth-child(4){width:43mm}.roster-page th:last-child,.roster-page td:last-child{width:30mm}.roster-page-number{position:absolute;right:14mm;bottom:8mm;margin:0;color:#64748b;font-size:11px}.signature{height:12mm}@media print{body{margin:0}}</style></head><body>${qrPage}${rosterPages}<script>window.onload=()=>window.print()<\/script></body></html>`);
   popup.document.close();
 }
 
@@ -4495,20 +4457,24 @@ function openCourseCheckinPrintChoice(courseId, source = "management") {
   if (source === "detail" && !detailQrUrl) throw new Error("인쇄할 QR을 찾지 못했습니다.");
   openAdminNotice("QR·출석부 인쇄", `
     <div class="admin-search-selected"><strong>${escapeHtml(course.title || "교육")}</strong><span>${escapeHtml(formatDateTime(course.starts_at))}</span></div>
-    <p style="margin-top:14px;">체크인 QR 안내문만 인쇄할까요, 종이 출석부도 이어서 인쇄할까요?</p>
-    <p class="muted">출석부에는 신청자 이름과 휴대전화번호 마지막 4자리만 표시하고 현장 기입칸을 추가합니다.</p>
+    <p style="margin-top:14px;">QR 안내문, 출석부, 또는 두 문서를 이어서 선택할 수 있습니다.</p>
+    <p class="muted">출석부는 가나다순 신청자를 먼저 배치하고 A4 한 장에 15명씩, 기본 30칸으로 출력합니다.</p>
     <div class="actions" style="margin-top:16px;">
       <button class="btn secondary" type="button" data-confirm-course-print="qr">QR만 인쇄</button>
+      <button class="btn secondary" type="button" data-confirm-course-print="roster">출석부만 인쇄</button>
       <button class="btn" type="button" data-confirm-course-print="bundle">QR + 출석부 인쇄</button>
     </div>
   `);
   document.querySelectorAll("[data-confirm-course-print]").forEach((button) => {
     button.addEventListener("click", () => {
       try {
-        const includeRoster = button.dataset.confirmCoursePrint === "bundle";
+        const mode = button.dataset.confirmCoursePrint;
+        const includeRoster = mode === "bundle";
+        const rosterOnly = mode === "roster";
         if (source === "detail") {
-          printCourseCheckinDocument(course, courseCheckinQrImage(detailQrUrl), detailOrganizationName, includeRoster);
+          printCourseCheckinDocument(course, rosterOnly ? "" : courseCheckinQrImage(detailQrUrl), detailOrganizationName, includeRoster, rosterOnly);
         }
+        else if (rosterOnly) printCourseCheckinDocument(course, "", String(course.setting?.print_organization_name || "모두의 인문학").trim(), false, true);
         else printNotificationManagementCourseQr(courseId, includeRoster);
       } catch (error) {
         showToast(error.message || "인쇄 문서를 만들지 못했습니다.");
@@ -4940,7 +4906,7 @@ function renderApplications() {
               </span>
               <span class="actions">
                 ${applicationCountBadges(group.applications)}
-                <button class="btn small secondary" type="button" data-print-roster="${escapeHtml(group.courseId)}">참가자 명단 출력</button>
+                <button class="btn small secondary" type="button" data-print-roster="${escapeHtml(group.courseId)}">출석부 출력</button>
               </span>
             </div>
           </summary>
