@@ -4124,18 +4124,13 @@ function notificationManagementOrganizations() {
 
 function notificationRecipientSummary(setting = {}) {
   const channel = setting.notification_channel || (setting.notification_enabled ? "SMS" : "OFF");
-  if (channel === "TELEGRAM") return "연결된 관리자 Telegram";
-  if (channel === "SMS") {
-    const phone = String(setting.notification_recipient_phone || "").replace(/\D/g, "");
-    const masked = phone.length === 11 ? `${phone.slice(0, 3)}-****-${phone.slice(-4)}` : "수신번호 확인 필요";
-    return masked;
-  }
+  if (["TELEGRAM", "SMS"].includes(channel) && setting.notification_admin_user_id) return "선택한 관리자";
   return "현장 실시간 알림을 보내지 않음";
 }
 
 function syncNotificationChannelFields(scope) {
   if (!(scope instanceof HTMLElement)) return;
-  const channel = String(scope.querySelector('[name="notification_channel"]')?.value || "OFF");
+  const channel = String(scope.querySelector('[name="preferred_channel"]')?.value || "OFF");
   scope.querySelectorAll("[data-notification-telegram-fields]").forEach((element) => {
     element.hidden = channel !== "TELEGRAM";
     element.querySelectorAll("select,input").forEach((input) => {
@@ -4147,7 +4142,7 @@ function syncNotificationChannelFields(scope) {
     element.hidden = channel !== "SMS";
     element.querySelectorAll("input").forEach((input) => {
       input.disabled = channel !== "SMS";
-      if (input.name === "notification_recipient_phone") input.required = channel === "SMS";
+      if (input.name === "sms_phone") input.required = channel === "SMS" && !input.dataset.smsConfigured;
     });
   });
 }
@@ -4197,6 +4192,10 @@ function renderNotificationManagement() {
   const organizations = notificationManagementOrganizations();
   const excludedCourseCount = Math.max(0, (Array.isArray(data.courses) ? data.courses.length : 0) - allCourses.length);
   const selectedIds = new Set(management.selectedCourseIds.map(String));
+  const profileChannel = profile.preferred_channel || "OFF";
+  const profileReady = profileChannel === "TELEGRAM"
+    ? profile.telegram_active === true
+    : profileChannel === "SMS" ? profile.sms_configured === true : false;
   if (!management.data && !management.loading && !management.error) {
     window.setTimeout(() => loadNotificationManagement(), 0);
   }
@@ -4219,13 +4218,29 @@ function renderNotificationManagement() {
       <p class="muted" style="margin-top: 10px;">참가자에게 보내는 신청 완료 문자가 아닙니다. Telegram 또는 문자를 선택한 교육의 담당 관리자에게만 전송됩니다.</p>
     </section>
     <section class="section">
-      <h3>내 Telegram 연결</h3>
+      <h3>내 알림 수신 설정</h3>
       <div class="admin-search-selected">
-        <strong>${profile.telegram_active ? "연결됨" : "연결 안 됨"}</strong>
+        <strong>${profileChannel === "TELEGRAM" ? "Telegram" : profileChannel === "SMS" ? "문자" : "사용 안 함"}</strong>
         <span>${profile.telegram_active
           ? `${profile.telegram_username ? `@${escapeHtml(profile.telegram_username)} · ` : ""}${escapeHtml(profile.telegram_connected_at ? formatDateTime(profile.telegram_connected_at) : "연결 시간 확인 필요")}`
-          : "연결이 어려우면 교육별 알림 방식을 문자로 선택할 수 있습니다."}</span>
+          : "Telegram 연결이 어려우면 문자 수신 번호를 한 번 등록할 수 있습니다."}</span>
       </div>
+      <form id="notificationProfileForm" class="section" style="margin-top: 12px;">
+        <div class="admin-grid">
+          <label>내 기본 알림 방식
+            <select name="preferred_channel">
+              <option value="OFF" ${profileChannel === "OFF" ? "selected" : ""}>사용 안 함</option>
+              <option value="TELEGRAM" ${profileChannel === "TELEGRAM" ? "selected" : ""} ${profile.telegram_active ? "" : "disabled"}>Telegram${profile.telegram_active ? "" : " · 연결 필요"}</option>
+              <option value="SMS" ${profileChannel === "SMS" ? "selected" : ""}>문자</option>
+            </select>
+          </label>
+          <label data-notification-sms-fields hidden>내 문자 수신 번호
+            <input name="sms_phone" maxlength="13" inputmode="tel" data-sms-configured="${profile.sms_configured ? "true" : ""}" placeholder="${escapeHtml(profile.sms_phone_masked || "010-0000-0000")}">
+            <small>${profile.sms_configured ? `현재 ${escapeHtml(profile.sms_phone_masked || "등록됨")} · 바꾸려면 새 번호 입력` : "모두의 인문학 알림에만 사용합니다."}</small>
+          </label>
+        </div>
+        <div class="actions" style="margin-top: 12px;"><button class="btn" type="button" data-save-notification-profile>내 알림 설정 저장</button></div>
+      </form>
       <div class="actions" style="margin-top: 14px;">
         <button class="btn" type="button" data-create-telegram-link>Telegram 연결 링크 만들기</button>
         ${profile.telegram_active ? '<button class="btn secondary" type="button" data-test-humanities-telegram>테스트 알림 보내기</button><button class="btn danger" type="button" data-disconnect-humanities-telegram>연결 해제</button>' : ""}
@@ -4237,7 +4252,7 @@ function renderNotificationManagement() {
         <li>위의 ‘Telegram 연결 링크 만들기’를 누릅니다. 링크는 10분 동안 한 번만 사용할 수 있습니다.</li>
         <li>안내창의 ‘Telegram에서 열기’를 누르고 봇 대화에서 <strong>시작</strong> 버튼을 누릅니다.</li>
         <li>관리자 페이지로 돌아와 ‘상태 새로고침’을 누릅니다.</li>
-        <li>아래 교육을 전체 또는 개별 선택하고 알림 방식 ‘Telegram’을 적용합니다.</li>
+        <li>‘내 기본 알림 방식’을 저장한 뒤 아래 교육에서 담당 관리자 이름을 지정합니다.</li>
       </ol>
       <p class="muted">Telegram 연결을 도저히 할 수 없는 담당자는 교육별 알림 방식을 ‘문자’로 선택하세요. 모두의 인문학 문자 계정과 협동조합 메시지 계정은 서로 공유하지 않습니다.</p>
     </section>
@@ -4268,18 +4283,13 @@ function renderNotificationManagement() {
       </div>
       <form id="notificationBulkForm" class="section" style="margin-top: 12px;">
         <p><strong>선택한 교육 <span data-notification-selected-count>${selectedIds.size.toLocaleString()}</span>개에 일괄 적용</strong></p>
-        <div class="admin-grid">
-          <label>알림 방식
-            <select name="notification_channel">
-              <option value="OFF">사용 안 함</option>
-              <option value="TELEGRAM" ${profile.telegram_active ? "" : "disabled"}>내 Telegram${profile.telegram_active ? "" : " · 연결 필요"}</option>
-              <option value="SMS">문자</option>
-            </select>
-          </label>
-          <label data-notification-sms-fields hidden>문자 수신 전화번호<input name="notification_recipient_phone" maxlength="13" inputmode="tel" placeholder="010-0000-0000"></label>
-        </div>
-        <label style="margin-top: 10px;"><span><input name="partner_notification_dedup" type="checkbox" style="width:auto;min-height:auto;"> 연결된 협동조합 교육과 담당자가 같음</span></label>
-        <p class="muted" style="margin-top: 8px;">일괄 Telegram은 현재 로그인한 관리자의 연결 계정으로 설정됩니다. 다른 관리자를 지정하거나 교육마다 수신자를 다르게 하려면 해당 교육의 ‘상세 설정’을 이용하세요.</p>
+        <label>실시간 알림 관리자
+          <select name="notification_admin_user_id">
+            <option value="">알림 사용 안 함</option>
+            <option value="${escapeHtml(profile.user_id || "")}" ${profileReady ? "" : "disabled"}>내 이름 · ${profileChannel === "TELEGRAM" ? "Telegram" : profileChannel === "SMS" ? "문자" : "알림 설정 필요"}</option>
+          </select>
+        </label>
+        <p class="muted" style="margin-top: 8px;">전체 적용은 현재 로그인한 관리자를 담당자로 지정합니다. 다른 담당자는 교육의 ‘상세 설정’에서 이름만 선택하세요.</p>
         <div class="actions" style="margin-top: 12px;"><button class="btn" type="button" data-save-selected-notifications ${selectedIds.size ? "" : "disabled"}>선택 교육에 일괄 적용</button></div>
       </form>
       ${courses.length ? `<div class="notification-course-list" style="margin-top: 14px;">${courses.map((course) => {
@@ -4293,7 +4303,7 @@ function renderNotificationManagement() {
               <span class="notification-course-copy">
                 <strong>${escapeHtml(course.title || "교육")}</strong>
                 <span style="display:block;">${escapeHtml(formatDateTime(course.starts_at))} · ${escapeHtml(organizationById(course.organization_id)?.name || "단체 미정")}</span>
-                <span class="muted" style="display:block;margin-top:4px;">${escapeHtml(notificationChannelLabel(channel))} · ${escapeHtml(notificationRecipientSummary(setting))}${setting.partner_notification_dedup ? " · 같은 담당자 중복 생략" : ""}</span>
+                <span class="muted" style="display:block;margin-top:4px;">${escapeHtml(notificationChannelLabel(channel))} · ${escapeHtml(notificationRecipientSummary(setting))}</span>
               </span>
             </label>
             <div class="notification-course-actions">
@@ -4315,7 +4325,7 @@ function renderNotificationManagement() {
         </div>`).join("")}</div>` : '<p class="muted">아직 담당 범위의 체크인 알림 이력이 없습니다.</p>'}
     </section>
   `;
-  window.requestAnimationFrame(() => syncNotificationChannelFields(document.getElementById("notificationBulkForm")));
+  window.requestAnimationFrame(() => syncNotificationChannelFields(document.getElementById("notificationProfileForm")));
 }
 
 function courseCheckinAdminHtml(course, result) {
@@ -4333,32 +4343,22 @@ function courseCheckinAdminHtml(course, result) {
       </div>
       <div class="admin-grid" style="margin-top: 14px;">
         <label><span><input name="enabled" type="checkbox" ${setting.enabled ? "checked" : ""} style="width:auto;min-height:auto;"> QR 체크인 사용</span></label>
-        <label>시작 전 열기(분)<input name="opens_before_minutes" type="number" min="0" max="1440" value="${escapeHtml(setting.opens_before_minutes ?? 60)}"></label>
-        <label>종료 후 닫기(분)<input name="closes_after_minutes" type="number" min="0" max="1440" value="${escapeHtml(setting.closes_after_minutes ?? 30)}"></label>
+        <label>체크인 운영 시간<input value="교육 시작 1시간 전 ~ 종료 1시간 후" readonly></label>
         <label>인쇄물 아래 단체명<input name="print_organization_name" maxlength="120" value="${escapeHtml(setting.print_organization_name || "모두의 인문학")}" placeholder="예: 모두의 인문학"></label>
       </div>
       <section class="section" style="margin-top: 14px;">
         <h3>관리자 실시간 알림</h3>
-        <p class="muted">Telegram을 선택하면 연결된 관리자만 고르면 되며 이름이나 전화번호를 입력하지 않습니다. Telegram을 연결하기 어려운 경우에만 문자를 선택하고 받을 전화번호를 입력하세요.</p>
+        <p class="muted">담당 관리자 이름만 선택합니다. 전송 방식과 전화번호는 각 관리자가 왼쪽 ‘알림 관리’에서 한 번만 설정합니다.</p>
         <div class="admin-grid">
-          <label>알림 방식
-            <select name="notification_channel">
-              <option value="OFF" ${notificationChannel === "OFF" ? "selected" : ""}>사용 안 함</option>
-              <option value="TELEGRAM" ${notificationChannel === "TELEGRAM" ? "selected" : ""}>Telegram</option>
-              <option value="SMS" ${notificationChannel === "SMS" ? "selected" : ""}>문자</option>
-            </select>
-          </label>
-          <label data-notification-telegram-fields hidden>Telegram 수신 관리자
+          <label>실시간 알림 관리자
             <select name="notification_admin_user_id">
-              <option value="">연결된 관리자를 선택하세요</option>
-              ${notificationRecipients.map((recipient) => `<option value="${escapeHtml(recipient.user_id)}" ${String(setting.notification_admin_user_id || "") === String(recipient.user_id) ? "selected" : ""} ${recipient.telegram_connected ? "" : "disabled"}>${escapeHtml(recipient.display_name || "관리자")} · ${recipient.telegram_connected ? `연결됨${recipient.telegram_username ? ` (@${recipient.telegram_username})` : ""}` : "미연결"}</option>`).join("")}
+              <option value="">알림 사용 안 함</option>
+              ${notificationRecipients.map((recipient) => `<option value="${escapeHtml(recipient.user_id)}" ${String(setting.notification_admin_user_id || "") === String(recipient.user_id) ? "selected" : ""} ${recipient.effective_channel !== "OFF" ? "" : "disabled"}>${escapeHtml(recipient.display_name || "관리자")} · ${recipient.effective_channel === "TELEGRAM" ? "Telegram" : recipient.effective_channel === "SMS" ? `문자 ${escapeHtml(recipient.sms_phone_masked || "")}` : "알림 설정 필요"}</option>`).join("")}
             </select>
-            <small>개인 Telegram 연결은 왼쪽 ‘알림 관리’ 메뉴에서 합니다.</small>
+            <small>개인 수신 방식은 왼쪽 ‘알림 관리’ 메뉴에서 설정합니다.</small>
           </label>
-          <label data-notification-sms-fields hidden>문자 수신 전화번호<input name="notification_recipient_phone" maxlength="13" inputmode="tel" value="${escapeHtml(setting.notification_recipient_phone || "")}" placeholder="010-0000-0000"></label>
         </div>
-        <label style="margin-top: 12px;"><span><input name="partner_notification_dedup" type="checkbox" ${setting.partner_notification_dedup ? "checked" : ""} style="width:auto;min-height:auto;"> 연결된 협동조합 교육과 담당자가 같음 — 협동조합 알림이 성공하면 모두의 인문학 알림은 중복 생략</span></label>
-        <p class="muted" style="margin-top: 8px;">담당자가 다르면 체크하지 마세요. 문자 선택 시 모두의 인문학 문자 계정만 사용하며 협동조합에서는 이 계정을 사용할 수 없습니다.</p>
+        <p class="muted" style="margin-top: 8px;">연결 교육의 담당자가 같은지는 협동조합 서버가 Telegram 사용자 ID로 확인합니다. 확인되지 않으면 두 서비스가 각각 알림을 보냅니다.</p>
       </section>
       <div class="actions" style="margin-top: 14px;">
         <button class="btn" type="submit">설정 저장</button>
@@ -4494,21 +4494,14 @@ async function openCourseCheckinAdmin(courseId) {
     elements.adminNoticeBody.innerHTML = courseCheckinAdminHtml(course, result);
     window.requestAnimationFrame(renderCourseCheckinQr);
     const checkinForm = document.getElementById("courseCheckinAdminForm");
-    syncNotificationChannelFields(checkinForm);
     checkinForm?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const formData = new FormData(event.currentTarget);
       try {
         await invokeCourseCheckinAdmin("admin_save", courseId, {
           enabled: formData.get("enabled") === "on",
-          opens_before_minutes: Number(formData.get("opens_before_minutes") || 60),
-          closes_after_minutes: Number(formData.get("closes_after_minutes") || 30),
           print_organization_name: String(formData.get("print_organization_name") || ""),
-          notification_channel: String(formData.get("notification_channel") || "OFF"),
           notification_admin_user_id: String(formData.get("notification_admin_user_id") || ""),
-          notification_recipient_name: String(formData.get("notification_recipient_name") || ""),
-          notification_recipient_phone: String(formData.get("notification_recipient_phone") || ""),
-          partner_notification_dedup: formData.get("partner_notification_dedup") === "on",
         });
         showToast("QR 출석 설정을 저장했습니다.");
         if (state.tab === "notifications") await loadNotificationManagement();
@@ -6357,6 +6350,25 @@ function bindEvents() {
     const notificationCourseSelect = event.target.closest("[data-notification-course-select]");
     const saveSelectedNotificationsButton = event.target.closest("[data-save-selected-notifications]");
     const printNotificationCourseQrButton = event.target.closest("[data-print-notification-course-qr]");
+    const saveNotificationProfileButton = event.target.closest("[data-save-notification-profile]");
+    if (saveNotificationProfileButton) {
+      const form = document.getElementById("notificationProfileForm");
+      try {
+        if (!(form instanceof HTMLFormElement)) throw new Error("내 알림 설정 화면을 다시 열어 주세요.");
+        const formData = new FormData(form);
+        saveNotificationProfileButton.disabled = true;
+        await invokeCheckinNotificationManagement("admin_notification_profile_save", {
+          preferred_channel:String(formData.get("preferred_channel") || "OFF"),
+          sms_phone:String(formData.get("sms_phone") || ""),
+        });
+        await loadNotificationManagement();
+        showToast("내 알림 수신 설정을 저장했습니다.");
+      } catch (error) {
+        showToast(error.message || "내 알림 설정을 저장하지 못했습니다.");
+        saveNotificationProfileButton.disabled = false;
+      }
+      return;
+    }
     if (selectAllNotificationCoursesButton) {
       state.notificationManagement.selectedCourseIds = notificationManagementCourses().map((course) => String(course.id));
       updateNotificationSelectionSummary();
@@ -6385,10 +6397,7 @@ function bindEvents() {
         saveSelectedNotificationsButton.textContent = "적용 중...";
         const result = await invokeCheckinNotificationManagement("admin_notification_bulk_save", {
           course_ids: state.notificationManagement.selectedCourseIds,
-          notification_channel: String(formData.get("notification_channel") || "OFF"),
-          notification_recipient_name: String(formData.get("notification_recipient_name") || ""),
-          notification_recipient_phone: String(formData.get("notification_recipient_phone") || ""),
-          partner_notification_dedup: formData.get("partner_notification_dedup") === "on",
+          notification_admin_user_id: String(formData.get("notification_admin_user_id") || ""),
         });
         await loadNotificationManagement();
         showToast(`교육 ${Number(result.updated_count || 0).toLocaleString()}개의 현장 알림 설정을 적용했습니다.`);
@@ -7020,7 +7029,7 @@ function bindEvents() {
       renderNotificationManagement();
       return;
     }
-    if (event.target.matches('[name="notification_channel"]')) {
+    if (event.target.matches('[name="preferred_channel"]')) {
       syncNotificationChannelFields(event.target.closest("form"));
       return;
     }
@@ -7032,7 +7041,7 @@ function bindEvents() {
   });
 
   document.body.addEventListener("input", (event) => {
-    const notificationPhone = event.target.closest('input[name="notification_recipient_phone"]');
+    const notificationPhone = event.target.closest('input[name="sms_phone"]');
     if (notificationPhone) {
       notificationPhone.value = formatMobilePhone(notificationPhone.value);
       return;
