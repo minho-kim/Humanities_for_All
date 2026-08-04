@@ -33,7 +33,10 @@
         <h1 id="embedTitle">가까운 인문학 교육을 둘러보세요</h1>
         <p class="lead">이 화면에서는 교육 정보를 간단히 확인할 수 있습니다. 신청, 로그인, 후기 작성은 전체 서비스 페이지에서 진행됩니다.</p>
       </div>
-      <a class="btn secondary" href="./index.html#courses" target="_top" rel="noreferrer">전체 페이지 열기</a>
+      <div class="actions">
+        <a class="btn secondary" href="./index.html#courses" target="_top" rel="noreferrer">전체 페이지 열기</a>
+        <a class="btn secondary" href="./index.html#completed" target="_top" rel="noreferrer">완료된 교육 보기</a>
+      </div>
     </section>
 
     <section class="embed-stats" aria-label="서비스 요약">
@@ -65,7 +68,7 @@
       <form class="filter-grid embed-filter-grid" id="embedSearchForm" role="search">
         <label>통합 검색<input id="embedSearchInput" type="search" placeholder="예: 철학, 글쓰기, 강사명, 단체명"></label>
         <label>시간대<select id="embedTimeFilter"><option value="">전체</option><option value="오전">오전</option><option value="오후">오후</option><option value="저녁">저녁</option></select></label>
-        <label>상태<select id="embedStatusFilter"><option value="">전체</option><option value="open">모집 중</option><option value="finished">종료</option><option value="cancelled">취소</option></select></label>
+        <label>상태<select id="embedStatusFilter"><option value="">전체</option><option value="open">모집 중</option><option value="in_progress">교육 중</option><option value="cancelled">취소</option></select></label>
         <div class="filter-actions">
           <button class="btn small" type="submit">검색하기</button>
           <button class="btn small secondary" type="button" id="embedResetButton">처음으로</button>
@@ -91,6 +94,6 @@
   </div>
 
   <div class="toast" id="embedToast" role="status" aria-live="polite"></div>
-  <script type="module" src="./assets/embed.js?v=202607302304"></script>
+  <script type="module" src="./assets/embed.js?v=202608041708"></script>
 </body>
 </html>

@@ -13,7 +13,7 @@ import {
   statusLabels,
   supabase,
   URL_RULES,
-} from "./supabaseClient.js";
+} from "./supabaseClient.js?v=202608041708";
 
 const PUBLIC_SITE_URL = "https://humanities.yll.or.kr/";
 
@@ -669,6 +669,7 @@ function effectiveCourseStatus(course) {
   if (!course) return "";
   if (course.status === "cancelled") return "cancelled";
   if (course.status === "finished" || hasCourseEnded(course)) return "finished";
+  if (course.status === "in_progress" || hasCourseStarted(course)) return "in_progress";
   return "open";
 }
 
@@ -2806,10 +2807,10 @@ async function loadAdminData() {
   render();
 }
 
-async function syncFinishedCourseStatuses() {
+async function syncCourseStatuses() {
   const { error } = await supabase.rpc("sync_finished_course_statuses");
   if (error) {
-    console.warn("[모두의 인문학] 교육 종료 상태 동기화 실패", error);
+    console.warn("[모두의 인문학] 교육 상태 동기화 실패", error);
   }
 }
 
@@ -3979,10 +3980,15 @@ function renderCourseForm(course = {}) {
   const nowValue = currentMinuteLocalDateTimeValue();
   const startMinValue = startValue && isBeforeCurrentMinute(new Date(startValue)) ? "" : nowValue;
   const endMinValue = startValue || nowValue;
-  const previewStatus = course.status === "cancelled" ? "cancelled" : (hasCourseEnded({ ...course, starts_at: course.starts_at || firstSession.starts_at, ends_at: course.ends_at || firstSession.ends_at }) ? "finished" : "open");
+  const previewStatus = effectiveCourseStatus({
+    ...course,
+    status: course.status || "open",
+    starts_at: course.starts_at || firstSession.starts_at,
+    ends_at: course.ends_at || firstSession.ends_at,
+  });
   const autoStatusNote = `
     <p class="muted" style="margin-top: 8px;">
-      상태는 자동으로 관리됩니다. 교육 전에는 ${statusBadge("open")}으로 저장되고, 종료 일시가 지나면 ${statusBadge("finished")}가 됩니다.
+      상태는 자동으로 관리됩니다. 교육 전에는 ${statusBadge("open")}, 시작 후에는 ${statusBadge("in_progress")}, 종료 후에는 ${statusBadge("finished")}가 됩니다.
       종료 일시가 없으면 시작일 다음날부터 종료로 처리합니다. 현재 저장 기준: ${statusBadge(previewStatus)}
     </p>
   `;
@@ -4399,7 +4405,7 @@ function renderApplications() {
     </div>
     <div class="table-list">
       ${groups.map((group) => `
-        <details class="table-row" open>
+        <details class="table-row">
           <summary>
             <div class="row-top" style="display:inline-flex;width:100%;align-items:flex-start;">
               <span>
@@ -5779,7 +5785,7 @@ async function reload() {
     render();
     return;
   }
-  await syncFinishedCourseStatuses();
+  await syncCourseStatuses();
   await loadAdminData();
 }
 

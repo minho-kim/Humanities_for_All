@@ -11,13 +11,15 @@ import {
   groupBy,
   normalizeSafeUrl,
   statusLabels,
-} from "./shared.js";
+} from "./shared.js?v=202608041708";
 
 const PUBLIC_FETCH_TIMEOUT_MS = 9000;
 const LANDING_SUMMARY_TIMEOUT_MS = 7000;
 const STATUS_SYNC_TIMEOUT_MS = 3500;
+const COURSE_STATUS_REFRESH_MS = 30000;
 const FULL_PAGE_PATH = "./index.html";
 const EMBED_HEIGHT_MESSAGE = "humanities-for-all:embed-height";
+let courseStatusRefreshTimer = null;
 
 const state = {
   organizations: [],
@@ -30,6 +32,8 @@ const state = {
   landingCourses: [],
   stats: {
     courses: null,
+    activeCourses: null,
+    completedCourses: null,
     organizations: null,
     instructors: null,
     reviews: null,
@@ -221,6 +225,7 @@ function effectiveCourseStatus(course) {
   if (!course) return "";
   if (course.status === "cancelled") return "cancelled";
   if (course.status === "finished" || hasCourseEnded(course)) return "finished";
+  if (course.status === "in_progress" || hasCourseStarted(course)) return "in_progress";
   return "open";
 }
 
@@ -357,7 +362,7 @@ async function fetchPublicRpc(functionName, payload = {}, timeoutMs = PUBLIC_FET
   }
 }
 
-async function syncFinishedCourseStatuses() {
+async function syncCourseStatuses() {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), STATUS_SYNC_TIMEOUT_MS);
   try {
@@ -374,11 +379,11 @@ async function syncFinishedCourseStatuses() {
     });
     if (!response.ok) {
       const body = await response.text();
-      console.warn("[모두의 인문학] embed 교육 종료 상태 동기화 실패", `HTTP ${response.status}: ${body.slice(0, 160)}`);
+      console.warn("[모두의 인문학] embed 교육 상태 동기화 실패", `HTTP ${response.status}: ${body.slice(0, 160)}`);
     }
   } catch (error) {
     const message = error.name === "AbortError" ? "응답 대기 시간이 초과되었습니다." : error.message;
-    console.warn("[모두의 인문학] embed 교육 종료 상태 동기화 지연", message);
+    console.warn("[모두의 인문학] embed 교육 상태 동기화 지연", message);
   } finally {
     window.clearTimeout(timeoutId);
   }
@@ -435,10 +440,38 @@ function composeCourses() {
   });
 }
 
+function refreshCourseStatusesInMemory() {
+  if (!state.composedCourses.length) return false;
+  const previousStatuses = new Map(state.composedCourses.map((course) => [course.id, course.status]));
+  const landingCourseIds = state.landingCourses.map((course) => course.id);
+  composeCourses();
+  const coursesById = new Map(state.composedCourses.map((course) => [course.id, course]));
+  state.landingCourses = landingCourseIds
+    .map((courseId) => coursesById.get(courseId))
+    .filter((course) => course && course.status !== "finished");
+  return state.composedCourses.some((course) => previousStatuses.get(course.id) !== course.status);
+}
+
+function refreshCourseStatusesIfNeeded() {
+  if (!refreshCourseStatusesInMemory()) return;
+  render();
+  syncCourseStatuses().catch((error) => console.warn("[모두의 인문학] embed 교육 상태 저장 지연", error));
+}
+
+function startCourseStatusMonitor() {
+  window.clearInterval(courseStatusRefreshTimer);
+  courseStatusRefreshTimer = window.setInterval(refreshCourseStatusesIfNeeded, COURSE_STATUS_REFRESH_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refreshCourseStatusesIfNeeded();
+  });
+}
+
 function applyLandingSummary(summary = {}) {
   const counts = summary.counts || {};
   state.stats = {
     courses: Number.isFinite(Number(counts.courses)) ? Number(counts.courses) : null,
+    activeCourses: Number.isFinite(Number(counts.active_courses)) ? Number(counts.active_courses) : null,
+    completedCourses: Number.isFinite(Number(counts.completed_courses)) ? Number(counts.completed_courses) : null,
     organizations: Number.isFinite(Number(counts.organizations)) ? Number(counts.organizations) : null,
     instructors: Number.isFinite(Number(counts.instructors)) ? Number(counts.instructors) : null,
     reviews: Number.isFinite(Number(counts.reviews)) ? Number(counts.reviews) : null,
@@ -460,12 +493,12 @@ function applyLandingSummary(summary = {}) {
   state.sessions = featuredCourses.flatMap((course) => Array.isArray(course.sessions) ? course.sessions : []);
   state.reviews = [];
   composeCourses();
-  state.landingCourses = state.composedCourses.slice();
+  state.landingCourses = state.composedCourses.filter((course) => course.status !== "finished");
 }
 
 async function loadLandingData() {
   elements.summary.textContent = "교육 요약을 불러오는 중입니다.";
-  await syncFinishedCourseStatuses();
+  await syncCourseStatuses();
   const { data, error } = await fetchPublicRpc("get_public_landing_summary", { p_limit: 6 }, LANDING_SUMMARY_TIMEOUT_MS);
   if (error) {
     console.warn("[모두의 인문학] embed 첫 화면 요약 확인 필요", error);
@@ -538,7 +571,8 @@ function filteredCourses() {
       course.timeLabel,
     ].join(" ").toLowerCase();
 
-    return (!filters.q || haystack.includes(filters.q))
+    return course.status !== "finished"
+      && (!filters.q || haystack.includes(filters.q))
       && (!filters.time || course.timeLabel === filters.time)
       && (!filters.status || course.status === filters.status);
   });
@@ -569,6 +603,9 @@ function courseCardNoteHtml(course) {
   }
   if (course.status === "cancelled") {
     return `<span class="review-note">취소된 교육</span>`;
+  }
+  if (course.status === "in_progress") {
+    return `<span class="review-note">교육이 진행 중이에요.</span>`;
   }
   if (canApplyToCourse(course)) {
     return `<span class="review-note">참여 신청을 받고 있어요.</span>`;
@@ -614,10 +651,10 @@ function courseCardHtml(course) {
 function renderResults() {
   const source = state.searchActivated ? filteredCourses() : state.landingCourses;
   if (!source.length) {
-    elements.results.innerHTML = `<div class="empty">${state.searchActivated ? "조건에 맞는 교육이 없습니다." : "표시할 추천 교육이 없습니다. 검색하기를 눌러 전체 교육을 확인해 주세요."}</div>`;
+    elements.results.innerHTML = `<div class="empty">${state.searchActivated ? "조건에 맞는 교육이 없습니다." : `현재 진행 중이거나 모집 중인 교육이 없습니다. <a href="${escapeHtml(fullPageUrl().replace(/#courses$/, "#completed"))}" target="_top" rel="noreferrer">완료된 교육 보기</a>`}</div>`;
     elements.summary.textContent = state.searchActivated
       ? "검색 결과가 없습니다. 검색어를 줄이거나 필터를 바꿔 보세요."
-      : "검색어를 입력하거나 검색하기를 눌러 전체 교육을 확인해 주세요.";
+      : "완료된 교육은 전체 서비스의 완료된 교육 메뉴에서 확인할 수 있습니다.";
     notifyParentHeight();
     return;
   }
@@ -629,7 +666,7 @@ function renderResults() {
   if (state.searchActivated) {
     elements.summary.textContent = `${source.length.toLocaleString("ko-KR")}개 교육을 찾았습니다. 신청과 로그인은 전체 서비스 페이지에서 진행됩니다.`;
   } else {
-    const label = state.featuredMode === "reviewed" ? "후기가 많은 종료 교육" : "곧 진행될 교육";
+    const label = "진행 중이거나 곧 시작할 교육";
     elements.summary.textContent = `${label} ${source.length.toLocaleString("ko-KR")}개를 먼저 보여드립니다. 더 보려면 검색하기를 눌러 주세요.`;
   }
   notifyParentHeight();
@@ -850,6 +887,7 @@ async function initialize() {
   console.info(`[모두의 인문학] embed ready ${APP_VERSION}`);
   bindEvents();
   await loadLandingData();
+  startCourseStatusMonitor();
   notifyParentHeight();
 }
 

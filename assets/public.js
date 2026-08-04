@@ -16,7 +16,7 @@ import {
   SUPABASE_URL,
   statusLabels,
   URL_RULES,
-} from "./shared.js";
+} from "./shared.js?v=202608041708";
 
 const state = {
   organizations: [],
@@ -46,6 +46,8 @@ const state = {
   coursePageError: "",
   stats: {
     courses: null,
+    activeCourses: null,
+    completedCourses: null,
     organizations: null,
     instructors: null,
     reviews: null,
@@ -90,6 +92,7 @@ const elements = {
   instructorFilter: document.getElementById("instructorFilter"),
   timeFilter: document.getElementById("timeFilter"),
   statusFilter: document.getElementById("statusFilter"),
+  statusFilterField: document.getElementById("statusFilterField"),
   searchResetButton: document.getElementById("searchResetButton"),
   resultSummary: document.getElementById("resultSummary"),
   courseResults: document.getElementById("courseResults"),
@@ -123,6 +126,7 @@ const PUBLIC_FETCH_TIMEOUT_MS = 7000;
 const PUBLIC_FETCH_RETRIES = 1;
 const LANDING_SUMMARY_TIMEOUT_MS = 4500;
 const STATUS_SYNC_TIMEOUT_MS = 4000;
+const COURSE_STATUS_REFRESH_MS = 30000;
 const SESSION_TIMEOUT_MS = 2500;
 const COURSE_PAGE_SIZE = 6;
 const APPLICATION_TERMS_VERSION = "2026-07-24-v6";
@@ -141,6 +145,7 @@ let supabaseClientPromise = null;
 let residenceSearchPopup = null;
 let residenceSearchForm = null;
 let courseLoadObserver = null;
+let courseStatusRefreshTimer = null;
 let applicationClientIdFallback = "";
 
 function getSupabaseClient() {
@@ -449,6 +454,7 @@ function effectiveCourseStatus(course) {
   if (!course) return "";
   if (course.status === "cancelled") return "cancelled";
   if (course.status === "finished" || hasCourseEnded(course)) return "finished";
+  if (course.status === "in_progress" || hasCourseStarted(course)) return "in_progress";
   return "open";
 }
 
@@ -600,7 +606,7 @@ async function fetchPublicRpc(functionName, payload = {}, timeoutMs = PUBLIC_FET
   }
 }
 
-async function syncFinishedCourseStatuses() {
+async function syncCourseStatuses() {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), STATUS_SYNC_TIMEOUT_MS);
   try {
@@ -617,11 +623,11 @@ async function syncFinishedCourseStatuses() {
     });
     if (!response.ok) {
       const body = await response.text();
-      console.warn("[모두의 인문학] 교육 종료 상태 동기화 실패", `HTTP ${response.status}: ${body.slice(0, 160)}`);
+      console.warn("[모두의 인문학] 교육 상태 동기화 실패", `HTTP ${response.status}: ${body.slice(0, 160)}`);
     }
   } catch (error) {
     const message = error.name === "AbortError" ? "응답 대기 시간이 초과되었습니다." : error.message;
-    console.warn("[모두의 인문학] 교육 종료 상태 동기화 지연", message);
+    console.warn("[모두의 인문학] 교육 상태 동기화 지연", message);
   } finally {
     window.clearTimeout(timeoutId);
   }
@@ -665,6 +671,8 @@ function applyLandingSummary(summary = {}) {
   const counts = summary.counts || {};
   state.stats = {
     courses: Number.isFinite(Number(counts.courses)) ? Number(counts.courses) : null,
+    activeCourses: Number.isFinite(Number(counts.active_courses)) ? Number(counts.active_courses) : null,
+    completedCourses: Number.isFinite(Number(counts.completed_courses)) ? Number(counts.completed_courses) : null,
     organizations: Number.isFinite(Number(counts.organizations)) ? Number(counts.organizations) : null,
     instructors: Number.isFinite(Number(counts.instructors)) ? Number(counts.instructors) : null,
     reviews: Number.isFinite(Number(counts.reviews)) ? Number(counts.reviews) : null,
@@ -689,7 +697,7 @@ function applyLandingSummary(summary = {}) {
   state.expectations = [];
   state.supplementaryLoaded = false;
   composeCourses();
-  state.landingCourses = state.composedCourses.slice();
+  state.landingCourses = state.composedCourses.filter((course) => course.status !== "finished");
   state.landingExpanded = false;
   state.visibleCourseCount = COURSE_PAGE_SIZE;
   state.coursePageLoading = false;
@@ -962,12 +970,12 @@ function isValidPhone(value) {
 }
 
 function coursesForOrganization(organizationId) {
-  return state.composedCourses.filter((course) => course.organization_id === organizationId);
+  return state.composedCourses.filter((course) => course.organization_id === organizationId && course.status !== "finished");
 }
 
 function coursesForInstructor(instructorId) {
   return state.composedCourses
-    .filter((course) => course.instructor_id === instructorId)
+    .filter((course) => course.instructor_id === instructorId && course.status !== "finished")
     .slice()
     .sort((a, b) => new Date(a.starts_at || 0) - new Date(b.starts_at || 0));
 }
@@ -988,6 +996,7 @@ function requestedCourseIdFromUrl() {
 function routeHash(page, slug = "") {
   if (page === "organization" && slug) return `#organization/${encodeURIComponent(slug)}`;
   if (page === "instructor" && slug) return `#instructor/${encodeURIComponent(slug)}`;
+  if (page === "completed") return "#completed";
   if (page === "organizations") return "#organizations";
   if (page === "instructors") return "#instructors";
   if (page === "reviews") return "#reviews";
@@ -1010,7 +1019,7 @@ function applyRouteFromHash() {
     state.activeOrganizationSlug = "";
     return;
   }
-  if (["organizations", "instructors", "reviews", "expectations", "archive"].includes(value)) {
+  if (["completed", "organizations", "instructors", "reviews", "expectations", "archive"].includes(value)) {
     state.activePage = value;
     state.activeOrganizationSlug = "";
     state.activeInstructorId = "";
@@ -1034,14 +1043,15 @@ function navigate(page, slug = "") {
 }
 
 function pageNeedsSupplementaryData(page) {
-  return ["reviews", "expectations", "archive"].includes(page);
+  return ["completed", "reviews", "expectations", "archive"].includes(page);
 }
 
-function setPageHeader({ title, description, showCourseTools = false, summary = "" }) {
+function setPageHeader({ title, description, showCourseTools = false, showStatusFilter = true, summary = "" }) {
   elements.searchTitle.textContent = title;
   elements.viewDescription.textContent = description;
   elements.courseFilters.classList.toggle("hidden", !showCourseTools);
   elements.viewToggle.classList.toggle("hidden", !showCourseTools);
+  elements.statusFilterField?.classList.toggle("hidden", !showCourseTools || !showStatusFilter);
   elements.resultSummary.textContent = summary;
   if (!showCourseTools) updateCourseLoadMore();
   document.querySelectorAll(".page-tabs [data-route]").forEach((item) => {
@@ -1099,6 +1109,35 @@ function composeCourses() {
   });
 }
 
+function refreshCourseStatusesInMemory() {
+  if (!state.composedCourses.length) return false;
+  const previousStatuses = new Map(state.composedCourses.map((course) => [course.id, course.status]));
+  const landingCourseIds = state.landingCourses.map((course) => course.id);
+  composeCourses();
+  const coursesById = new Map(state.composedCourses.map((course) => [course.id, course]));
+  state.landingCourses = landingCourseIds
+    .map((courseId) => coursesById.get(courseId))
+    .filter((course) => course && course.status !== "finished");
+  return state.composedCourses.some((course) => previousStatuses.get(course.id) !== course.status);
+}
+
+function refreshCourseStatusesIfNeeded() {
+  if (!refreshCourseStatusesInMemory()) return;
+  render();
+  if (elements.detailModal.classList.contains("open") && state.activeCourseId) {
+    openCourseDetail(state.activeCourseId);
+  }
+  syncCourseStatuses().catch((error) => console.warn("[모두의 인문학] 교육 상태 저장 지연", error));
+}
+
+function startCourseStatusMonitor() {
+  window.clearInterval(courseStatusRefreshTimer);
+  courseStatusRefreshTimer = window.setInterval(refreshCourseStatusesIfNeeded, COURSE_STATUS_REFRESH_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refreshCourseStatusesIfNeeded();
+  });
+}
+
 async function loadLandingData() {
   elements.resultSummary.textContent = "교육 요약을 불러오는 중입니다.";
   const [summaryResult] = await Promise.all([
@@ -1110,6 +1149,8 @@ async function loadLandingData() {
     console.warn("[모두의 인문학] 첫 화면 요약 확인 필요", error);
     state.stats = {
       courses: null,
+      activeCourses: null,
+      completedCourses: null,
       organizations: null,
       instructors: null,
       reviews: null,
@@ -1136,7 +1177,7 @@ async function loadData({ waitForSupplementary = false } = {}) {
   state.reviews = [];
   state.expectations = [];
   state.supplementaryLoaded = false;
-  await syncFinishedCourseStatuses();
+  await syncCourseStatuses();
 
   const coreRequestMap = [
     ["organizations", loadPublicRows("organizations", { order: "sort_order.asc" })],
@@ -1379,11 +1420,11 @@ async function applyCourseFilters() {
   state.visibleCourseCount = COURSE_PAGE_SIZE;
   state.coursePageError = "";
   await ensureFullDataLoaded();
-  if (state.activePage !== "courses") {
+  if (!["courses", "completed"].includes(state.activePage)) {
     navigate("courses");
     return;
   }
-  renderCoursesPage();
+  render();
 }
 
 function resetCourseFilters() {
@@ -1392,11 +1433,11 @@ function resetCourseFilters() {
   state.visibleCourseCount = COURSE_PAGE_SIZE;
   state.coursePageError = "";
   syncCourseFilterInputs();
-  if (state.activePage !== "courses") {
+  if (!["courses", "completed"].includes(state.activePage)) {
     navigate("courses");
     return;
   }
-  renderCoursesPage();
+  render();
 }
 
 function getFilters() {
@@ -1419,11 +1460,15 @@ function filteredCourses() {
       course.timeLabel,
     ].join(" ").toLowerCase();
 
-    return (!filters.q || haystack.includes(filters.q))
+    const isCompletedPage = state.activePage === "completed";
+    const isInRequestedSection = isCompletedPage ? course.status === "finished" : course.status !== "finished";
+
+    return isInRequestedSection
+      && (!filters.q || haystack.includes(filters.q))
       && (!filters.org || course.organization?.name === filters.org)
       && (!filters.instructor || course.instructor?.id === filters.instructor)
       && (!filters.time || course.timeLabel === filters.time)
-      && (!filters.status || course.status === filters.status);
+      && (isCompletedPage || !filters.status || course.status === filters.status);
   });
 }
 
@@ -1450,6 +1495,9 @@ function courseCardNoteHtml(course) {
   }
   if (course.status === "cancelled") {
     return `<span class="review-note">취소된 교육</span>`;
+  }
+  if (course.status === "in_progress") {
+    return `<span class="review-note">교육이 진행 중이에요.</span>`;
   }
   if (canApplyToCourse(course)) {
     return `<span class="review-note">참여 신청을 받고 있어요.</span>`;
@@ -1570,7 +1618,8 @@ function renderCalendar(courses) {
     return;
   }
 
-  const sorted = courses.slice().sort((a, b) => new Date(courseScheduleStart(a) || 0) - new Date(courseScheduleStart(b) || 0));
+  const sortDirection = state.activePage === "completed" ? -1 : 1;
+  const sorted = courses.slice().sort((a, b) => sortDirection * (new Date(courseScheduleStart(a) || 0) - new Date(courseScheduleStart(b) || 0)));
   const coursesByMonth = new Map();
   sorted.forEach((course) => {
     const firstSession = course.sessions[0];
@@ -1649,9 +1698,9 @@ function mergeLandingCoursesFromFullData() {
   const existingIds = new Set(state.landingCourses.map((course) => course.id));
   const existingCourses = state.landingCourses
     .map((course) => fullCoursesById.get(course.id) || course)
-    .filter((course) => course?.id);
+    .filter((course) => course?.id && course.status !== "finished");
   const additionalCourses = state.composedCourses
-    .filter((course) => course?.id && course.published !== false && !existingIds.has(course.id))
+    .filter((course) => course?.id && course.published !== false && course.status !== "finished" && !existingIds.has(course.id))
     .slice()
     .sort(compareAdditionalLandingCourses);
   state.landingCourses = [...existingCourses, ...additionalCourses];
@@ -1659,15 +1708,25 @@ function mergeLandingCoursesFromFullData() {
 }
 
 function currentCourseResultTotal() {
+  if (state.activePage === "completed") return filteredCourses().length;
   if (state.searchActivated) return filteredCourses().length;
   if (state.landingExpanded) return state.landingCourses.length;
-  return Math.max(Number(state.stats.courses || 0), state.landingCourses.length);
+  const activeCourseCount = Number.isFinite(state.stats.activeCourses)
+    ? state.stats.activeCourses
+    : state.featuredMode === "reviewed"
+      ? 0
+      : state.stats.courses;
+  return Math.max(Number(activeCourseCount || 0), state.landingCourses.length);
+}
+
+function isCourseBrowsePage() {
+  return ["courses", "completed"].includes(state.activePage);
 }
 
 function updateCourseLoadMore({ total = 0, visible = 0 } = {}) {
   if (!elements.courseLoadMore || !elements.courseLoadMoreButton || !elements.courseLoadMoreStatus) return;
   const hasMore = visible < total;
-  const shouldShow = state.activePage === "courses"
+  const shouldShow = isCourseBrowsePage()
     && (hasMore || state.coursePageLoading || Boolean(state.coursePageError));
   elements.courseLoadMore.classList.toggle("hidden", !shouldShow);
   elements.courseLoadMore.setAttribute("aria-busy", state.coursePageLoading ? "true" : "false");
@@ -1687,9 +1746,9 @@ function updateCourseLoadMore({ total = 0, visible = 0 } = {}) {
 }
 
 async function loadNextCoursePage() {
-  if (state.activePage !== "courses" || state.coursePageLoading) return;
+  if (!isCourseBrowsePage() || state.coursePageLoading) return;
   const totalBeforeLoad = currentCourseResultTotal();
-  if (state.visibleCourseCount >= totalBeforeLoad && (state.searchActivated || state.landingExpanded)) return;
+  if (state.visibleCourseCount >= totalBeforeLoad && (state.activePage === "completed" || state.searchActivated || state.landingExpanded)) return;
 
   state.coursePageLoading = true;
   state.coursePageError = "";
@@ -1699,7 +1758,7 @@ async function loadNextCoursePage() {
   });
 
   try {
-    if (!state.searchActivated && !state.landingExpanded) {
+    if (state.activePage === "courses" && !state.searchActivated && !state.landingExpanded) {
       const previousCount = state.landingCourses.length;
       if (!state.fullDataLoaded) await ensureFullDataLoaded();
       mergeLandingCoursesFromFullData();
@@ -1716,7 +1775,7 @@ async function loadNextCoursePage() {
     state.coursePageError = "추가 교육을 불러오지 못했습니다. 다시 시도해 주세요.";
   } finally {
     state.coursePageLoading = false;
-    if (state.activePage === "courses") renderCoursesPage();
+    if (isCourseBrowsePage()) render();
   }
 }
 
@@ -1737,7 +1796,7 @@ function renderLandingCoursesPage() {
   const total = currentCourseResultTotal();
   const featured = state.landingCourses.slice(0, state.visibleCourseCount);
   const hasFeatured = featured.length > 0;
-  const featuredLabel = state.featuredMode === "reviewed" ? "후기가 많은 종료 교육" : "곧 진행될 교육";
+  const featuredLabel = "진행 중이거나 곧 시작할 교육";
   const hasMore = featured.length < total;
   setPageHeader({
     title: "교육 검색",
@@ -1747,7 +1806,7 @@ function renderLandingCoursesPage() {
       ? state.landingExpanded
         ? `${total.toLocaleString("ko-KR")}개 교육 중 ${featured.length.toLocaleString("ko-KR")}개가 표시됩니다.${hasMore ? " 아래로 스크롤하면 더 볼 수 있습니다." : ""}`
         : `${featuredLabel} ${featured.length.toLocaleString("ko-KR")}개를 먼저 보여드립니다.${hasMore ? " 아래로 스크롤하면 더 볼 수 있습니다." : ""}`
-      : "검색어를 입력하거나 필터를 선택한 뒤 검색하기를 눌러 주세요.",
+      : "현재 진행 중이거나 모집 중인 교육이 없습니다.",
   });
   if (hasFeatured) {
     if (state.activeView === "calendar") renderCalendar(featured);
@@ -1756,7 +1815,14 @@ function renderLandingCoursesPage() {
     return;
   }
   elements.courseResults.className = "content-stack";
-  elements.courseResults.innerHTML = `<div class="empty">아직 추천할 교육이 없습니다. 검색하기를 누르면 등록된 교육을 확인할 수 있습니다.</div>`;
+  elements.courseResults.innerHTML = `
+    <div class="empty">
+      현재 진행 중이거나 모집 중인 교육이 없습니다.
+      <div class="actions" style="justify-content:center;margin-top:14px;">
+        <button class="btn small secondary" type="button" data-route="completed">완료된 교육 보기</button>
+      </div>
+    </div>
+  `;
   updateCourseLoadMore({ total, visible: 0 });
 }
 
@@ -1775,6 +1841,25 @@ function renderCoursesPage() {
     summary: state.courses.length
       ? `${matchingCourses.length.toLocaleString("ko-KR")}개 교육 중 ${courses.length.toLocaleString("ko-KR")}개가 표시됩니다.${courses.length < matchingCourses.length ? " 아래로 스크롤하면 더 볼 수 있습니다." : ""}`
       : `등록된 교육은 아직 없고, ${organizations.length.toLocaleString("ko-KR")}개 단체가 등록되어 있습니다.`,
+  });
+  if (state.activeView === "calendar") renderCalendar(courses);
+  else renderCards(courses);
+  updateCourseLoadMore({ total: matchingCourses.length, visible: courses.length });
+}
+
+function renderCompletedCoursesPage() {
+  const matchingCourses = filteredCourses()
+    .slice()
+    .sort((left, right) => new Date(courseScheduleStart(right) || 0) - new Date(courseScheduleStart(left) || 0));
+  const courses = matchingCourses.slice(0, state.visibleCourseCount);
+  setPageHeader({
+    title: "완료된 교육",
+    description: "교육을 마친 프로그램의 후기와 현장 기록을 찾아보세요.",
+    showCourseTools: true,
+    showStatusFilter: false,
+    summary: matchingCourses.length
+      ? `${matchingCourses.length.toLocaleString("ko-KR")}개 완료 교육 중 ${courses.length.toLocaleString("ko-KR")}개가 표시됩니다.${courses.length < matchingCourses.length ? " 아래로 스크롤하면 더 볼 수 있습니다." : ""}`
+      : "조건에 맞는 완료 교육이 없습니다.",
   });
   if (state.activeView === "calendar") renderCalendar(courses);
   else renderCards(courses);
@@ -2556,7 +2641,8 @@ function renderArchivePage() {
 function render() {
   renderDemographicBanner();
   renderStats();
-  if (state.activePage === "organizations") renderOrganizationsPage();
+  if (state.activePage === "completed") renderCompletedCoursesPage();
+  else if (state.activePage === "organizations") renderOrganizationsPage();
   else if (state.activePage === "organization") renderOrganizationPage();
   else if (state.activePage === "instructors") renderInstructorsPage();
   else if (state.activePage === "instructor") renderInstructorPage();
@@ -4835,6 +4921,7 @@ async function initialize() {
   if (state.activePage !== "courses") {
     await ensureFullDataLoaded({ waitForSupplementary: pageNeedsSupplementaryData(state.activePage) });
   }
+  startCourseStatusMonitor();
   await openRequestedCourseFromUrl();
   startAuthMonitor();
 }

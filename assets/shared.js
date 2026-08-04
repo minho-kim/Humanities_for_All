@@ -3,7 +3,7 @@ export const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_rXN3xjZ2aJGeb00QMEs1KQ_b
 export const ARCHIVE_BUCKET = "archive-media";
 export const SITE_MEDIA_BUCKET = "site-media";
 export const ATTENDANCE_DOCUMENT_BUCKET = "attendance-documents";
-export const APP_VERSION = "2026.07.30.2304";
+export const APP_VERSION = "2026.08.04.1708";
 
 export const THEME_STORAGE_KEY = "humanities-theme-preference";
 export const THEME_PREFERENCES = Object.freeze(["system", "light", "dark"]);
@@ -109,9 +109,10 @@ if (!globalThis.__HUMANITIES_FOR_ALL_VERSION_LOGGED__) {
 }
 
 export const statusLabels = {
-  scheduled: "예정",
+  scheduled: "모집 중",
   open: "모집 중",
-  finished: "종료",
+  in_progress: "교육 중",
+  finished: "교육 완료",
   cancelled: "취소",
 };
 

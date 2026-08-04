@@ -1,5 +1,5 @@
 import { createClient } from "./vendor/supabase-js-2.108.2.js";
-import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "./shared.js";
+import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "./shared.js?v=202608041708";
 
 export {
   APP_VERSION,
@@ -24,7 +24,7 @@ export {
   shortDate,
   statusLabels,
   verificationLabels,
-} from "./shared.js";
+} from "./shared.js?v=202608041708";
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: {

@@ -60,6 +60,7 @@
         </div>
         <nav class="page-tabs" aria-label="콘텐츠 보기">
           <a href="#courses" data-route="courses" class="active">교육</a>
+          <a href="#completed" data-route="completed">완료된 교육</a>
           <a href="#organizations" data-route="organizations">참여 단체</a>
           <a href="#instructors" data-route="instructors">강사</a>
           <a href="#reviews" data-route="reviews">후기</a>
@@ -72,7 +73,7 @@
         <label>단체<select id="orgFilter"></select></label>
         <label>강사<select id="instructorFilter"></select></label>
         <label>시간대<select id="timeFilter"><option value="">전체</option><option value="오전">오전</option><option value="오후">오후</option><option value="저녁">저녁</option></select></label>
-        <label>상태<select id="statusFilter"><option value="">전체</option><option value="open">모집 중</option><option value="finished">종료</option><option value="cancelled">취소</option></select></label>
+        <label id="statusFilterField">상태<select id="statusFilter"><option value="">전체</option><option value="open">모집 중</option><option value="in_progress">교육 중</option><option value="cancelled">취소</option></select></label>
         <div class="filter-actions">
           <button class="btn small" type="submit">검색하기</button>
           <button class="btn small secondary" type="button" id="searchResetButton">초기화</button>
@@ -109,6 +110,7 @@
       <nav class="site-footer-links" aria-label="하단 메뉴">
         <a href="./privacy.html">개인정보처리방침</a>
         <a href="#courses" data-route="courses">교육</a>
+        <a href="#completed" data-route="completed">완료된 교육</a>
         <a href="#organizations" data-route="organizations">참여 단체</a>
         <a href="#instructors" data-route="instructors">강사</a>
         <a href="#reviews" data-route="reviews">후기</a>
@@ -193,6 +195,6 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <!-- public.js를 변경해 배포할 때 v 값도 함께 올려 기존 브라우저 캐시를 교체한다. -->
-  <script type="module" src="./assets/public.js?v=202607302304"></script>
+  <script type="module" src="./assets/public.js?v=202608041708"></script>
 </body>
 </html>
