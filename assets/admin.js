@@ -4328,6 +4328,38 @@ function renderNotificationManagement() {
   window.requestAnimationFrame(() => syncNotificationChannelFields(document.getElementById("notificationProfileForm")));
 }
 
+function courseCheckinMethodLabel(method) {
+  return {
+    HUMANITIES_ACCOUNT_QR: "모두의 인문학 로그인",
+    COOP_LINKED_ACCOUNT_QR: "협동조합 로그인·계정연동",
+    COOP_MEMBER_QR: "협동조합 조합원 확인",
+    HUMANITIES_QR: "이름·전화번호 QR",
+  }[String(method || "")] || "온라인 체크인";
+}
+
+async function attendanceLedgerHash(courseId, record) {
+  const source = `${courseId}|${record.id}|${record.checked_in_at}|${record.checkin_method}`;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(source));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 16);
+}
+
+async function printElectronicAttendanceReport(course, records) {
+  const popup = window.open("", "humanities-electronic-attendance-report", "width=980,height=980");
+  if (!popup) throw new Error("인쇄 창이 차단되었습니다. 팝업을 허용해 주세요.");
+  popup.document.write("<!doctype html><html lang='ko'><meta charset='utf-8'><body>전자 출석확인서를 준비하고 있습니다.</body></html>");
+  const venue = venueById(course.venue_id);
+  const organization = organizationById(course.organization_id);
+  const generatedAt = new Date().toISOString();
+  const rows = await Promise.all(records.map(async (record, index) => ({
+    index: index + 1,
+    ...record,
+    ledger_hash: await attendanceLedgerHash(course.id, record),
+  })));
+  popup.document.open();
+  popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${escapeHtml(course.title || "교육")} 전자 출석확인서</title><style>@page{size:A4 landscape;margin:12mm}*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;color:#172033;margin:0}h1{font-size:24px;margin:0 0 8px}.meta{display:grid;grid-template-columns:1fr 1fr;gap:4px 18px;margin:0 0 16px;font-size:13px}.notice{font-size:12px;color:#5d6775;margin:10px 0 14px}table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px}thead{display:table-header-group}tr{break-inside:avoid}th,td{border:1px solid #444;padding:7px 6px;text-align:left;vertical-align:top}th{background:#f1f3f5}th:first-child,td:first-child{width:42px;text-align:center}th:nth-child(2),td:nth-child(2){width:110px}th:nth-child(3),td:nth-child(3){width:85px}th:nth-child(4),td:nth-child(4){width:155px}th:nth-child(5),td:nth-child(5){width:135px}.footer{margin-top:14px;font-size:11px;color:#5d6775}@media print{body{margin:0}}</style></head><body><h1>전자 출석확인서</h1><div class="meta"><div><strong>교육</strong> ${escapeHtml(course.title || "교육")}</div><div><strong>운영 단체</strong> ${escapeHtml(organization?.name || "모두의 인문학")}</div><div><strong>일시</strong> ${escapeHtml(formatDateTime(course.starts_at))}</div><div><strong>장소</strong> ${escapeHtml([venue?.name, venue?.address, venue?.detail].filter(Boolean).join(" · ") || "장소 미정")}</div><div><strong>출력 시각(KST)</strong> ${escapeHtml(formatDateTime(generatedAt))}</div><div><strong>온라인 출석</strong> ${rows.length.toLocaleString("ko-KR")}명</div></div><p class="notice">이 문서는 로그인 또는 QR 본인확인으로 생성된 온라인 출석 원장을 출력한 ‘전자 출석확인서’입니다. 종이 서명 출석은 별도 스캔본에서 확인합니다.</p><table><thead><tr><th>번호</th><th>이름</th><th>전화 끝자리</th><th>확인 방법</th><th>체크인(KST)</th><th>원장 ID / 검증값</th><th>연동 상태</th></tr></thead><tbody>${rows.map((record) => `<tr><td>${record.index}</td><td>${escapeHtml(record.participant_name || "익명 참여자")}</td><td>${escapeHtml(record.phone_last4 || "삭제됨")}</td><td>${escapeHtml(courseCheckinMethodLabel(record.checkin_method))}</td><td>${escapeHtml(formatDateTime(record.checked_in_at))}</td><td>${escapeHtml(record.id)}<br>${escapeHtml(record.ledger_hash)}</td><td>${record.partner_code ? "협동조합 원장 연동" : "모두의 인문학 원장"}</td></tr>`).join("") || '<tr><td colspan="7">온라인 출석 기록이 없습니다.</td></tr>'}</tbody></table><p class="footer">원장 검증값은 교육·출석 ID·체크인 시각·확인 방법을 SHA-256으로 계산한 앞 16자리입니다. 원장 수정 여부를 대조하는 보조값이며 공인전자서명을 의미하지 않습니다.</p><script>window.onload=()=>window.print()<\/script></body></html>`);
+  popup.document.close();
+}
+
 function courseCheckinAdminHtml(course, result) {
   const setting = result.setting || {};
   const records = Array.isArray(result.records) ? result.records : [];
@@ -4375,11 +4407,11 @@ function courseCheckinAdminHtml(course, result) {
       ` : '<p class="muted">설정을 한 번 저장하면 암호학적 난수 QR 주소가 생성됩니다.</p>'}
     </section>
     <section class="section" style="margin-top: 16px;">
-      <h3>온라인 체크인 ${records.length.toLocaleString()}명</h3>
+      <div class="section-heading"><div><h3>온라인 체크인 ${records.length.toLocaleString()}명</h3><p class="muted">로그인·QR 체크인 원장을 전자 출석확인서로 출력할 수 있습니다.</p></div><button class="btn small secondary" type="button" data-print-electronic-attendance ${records.length ? "" : "disabled"}>전자 출석확인서 출력</button></div>
       ${records.length ? `<div class="admin-list">${records.map((record) => `
         <div class="admin-row">
           <div><strong>${escapeHtml(record.participant_name)}</strong><p>${escapeHtml(record.phone || "번호 삭제됨")} · ${escapeHtml(formatDateTime(record.checked_in_at))}</p></div>
-          <div class="badge-row"><span class="badge">${record.checkin_method === "COOP_MEMBER_QR" ? "협동조합 확인" : "일반 QR"}</span>${record.record_status === "REVIEW" ? '<span class="badge cancelled">이름 확인 필요</span>' : ""}</div>
+          <div class="badge-row"><span class="badge">${escapeHtml(courseCheckinMethodLabel(record.checkin_method))}</span>${record.record_status === "REVIEW" ? '<span class="badge cancelled">이름 확인 필요</span>' : ""}</div>
         </div>`).join("")}</div>` : '<p class="muted">아직 온라인 체크인 기록이 없습니다.</p>'}
     </section>
   `;
@@ -4425,7 +4457,7 @@ function courseCheckinRosterPrintHtml(course) {
 function printCourseCheckinDocument(course, imageUrl, organizationName, includeRoster = false) {
   const popup = window.open("", "humanities-course-checkin-print", "width=820,height=980");
   if (!popup) throw new Error("인쇄 창이 차단되었습니다. 팝업을 허용해 주세요.");
-  popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>교육 QR 체크인${includeRoster ? "·출석부" : ""}</title><style>@page{size:A4;margin:14mm}*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;color:#172033;margin:0}.qr-page{text-align:center;min-height:260mm;break-after:${includeRoster ? "page" : "auto"}}.qr-page h1{font-size:30px;margin:36px 0 16px}.qr-page p{font-size:18px;line-height:1.55;margin:8px 0}.qr-page img{width:400px;height:400px;margin:24px auto 16px}.org{margin-top:34px;font-weight:800;font-size:22px}.note{color:#5d6775!important;font-size:14px!important}.roster-page{break-before:page;text-align:left}.roster-page h1{font-size:22px;margin:0 0 6px}.roster-page>p{margin:0 0 12px;color:#555}table{width:100%;border-collapse:collapse;table-layout:fixed}thead{display:table-header-group}tr{break-inside:avoid}th,td{border:1px solid #222;padding:8px 7px;text-align:center;height:36px}th{background:#f1f3f5;font-weight:800}th:first-child,td:first-child{width:50px}th:nth-child(3),td:nth-child(3){width:90px}th:last-child,td:last-child{width:25%}.signature{height:40px}@media print{body{margin:0}}</style></head><body><section class="qr-page"><p>교육 출석 QR</p><h1>${escapeHtml(course.title || "교육")}</h1><p>${escapeHtml(formatDateTime(course.starts_at))}</p><img src="${imageUrl}" alt="교육 체크인 QR"><p>QR을 스캔하고 이름과 휴대전화번호를 입력해 주세요.</p><p class="note">개인정보는 교육 종료 후 6개월 이내 보관 후 익명화합니다.</p><div class="org">${escapeHtml(organizationName)}</div></section>${includeRoster ? courseCheckinRosterPrintHtml(course) : ""}<script>window.onload=()=>window.print()<\/script></body></html>`);
+  popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>교육 QR 체크인${includeRoster ? "·출석부" : ""}</title><style>@page{size:A4;margin:14mm}*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;color:#172033;margin:0}.qr-page{text-align:center;min-height:260mm;break-after:${includeRoster ? "page" : "auto"}}.qr-page h1{font-size:30px;margin:36px 0 16px}.qr-page p{font-size:18px;line-height:1.55;margin:8px 0}.qr-page img{width:400px;height:400px;margin:24px auto 16px}.org{margin-top:34px;font-weight:800;font-size:22px}.note{color:#5d6775!important;font-size:14px!important}.roster-page{break-before:page;text-align:left}.roster-page h1{font-size:22px;margin:0 0 6px}.roster-page>p{margin:0 0 12px;color:#555}table{width:100%;border-collapse:collapse;table-layout:fixed}thead{display:table-header-group}tr{break-inside:avoid}th,td{border:1px solid #222;padding:8px 7px;text-align:center;height:36px}th{background:#f1f3f5;font-weight:800}th:first-child,td:first-child{width:50px}th:nth-child(3),td:nth-child(3){width:90px}th:last-child,td:last-child{width:25%}.signature{height:40px}@media print{body{margin:0}}</style></head><body><section class="qr-page"><p>교육 출석 QR</p><h1>${escapeHtml(course.title || "교육")}</h1><p>${escapeHtml(formatDateTime(course.starts_at))}</p><img src="${imageUrl}" alt="교육 체크인 QR"><p>QR을 스캔한 뒤 로그인하거나 이름과 휴대전화번호를 입력해 주세요.</p><p class="note">개인정보는 교육 종료 후 6개월 이내 보관 후 익명화합니다.</p><div class="org">${escapeHtml(organizationName)}</div></section>${includeRoster ? courseCheckinRosterPrintHtml(course) : ""}<script>window.onload=()=>window.print()<\/script></body></html>`);
   popup.document.close();
 }
 
@@ -4493,6 +4525,13 @@ async function openCourseCheckinAdmin(courseId) {
     const result = await invokeCourseCheckinAdmin("admin_get", courseId);
     elements.adminNoticeBody.innerHTML = courseCheckinAdminHtml(course, result);
     window.requestAnimationFrame(renderCourseCheckinQr);
+    document.querySelector("[data-print-electronic-attendance]")?.addEventListener("click", async () => {
+      try {
+        await printElectronicAttendanceReport(course, Array.isArray(result.records) ? result.records : []);
+      } catch (error) {
+        showToast(error.message || "전자 출석확인서를 만들지 못했습니다.");
+      }
+    });
     const checkinForm = document.getElementById("courseCheckinAdminForm");
     checkinForm?.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -4767,7 +4806,7 @@ function renderAttendanceDocumentSection(courseId) {
             </div>
             <p class="muted">${escapeHtml(document.original_file_name || "스캔 파일")} · ${Math.ceil((document.file_size || 0) / 1024).toLocaleString("ko-KR")}KB</p>
             <div class="actions">
-              <button class="btn small secondary" type="button" data-open-attendance-document="${escapeHtml(document.id)}">보기</button>
+              <button class="btn small secondary" type="button" data-open-attendance-document="${escapeHtml(document.id)}">보기·재인쇄</button>
             </div>
           </div>
         `).join("") || `<div class="empty">업로드된 참석자 명단 스캔본이 없습니다.</div>`}

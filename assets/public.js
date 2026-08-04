@@ -72,6 +72,7 @@ const state = {
   user: null,
   applicantProfile: null,
   demographics: null,
+  coopLink: null,
   guestContact: null,
   guestAccessTokens: {},
   guestAccessByCourse: {},
@@ -129,6 +130,9 @@ const elements = {
   qrCheckinPartnerChoices: document.getElementById("qrCheckinPartnerChoices"),
   qrCheckinPartnerYes: document.getElementById("qrCheckinPartnerYes"),
   qrCheckinPartnerNo: document.getElementById("qrCheckinPartnerNo"),
+  qrCheckinAccount: document.getElementById("qrCheckinAccount"),
+  qrCheckinAccountName: document.getElementById("qrCheckinAccountName"),
+  qrCheckinAccountSubmit: document.getElementById("qrCheckinAccountSubmit"),
   qrCheckinForm: document.getElementById("qrCheckinForm"),
   qrCheckinName: document.getElementById("qrCheckinName"),
   qrCheckinPhone: document.getElementById("qrCheckinPhone"),
@@ -157,6 +161,7 @@ const GUEST_ACCESS_TOKEN_SESSION_KEY = "humanities-guest-access-tokens";
 const APPLICATION_CLIENT_STORAGE_KEY = "humanities-application-client-id";
 const DEMOGRAPHIC_BANNER_DISMISS_KEY = "humanities-demographic-banner-dismissed";
 const OAUTH_RETURN_STATE_KEY = "humanities-google-oauth-return";
+const COOP_LINK_START_SESSION_KEY = "humanities-coop-link-start";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 let supplementaryLoadSequence = 0;
 let supabaseClientPromise = null;
@@ -1292,6 +1297,7 @@ function clearApplicationState() {
   state.interestOptions = { instructors: [] };
   state.interestSearch = "";
   state.interestKeywordInput = "";
+  state.coopLink = null;
 }
 
 async function loadApplicationState(supabase) {
@@ -2590,6 +2596,55 @@ function renderInterestNotificationsForm() {
   `;
 }
 
+function demographicConflictDisplay(key, value) {
+  if (key === "gender") {
+    return { female: "여성", male: "남성", other: "그 외", prefer_not: "응답하고 싶지 않음" }[String(value)] || String(value || "미입력");
+  }
+  return String(value ?? "미입력");
+}
+
+function renderCoopDemographicConflicts(conflicts = {}) {
+  const entries = Object.entries(conflicts || {}).filter(([, value]) => value && typeof value === "object");
+  if (!entries.length) return "";
+  return `
+    <form id="coopDemographicConflictForm" class="section" style="margin-top: 12px;">
+      <h4>기존 입력값과 다른 선택정보가 있습니다</h4>
+      <p class="muted">현재 값은 그대로 두었습니다. 협동조합 값으로 바꿀 항목만 선택해 주세요.</p>
+      <div class="table-list">
+        ${entries.map(([key, item]) => `
+          <label class="table-row">
+            <span><input type="checkbox" name="use_partner_fields" value="${escapeHtml(key)}" style="width:auto;min-height:auto;"> <strong>${escapeHtml(item.label || key)}</strong></span>
+            <span class="muted">현재: ${escapeHtml(demographicConflictDisplay(key, item.current))}<br>협동조합: ${escapeHtml(demographicConflictDisplay(key, item.partner))}</span>
+          </label>
+        `).join("")}
+      </div>
+      <div class="actions" style="margin-top: 10px;">
+        <button class="btn small" type="submit">선택한 값으로 변경</button>
+        <button class="btn small secondary" type="button" data-keep-humanities-demographics>현재 값 유지</button>
+      </div>
+    </form>
+  `;
+}
+
+function renderCoopLinkSection() {
+  const link = state.coopLink || {};
+  return `
+    <section class="section" id="coopAccountLinkSection" style="margin-top: 14px;">
+      <div class="row-top">
+        <div>
+          <h3>용인모두의햇빛협동조합 연동</h3>
+          <p class="muted">용인모두의햇빛협동조합 조합원 정보를 연동하면 교육 신청과 QR 체크인을 더 간편하게 이용할 수 있습니다. 개인 정보는 꼭 필요한 항목에 한해 이용자의 동의 후 가져옵니다.</p>
+        </div>
+        <span class="badge ${link.linked ? "green" : "gray"}">${link.linked ? "연동됨" : "연동 안 됨"}</span>
+      </div>
+      ${link.linked
+        ? `<p class="muted">두 서비스의 로그인은 서로 분리되어 있으며, 임의 연결번호만 사용합니다. 협동조합 비밀번호나 로그인 토큰은 모두의 인문학에 저장하지 않습니다.</p>`
+        : `<div class="actions"><button class="btn small" type="button" data-start-coop-link>조합원 정보 연동하기</button></div>`}
+      ${renderCoopDemographicConflicts(link.pending_conflicts || {})}
+    </section>
+  `;
+}
+
 function openMyInfo() {
   if (!state.user) {
     openModal(elements.loginModal);
@@ -2617,6 +2672,7 @@ function openMyInfo() {
         ` : `<p class="muted">아직 저장된 신청자 정보가 없습니다. 교육을 신청하면 다음 신청 때 자동 입력됩니다.</p>`}
       </section>
     </div>
+    ${renderCoopLinkSection()}
     <section class="section" id="interestNotificationsSection" style="margin-top: 14px;">
       ${renderInterestNotificationsForm()}
     </section>
@@ -4614,7 +4670,7 @@ function startAuthMonitor() {
   async function syncAuth(supabase, session) {
     const user = session?.user || null;
     updateSessionUi(user);
-    if (user) await loadApplicationState(supabase);
+    if (user) await Promise.all([loadApplicationState(supabase), loadCoopLinkState()]);
     else clearApplicationState();
     const oauthReturnState = user ? takeOAuthReturnState() : null;
     if (oauthReturnState?.hash && window.location.hash !== oauthReturnState.hash) {
@@ -4631,6 +4687,13 @@ function startAuthMonitor() {
     }
     if (elements.profileModal.classList.contains("open") && elements.profileEyebrow.textContent === "나의 정보") {
       openMyInfo();
+    }
+    if (user) {
+      const handledLinkReturn = await processCoopAccountLinkReturn();
+      const hasCheckin = /^[0-9a-f]{64}$/.test(String(new URL(window.location.href).searchParams.get("checkin") || ""));
+      if (!handledLinkReturn && !hasCheckin && state.coopLink?.prompt_required === true) {
+        window.setTimeout(openCoopLinkPrompt, 0);
+      }
     }
   }
 
@@ -4680,6 +4743,132 @@ async function callPublicFunction(url, apiKey, payload) {
   return result;
 }
 
+async function callAuthenticatedCourseFunction(payload) {
+  const supabase = await getSupabaseClient();
+  const { data, error: sessionError } = await supabase.auth.getSession();
+  const accessToken = data.session?.access_token || "";
+  if (sessionError || !accessToken) throw new Error("로그인 상태를 확인한 뒤 다시 시도해 주세요.");
+  const response = await fetch(COURSE_CHECKIN_FUNCTION_URL, {
+    method: "POST",
+    headers: {
+      apikey: SUPABASE_PUBLISHABLE_KEY,
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || result?.ok === false) {
+    const error = new Error(result?.error || "요청을 처리하지 못했습니다.");
+    error.code = result?.code || "REQUEST_FAILED";
+    throw error;
+  }
+  return result;
+}
+
+async function loadCoopLinkState() {
+  if (!state.user) {
+    state.coopLink = null;
+    return null;
+  }
+  state.coopLink = await callAuthenticatedCourseFunction({ action: "account_link_status" });
+  return state.coopLink;
+}
+
+function openCoopLinkPrompt() {
+  if (!state.user || state.coopLink?.prompt_required !== true) return;
+  elements.profileEyebrow.textContent = "선택 안내";
+  elements.profileTitle.textContent = "혹시 용인모두의햇빛협동조합 조합원이신가요?";
+  elements.profileBody.innerHTML = `
+    <section class="section">
+      <p>용인모두의햇빛협동조합 조합원 정보를 연동하면 교육 신청과 QR 체크인을 더 간편하게 이용할 수 있습니다. 개인 정보는 꼭 필요한 항목에 한해 이용자의 동의 후 가져옵니다.</p>
+      <div class="actions" style="margin-top: 16px;">
+        <button class="btn" type="button" data-start-coop-link>예, 조합원 정보 연동하기</button>
+        <button class="btn secondary" type="button" data-decline-coop-link>아니요, 다시 물어보지 않기</button>
+      </div>
+      <p class="muted small-copy" style="margin-top: 12px;">‘아니요’를 선택해도 가입 안내를 표시하지 않습니다. 나중에 원하면 나의 정보에서 직접 연동할 수 있습니다.</p>
+    </section>
+  `;
+  openModal(elements.profileModal);
+}
+
+async function startCoopAccountLink(button = null) {
+  if (button) button.disabled = true;
+  try {
+    const result = await callAuthenticatedCourseFunction({ action: "account_link_start" });
+    if (!result.start_token || !result.member_url) throw new Error("협동조합 연동 주소를 만들지 못했습니다.");
+    window.sessionStorage.setItem(COOP_LINK_START_SESSION_KEY, result.start_token);
+    window.location.href = result.member_url;
+  } catch (error) {
+    showToast(error.message || "조합원 정보 연동을 시작하지 못했습니다.");
+    if (button) button.disabled = false;
+  }
+}
+
+async function declineCoopAccountLink(button = null) {
+  if (button) button.disabled = true;
+  try {
+    await callAuthenticatedCourseFunction({ action: "account_link_decline" });
+    await loadCoopLinkState();
+    closeModal(elements.profileModal);
+    showToast("다시 묻지 않도록 저장했습니다. 원할 때 나의 정보에서 연동할 수 있습니다.");
+  } catch (error) {
+    showToast(error.message || "선택을 저장하지 못했습니다.");
+    if (button) button.disabled = false;
+  }
+}
+
+function removeCoopLinkReturnParameters() {
+  const url = new URL(window.location.href);
+  ["coop_link_receipt", "coop_link_cancelled"].forEach((key) => url.searchParams.delete(key));
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+async function processCoopAccountLinkReturn() {
+  const url = new URL(window.location.href);
+  const receiptToken = String(url.searchParams.get("coop_link_receipt") || "").trim().toLowerCase();
+  if (url.searchParams.get("coop_link_cancelled") === "1") {
+    removeCoopLinkReturnParameters();
+    showToast("조합원 정보 연동을 취소했습니다.");
+    return true;
+  }
+  if (!/^[0-9a-f]{64}$/.test(receiptToken)) return false;
+  const startToken = String(window.sessionStorage.getItem(COOP_LINK_START_SESSION_KEY) || "").trim().toLowerCase();
+  removeCoopLinkReturnParameters();
+  if (!/^[0-9a-f]{64}$/.test(startToken)) {
+    showToast("연동 시작 정보를 찾지 못했습니다. 나의 정보에서 다시 시작해 주세요.");
+    return true;
+  }
+  try {
+    const result = await callAuthenticatedCourseFunction({
+      action: "account_link_finish", start_token: startToken, receipt_token: receiptToken,
+    });
+    window.sessionStorage.removeItem(COOP_LINK_START_SESSION_KEY);
+    await Promise.all([loadCoopLinkState(), loadApplicationState(await getSupabaseClient())]);
+    openMyInfo();
+    showToast(result.imported_fields?.length
+      ? "조합원 계정을 연동하고 동의한 선택정보를 가져왔습니다."
+      : "조합원 계정 연동을 완료했습니다.");
+  } catch (error) {
+    showToast(error.message || "조합원 계정 연동을 완료하지 못했습니다.");
+  }
+  return true;
+}
+
+async function resolveCoopDemographicConflicts(form, usePartnerFields) {
+  const submitButton = form?.querySelector("button[type='submit']");
+  if (submitButton) submitButton.disabled = true;
+  try {
+    await callAuthenticatedCourseFunction({ action: "account_link_resolve_demographics", use_partner_fields: usePartnerFields });
+    await Promise.all([loadCoopLinkState(), loadApplicationState(await getSupabaseClient())]);
+    openMyInfo();
+    showToast(usePartnerFields.length ? "선택한 협동조합 정보로 변경했습니다." : "현재 입력값을 유지했습니다.");
+  } catch (error) {
+    showToast(error.message || "선택정보 비교 결과를 저장하지 못했습니다.");
+    if (submitButton) submitButton.disabled = false;
+  }
+}
+
 function qrCheckinConsentReady() {
   if (elements.qrCheckinAge?.checked !== true) {
     setQrCheckinStatus("만 14세 이상 확인이 필요합니다.", "warning");
@@ -4694,10 +4883,51 @@ function qrCheckinConsentReady() {
   return true;
 }
 
-function showQrCheckinForm() {
+function showQrCheckinForm(forceManual = false) {
   elements.qrCheckinPartnerChoices?.classList.add("hidden");
+  elements.qrCheckinAccount?.classList.add("hidden");
+  elements.qrCheckinForm?.classList.add("hidden");
+  if (state.user && !forceManual) {
+    if (elements.qrCheckinAccountName) elements.qrCheckinAccountName.textContent = `${getReviewAuthorName(state.user)}님 로그인 정보로 출석할 수 있습니다.`;
+    elements.qrCheckinAccount?.classList.remove("hidden");
+    window.setTimeout(() => elements.qrCheckinAccountSubmit?.focus(), 0);
+    return;
+  }
   elements.qrCheckinForm?.classList.remove("hidden");
   window.setTimeout(() => elements.qrCheckinName?.focus(), 0);
+}
+
+async function handleQrAuthenticatedCheckin() {
+  if (!qrCheckinConsentReady() || elements.qrCheckinAccountSubmit?.disabled) return;
+  elements.qrCheckinAccountSubmit.disabled = true;
+  setQrCheckinStatus("로그인 정보로 출석을 기록하는 중입니다.");
+  try {
+    const result = await callAuthenticatedCourseFunction({
+      action: "authenticated_checkin",
+      qr_token: qrCheckinState.token,
+      handoff_token: qrCheckinState.partner?.linked ? (qrCheckinState.partner?.handoff_token || null) : null,
+      age_confirmed: true,
+      privacy_consent: true,
+      terms_version: QR_CHECKIN_TERMS_VERSION,
+    });
+    elements.qrCheckinConsent?.classList.add("hidden");
+    elements.qrCheckinAccount?.classList.add("hidden");
+    setQrCheckinStatus(
+      result.status === "ALREADY_RECORDED"
+        ? `“${result.title || qrCheckinState.context?.title || "교육"}”에 이미 체크인되어 있습니다.`
+        : `“${result.title || qrCheckinState.context?.title || "교육"}” 체크인이 완료되었습니다.`,
+      "success",
+    );
+  } catch (error) {
+    if (error?.code === "ACCOUNT_PROFILE_REQUIRED") {
+      setQrCheckinStatus("저장된 신청자 정보가 없어 이름과 휴대전화번호를 한 번 확인해 주세요.", "warning");
+      showQrCheckinForm(true);
+    } else {
+      setQrCheckinStatus(error?.message || "로그인 정보로 체크인을 완료하지 못했습니다.", "danger");
+    }
+  } finally {
+    if (elements.qrCheckinAccountSubmit) elements.qrCheckinAccountSubmit.disabled = false;
+  }
 }
 
 async function handleQrCheckinSubmit(event) {
@@ -4746,6 +4976,7 @@ async function initializeQrCheckin() {
   elements.qrCheckinMeta.textContent = "";
   elements.qrCheckinConsent.classList.add("hidden");
   elements.qrCheckinPartnerChoices.classList.add("hidden");
+  elements.qrCheckinAccount?.classList.add("hidden");
   elements.qrCheckinForm.classList.add("hidden");
   setQrCheckinStatus("QR 정보를 확인하고 있습니다.");
   try {
@@ -4823,6 +5054,9 @@ function bindEvents() {
     const deleteApplicationNoteButton = event.target.closest("[data-delete-application-note]");
     const deleteGuestApplicationNoteButton = event.target.closest("[data-delete-guest-application-note]");
     const deleteDemographicsButton = event.target.closest("[data-delete-demographics]");
+    const startCoopLinkButton = event.target.closest("[data-start-coop-link]");
+    const declineCoopLinkButton = event.target.closest("[data-decline-coop-link]");
+    const keepHumanitiesDemographicsButton = event.target.closest("[data-keep-humanities-demographics]");
     const openDemographicsButton = event.target.closest("[data-open-demographics]");
     const dismissDemographicsButton = event.target.closest("[data-dismiss-demographics]");
     const searchResidenceButton = event.target.closest("[data-search-residence]");
@@ -4913,6 +5147,18 @@ function bindEvents() {
     }
     if (deleteDemographicsButton) {
       handleDemographicsDelete(deleteDemographicsButton).catch((error) => showToast(`선택 정보 삭제 실패: ${error.message}`));
+      return;
+    }
+    if (startCoopLinkButton) {
+      await startCoopAccountLink(startCoopLinkButton);
+      return;
+    }
+    if (declineCoopLinkButton) {
+      await declineCoopAccountLink(declineCoopLinkButton);
+      return;
+    }
+    if (keepHumanitiesDemographicsButton) {
+      await resolveCoopDemographicConflicts(keepHumanitiesDemographicsButton.closest("form"), []);
       return;
     }
     if (openDemographicsButton) {
@@ -5009,6 +5255,11 @@ function bindEvents() {
     if (event.target.id === "applicationForm") return handleApplicationSubmit(event);
     if (event.target.id === "guestReviewAccessForm") return handleGuestReviewAccessSubmit(event);
     if (event.target.id === "demographicsForm") return handleDemographicsSubmit(event);
+    if (event.target.id === "coopDemographicConflictForm") {
+      event.preventDefault();
+      const fields = [...new FormData(event.target).getAll("use_partner_fields")].map(String);
+      return resolveCoopDemographicConflicts(event.target, fields);
+    }
     if (event.target.id === "interestNotificationsForm") return handleInterestNotificationsSubmit(event);
     if (event.target.matches("[data-course-notification-form]")) return handleCourseNotificationPreferencesSubmit(event);
     if (event.target.matches("[data-guest-course-notification-form]")) return handleGuestCourseNotificationPreferencesSubmit(event);
@@ -5063,6 +5314,7 @@ function bindEvents() {
     if (!qrCheckinConsentReady()) return;
     showQrCheckinForm();
   });
+  elements.qrCheckinAccountSubmit?.addEventListener("click", handleQrAuthenticatedCheckin);
   elements.qrCheckinPhone?.addEventListener("input", (event) => {
     const value = event.target.value.replace(/\D/g, "").slice(0, 11);
     event.target.value = value.length <= 3 ? value : value.length <= 7
@@ -5092,6 +5344,9 @@ async function initialize() {
   if (state.activePage !== "courses") {
     await ensureFullDataLoaded({ waitForSupplementary: pageNeedsSupplementaryData(state.activePage) });
   }
+  const supabase = await getSupabaseClient();
+  const sessionUser = await refreshSession(supabase);
+  if (sessionUser) await Promise.all([loadApplicationState(supabase), loadCoopLinkState()]);
   startCourseStatusMonitor();
   await openRequestedCourseFromUrl();
   await initializeQrCheckin();
