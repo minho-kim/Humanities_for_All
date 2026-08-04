@@ -112,6 +112,11 @@ const state = {
   memberSummary: null,
   operationalHealth: null,
   operationalHealthError: "",
+  notificationManagement: {
+    data: null,
+    loading: false,
+    error: "",
+  },
   formDrafts: {},
 };
 
@@ -399,7 +404,7 @@ function managedOrganizationIds() {
 
 function canAccessAdminTab(tab) {
   if (isOwner()) return true;
-  return ["dashboard", "organizations", "venues", "courses", "applications", "expectations", "archive", "feedback", "reviews", "reports"].includes(tab);
+  return ["dashboard", "organizations", "venues", "courses", "notifications", "applications", "expectations", "archive", "feedback", "reviews", "reports"].includes(tab);
 }
 
 function updateAdminNavigationVisibility() {
@@ -4054,9 +4059,108 @@ async function invokeCourseCheckinAdmin(action, courseId, payload = {}) {
   return data || {};
 }
 
+async function invokeCheckinNotificationManagement(action, payload = {}) {
+  const { data, error } = await supabase.functions.invoke("course-checkin", {
+    body: { action, ...payload },
+  });
+  if (error) {
+    let message = error.message || "알림 관리 작업을 처리하지 못했습니다.";
+    try {
+      const details = await error.context?.json();
+      if (details?.error) message = details.error;
+    } catch {}
+    throw new Error(message);
+  }
+  if (data?.ok === false) throw new Error(data.error || "알림 관리 작업을 처리하지 못했습니다.");
+  return data || {};
+}
+
+function notificationDeliveryStatusLabel(delivery) {
+  if (delivery.status === "SENT") return "발송 완료";
+  if (delivery.status === "SKIPPED" && delivery.last_error === "PARTNER_SAME_MANAGER") return "같은 담당자 · 중복 생략";
+  if (delivery.status === "SKIPPED") return "발송 생략";
+  if (delivery.status === "FAILED") return "발송 실패";
+  return "처리 중";
+}
+
+async function loadNotificationManagement({ showToastMessage = false } = {}) {
+  if (state.notificationManagement.loading) return;
+  state.notificationManagement.loading = true;
+  state.notificationManagement.error = "";
+  if (state.tab === "notifications") renderNotificationManagement();
+  try {
+    state.notificationManagement.data = await invokeCheckinNotificationManagement("admin_notification_get");
+    if (showToastMessage) showToast("Telegram 연결 상태와 발송 이력을 새로 확인했습니다.");
+  } catch (error) {
+    state.notificationManagement.error = error.message || "알림 관리 정보를 불러오지 못했습니다.";
+  } finally {
+    state.notificationManagement.loading = false;
+    if (state.tab === "notifications") renderNotificationManagement();
+  }
+}
+
+function renderNotificationManagement() {
+  const management = state.notificationManagement;
+  const data = management.data || {};
+  const profile = data.profile || {};
+  const history = Array.isArray(data.history) ? data.history : [];
+  const selectedCourses = Array.isArray(data.selected_courses) ? data.selected_courses : [];
+  if (!management.data && !management.loading && !management.error) {
+    window.setTimeout(() => loadNotificationManagement(), 0);
+  }
+  elements.adminContent.innerHTML = `
+    <div class="section-heading">
+      <div>
+        <h2>알림 관리</h2>
+        <p class="muted">개인 Telegram 연결은 여기서, 교육별 알림 방식과 담당자 선택은 교육 관리의 ‘QR 출석·알림’에서 설정합니다.</p>
+      </div>
+      <button class="btn secondary" type="button" data-refresh-notification-management ${management.loading ? "disabled" : ""}>상태 새로고침</button>
+    </div>
+    ${management.loading && !management.data ? '<div class="empty">알림 연결 상태를 불러오는 중입니다.</div>' : ""}
+    ${management.error ? `<div class="section"><p class="inline-message danger">${escapeHtml(management.error)}</p></div>` : ""}
+    <section class="section">
+      <h3>내 Telegram 연결</h3>
+      <div class="admin-search-selected">
+        <strong>${profile.telegram_active ? "연결됨" : "연결 안 됨"}</strong>
+        <span>${profile.telegram_active
+          ? `${profile.telegram_username ? `@${escapeHtml(profile.telegram_username)} · ` : ""}${escapeHtml(profile.telegram_connected_at ? formatDateTime(profile.telegram_connected_at) : "연결 시간 확인 필요")}`
+          : "연결이 어려우면 교육별 알림 방식을 문자로 선택할 수 있습니다."}</span>
+      </div>
+      <div class="actions" style="margin-top: 14px;">
+        <button class="btn" type="button" data-create-telegram-link>Telegram 연결 링크 만들기</button>
+        ${profile.telegram_active ? '<button class="btn secondary" type="button" data-test-humanities-telegram>테스트 알림 보내기</button><button class="btn danger" type="button" data-disconnect-humanities-telegram>연결 해제</button>' : ""}
+      </div>
+    </section>
+    <section class="section" style="margin-top: 14px;">
+      <h3>처음 연결하는 방법</h3>
+      <ol class="muted" style="line-height: 1.8;">
+        <li>위의 ‘Telegram 연결 링크 만들기’를 누릅니다. 링크는 10분 동안 한 번만 사용할 수 있습니다.</li>
+        <li>안내창의 ‘Telegram에서 열기’를 누르고 봇 대화에서 <strong>시작</strong> 버튼을 누릅니다.</li>
+        <li>관리자 페이지로 돌아와 ‘상태 새로고침’을 누릅니다.</li>
+        <li>교육 관리에서 교육을 열고 ‘QR 출석·알림’ → 알림 방식 ‘Telegram’ → 연결된 관리자를 선택합니다.</li>
+      </ol>
+      <p class="muted">Telegram 연결을 도저히 할 수 없는 담당자는 교육별 알림 방식을 ‘문자’로 선택하세요. 모두의 인문학 문자 계정과 협동조합 메시지 계정은 서로 공유하지 않습니다.</p>
+    </section>
+    <section class="section" style="margin-top: 14px;">
+      <h3>내가 Telegram 담당자인 교육 ${selectedCourses.length.toLocaleString()}개</h3>
+      ${selectedCourses.length ? `<div class="admin-list">${selectedCourses.map((course) => `<div class="admin-row"><div><strong>${escapeHtml(course.title || "교육")}</strong><p>${escapeHtml(formatDateTime(course.starts_at))}</p></div></div>`).join("")}</div>` : '<p class="muted">아직 내 Telegram으로 설정된 교육이 없습니다.</p>'}
+    </section>
+    <section class="section" style="margin-top: 14px;">
+      <h3>최근 체크인 알림 이력</h3>
+      ${history.length ? `<div class="admin-list">${history.map((delivery) => `
+        <div class="admin-row">
+          <div><strong>${escapeHtml(delivery.course_title || "교육")}</strong><p>${escapeHtml(delivery.channel === "TELEGRAM" ? "Telegram" : "문자")} · ${escapeHtml(formatDateTime(delivery.sent_at || delivery.created_at))}</p></div>
+          <span class="badge ${delivery.status === "SENT" ? "green" : delivery.status === "FAILED" ? "cancelled" : "gray"}">${escapeHtml(notificationDeliveryStatusLabel(delivery))}</span>
+        </div>`).join("")}</div>` : '<p class="muted">아직 내 담당 교육의 체크인 알림 이력이 없습니다.</p>'}
+    </section>
+  `;
+}
+
 function courseCheckinAdminHtml(course, result) {
   const setting = result.setting || {};
   const records = Array.isArray(result.records) ? result.records : [];
+  const notificationRecipients = Array.isArray(result.notification_recipients) ? result.notification_recipients : [];
+  const notificationChannel = setting.notification_channel || (setting.notification_enabled ? "SMS" : "OFF");
   const qrUrl = setting.qr_token ? `${PUBLIC_SITE_URL}index.html?checkin=${encodeURIComponent(setting.qr_token)}` : "";
   return `
     <form id="courseCheckinAdminForm" class="course-checkin-admin-form">
@@ -4073,13 +4177,27 @@ function courseCheckinAdminHtml(course, result) {
       </div>
       <section class="section" style="margin-top: 14px;">
         <h3>관리자 실시간 알림</h3>
-        <p class="muted">기본값은 꺼짐입니다. 협동조합 연동 교육의 Telegram 수신자는 협동조합 ERP에서 선택합니다. 그 밖의 교육은 문자 알림을 사용하세요.</p>
+        <p class="muted">기본값은 꺼짐입니다. 모두의 인문학 알림과 협동조합 ERP 알림은 서로 다른 설정과 발송 이력을 사용합니다.</p>
         <div class="admin-grid">
-          <label><span><input name="notification_enabled" type="checkbox" ${setting.notification_enabled ? "checked" : ""} style="width:auto;min-height:auto;"> 이 교육 알림 사용</span></label>
-          <div class="admin-search-selected"><strong>모두의 인문학 알림: 문자</strong><span>Telegram은 협동조합 ERP에서 해당 교육과 수신자를 연결했을 때만 사용합니다.</span></div>
+          <label>알림 방식
+            <select name="notification_channel">
+              <option value="OFF" ${notificationChannel === "OFF" ? "selected" : ""}>사용 안 함</option>
+              <option value="TELEGRAM" ${notificationChannel === "TELEGRAM" ? "selected" : ""}>Telegram</option>
+              <option value="SMS" ${notificationChannel === "SMS" ? "selected" : ""}>문자</option>
+            </select>
+          </label>
+          <label>Telegram 수신 관리자
+            <select name="notification_admin_user_id">
+              <option value="">연결된 관리자를 선택하세요</option>
+              ${notificationRecipients.map((recipient) => `<option value="${escapeHtml(recipient.user_id)}" ${String(setting.notification_admin_user_id || "") === String(recipient.user_id) ? "selected" : ""} ${recipient.telegram_connected ? "" : "disabled"}>${escapeHtml(recipient.display_name || "관리자")} · ${recipient.telegram_connected ? `연결됨${recipient.telegram_username ? ` (@${recipient.telegram_username})` : ""}` : "미연결"}</option>`).join("")}
+            </select>
+            <small>개인 Telegram 연결은 왼쪽 ‘알림 관리’ 메뉴에서 합니다.</small>
+          </label>
           <label>문자 수신자 이름<input name="notification_recipient_name" maxlength="80" value="${escapeHtml(setting.notification_recipient_name || "")}"></label>
           <label>문자 수신 전화번호<input name="notification_recipient_phone" maxlength="13" inputmode="tel" value="${escapeHtml(setting.notification_recipient_phone || "")}" placeholder="010-0000-0000"></label>
         </div>
+        <label style="margin-top: 12px;"><span><input name="partner_notification_dedup" type="checkbox" ${setting.partner_notification_dedup ? "checked" : ""} style="width:auto;min-height:auto;"> 연결된 협동조합 교육과 담당자가 같음 — 협동조합 알림이 성공하면 모두의 인문학 알림은 중복 생략</span></label>
+        <p class="muted" style="margin-top: 8px;">담당자가 다르면 체크하지 마세요. 문자 선택 시 모두의 인문학 문자 계정만 사용하며 협동조합에서는 이 계정을 사용할 수 없습니다.</p>
       </section>
       <div class="actions" style="margin-top: 14px;">
         <button class="btn" type="submit">설정 저장</button>
@@ -4142,9 +4260,11 @@ async function openCourseCheckinAdmin(courseId) {
           opens_before_minutes: Number(formData.get("opens_before_minutes") || 60),
           closes_after_minutes: Number(formData.get("closes_after_minutes") || 30),
           print_organization_name: String(formData.get("print_organization_name") || ""),
-          notification_enabled: formData.get("notification_enabled") === "on",
+          notification_channel: String(formData.get("notification_channel") || "OFF"),
+          notification_admin_user_id: String(formData.get("notification_admin_user_id") || ""),
           notification_recipient_name: String(formData.get("notification_recipient_name") || ""),
           notification_recipient_phone: String(formData.get("notification_recipient_phone") || ""),
+          partner_notification_dedup: formData.get("partner_notification_dedup") === "on",
         });
         showToast("QR 출석 설정을 저장했습니다.");
         await openCourseCheckinAdmin(courseId);
@@ -4623,6 +4743,7 @@ function render() {
   else if (state.tab === "instructors") renderInstructors();
   else if (state.tab === "venues") renderVenues();
   else if (state.tab === "courses") renderCourses();
+  else if (state.tab === "notifications") renderNotificationManagement();
   else if (state.tab === "applications") renderApplications();
   else if (state.tab === "expectations") renderExpectations();
   else if (state.tab === "archive") renderArchive();
@@ -5907,6 +6028,7 @@ async function reload() {
     state.memberSummary = null;
     state.operationalHealth = null;
     state.operationalHealthError = "";
+    state.notificationManagement = { data: null, loading: false, error: "" };
     state.organizationAdmins = [];
     state.platformAdmins = [];
     state.organizationAdminsError = "";
@@ -5978,6 +6100,71 @@ function bindEvents() {
     const closeApplicationDetailButton = event.target.closest("[data-close-application-detail]");
     const copyOrganizationUrlButton = event.target.closest("[data-copy-organization-url]");
     const openCourseCheckinButton = event.target.closest("[data-open-course-checkin]");
+    const refreshNotificationManagementButton = event.target.closest("[data-refresh-notification-management]");
+    const createTelegramLinkButton = event.target.closest("[data-create-telegram-link]");
+    const testHumanitiesTelegramButton = event.target.closest("[data-test-humanities-telegram]");
+    const disconnectHumanitiesTelegramButton = event.target.closest("[data-disconnect-humanities-telegram]");
+    if (refreshNotificationManagementButton) {
+      await loadNotificationManagement({ showToastMessage: true });
+      return;
+    }
+    if (createTelegramLinkButton) {
+      try {
+        createTelegramLinkButton.disabled = true;
+        createTelegramLinkButton.textContent = "연결 링크 만드는 중...";
+        const result = await invokeCheckinNotificationManagement("admin_notification_create_code");
+        openAdminNotice("모두의 인문학 Telegram 연결", `
+          <p>아래 버튼을 누른 뒤 Telegram 봇 대화에서 <strong>시작</strong>을 눌러 주세요.</p>
+          <p class="muted">이 링크는 ${escapeHtml(formatDateTime(result.expires_at))}까지 한 번만 사용할 수 있습니다. 다른 사람에게 전달하지 마세요.</p>
+          <div class="actions"><a class="btn" href="${escapeHtml(result.connect_url)}" target="_blank" rel="noopener">Telegram에서 열기</a></div>
+          <p class="muted" style="margin-top: 12px;">연결을 마치면 이 창을 닫고 ‘상태 새로고침’을 누르세요.</p>
+        `);
+      } catch (error) {
+        showToast(error.message || "Telegram 연결 링크를 만들지 못했습니다.");
+      } finally {
+        createTelegramLinkButton.disabled = false;
+        createTelegramLinkButton.textContent = "Telegram 연결 링크 만들기";
+      }
+      return;
+    }
+    if (testHumanitiesTelegramButton) {
+      try {
+        testHumanitiesTelegramButton.disabled = true;
+        testHumanitiesTelegramButton.textContent = "보내는 중...";
+        await invokeCheckinNotificationManagement("admin_notification_test");
+        showToast("모두의 인문학 Telegram 테스트 알림을 보냈습니다.");
+      } catch (error) {
+        showToast(error.message || "Telegram 테스트 알림을 보내지 못했습니다.");
+      } finally {
+        testHumanitiesTelegramButton.disabled = false;
+        testHumanitiesTelegramButton.textContent = "테스트 알림 보내기";
+      }
+      return;
+    }
+    if (disconnectHumanitiesTelegramButton) {
+      if (disconnectHumanitiesTelegramButton.dataset.confirmDisconnect !== "true") {
+        disconnectHumanitiesTelegramButton.dataset.confirmDisconnect = "true";
+        disconnectHumanitiesTelegramButton.textContent = "한 번 더 누르면 연결 해제";
+        window.setTimeout(() => {
+          if (disconnectHumanitiesTelegramButton.dataset.confirmDisconnect === "true") {
+            disconnectHumanitiesTelegramButton.dataset.confirmDisconnect = "false";
+            disconnectHumanitiesTelegramButton.textContent = "연결 해제";
+          }
+        }, 4000);
+        return;
+      }
+      try {
+        disconnectHumanitiesTelegramButton.disabled = true;
+        await invokeCheckinNotificationManagement("admin_notification_disconnect");
+        state.notificationManagement.data = null;
+        state.notificationManagement.error = "";
+        await loadNotificationManagement();
+        showToast("모두의 인문학 Telegram 연결을 해제했습니다.");
+      } catch (error) {
+        showToast(error.message || "Telegram 연결을 해제하지 못했습니다.");
+      }
+      return;
+    }
     if (openCourseCheckinButton) {
       await openCourseCheckinAdmin(openCourseCheckinButton.dataset.openCourseCheckin);
       return;

@@ -4714,26 +4714,13 @@ async function handleQrCheckinSubmit(event) {
     const result = await callPublicFunction(COURSE_CHECKIN_FUNCTION_URL, SUPABASE_PUBLISHABLE_KEY, {
       action: "checkin",
       qr_token: qrCheckinState.token,
+      handoff_token: qrCheckinState.partner?.linked ? (qrCheckinState.partner?.handoff_token || null) : null,
       participant_name: name,
       phone,
       age_confirmed: true,
       privacy_consent: true,
       terms_version: QR_CHECKIN_TERMS_VERSION,
     });
-    if (qrCheckinState.partner?.linked && qrCheckinState.partner?.handoff_token) {
-      try {
-        await callPublicFunction(COOP_INTEGRATION_URL, COOP_PUBLISHABLE_KEY, {
-          action: "record_general_checkin",
-          handoff_token: qrCheckinState.partner.handoff_token,
-          humanities_checkin_id: result.record_id,
-          participant_name: name,
-          phone,
-          checked_in_at: result.checked_in_at,
-        });
-      } catch (syncError) {
-        console.warn("Partner roster sync deferred", syncError?.code || syncError?.message || syncError);
-      }
-    }
     elements.qrCheckinConsent?.classList.add("hidden");
     elements.qrCheckinForm?.classList.add("hidden");
     setQrCheckinStatus(
