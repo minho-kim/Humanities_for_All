@@ -4420,6 +4420,27 @@ function printCourseCheckinDocument(course, imageUrl, organizationName, includeR
   const qrPage = rosterOnly ? "" : `<section class="qr-page"><header><p>교육 출석 QR</p><h1>${escapeHtml(course.title || "교육")}</h1></header><div class="qr-meta"><div><strong>교육일시</strong><span>${escapeHtml(formatDateTime(course.starts_at))}</span></div><div><strong>장소</strong><span>${escapeHtml(location)}</span></div></div><main><img src="${imageUrl}" alt="교육 체크인 QR"><p class="guide">휴대전화 카메라로 QR을 찍어 출석해 주세요.</p><p class="note">교육 시작 1시간 전부터 종료 1시간 후까지 사용할 수 있습니다.</p></main><footer><div class="org">${escapeHtml(organizationName)}</div><p class="note">이 QR은 위 교육의 출석 확인에만 사용됩니다.</p></footer></section>`;
   const rosterPages = includeRoster || rosterOnly ? courseCheckinRosterPrintHtml(course) : "";
   popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${rosterOnly ? "교육 출석부" : `교육 QR 체크인${includeRoster ? "·출석부" : ""}`}</title><style>@page{size:A4 portrait;margin:0}*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;color:#172033;margin:0}.qr-page{width:210mm;min-height:297mm;padding:14mm 16mm 12mm;display:flex;flex-direction:column;text-align:center;break-after:${includeRoster ? "page" : "auto"}.qr-page header{border-bottom:4px solid #15803d;padding-bottom:5mm}.qr-page header>p{margin:0 0 2mm;color:#15803d;font-size:15px;font-weight:800;letter-spacing:.08em}.qr-page h1{font-size:34px;line-height:1.25;margin:0;word-break:keep-all}.qr-meta{display:grid;grid-template-columns:1fr 1fr;gap:5mm;margin:8mm 0 3mm;text-align:left}.qr-meta>div{display:grid;grid-template-columns:24mm 1fr;gap:2mm;font-size:15px}.qr-meta strong{color:#475569}.qr-page main{display:flex;flex:1;min-height:0;flex-direction:column;align-items:center;justify-content:center}.qr-page img{width:112mm;height:112mm;padding:4mm;border:4px solid #172033}.guide{font-size:21px;font-weight:800;margin:6mm 0 2mm}.org{font-weight:850;font-size:20px}.note{color:#5d6775;font-size:13px;margin:2mm 0}.qr-page footer{border-top:1px solid #cbd5e1;padding-top:5mm}.roster-page{width:210mm;min-height:297mm;padding:14mm;text-align:left;break-before:${rosterOnly ? "auto" : "page"};break-after:page;position:relative}.roster-page:last-child{break-after:auto}.roster-page h1{font-size:30px;line-height:1.25;margin:0;text-align:center;word-break:keep-all}.roster-gap{height:8mm}.roster-heading{font-size:21px;font-weight:850;margin-bottom:4mm}.roster-meta{display:grid;grid-template-columns:1fr 1fr;gap:4mm 8mm;margin-bottom:6mm;font-size:13px}.roster-meta strong{margin-right:3mm}.roster-page table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px}.roster-page thead{display:table-header-group}.roster-page tr{break-inside:avoid}.roster-page th,.roster-page td{border:1px solid #222;padding:6px 5px;text-align:center;height:12mm}.roster-page th{background:#f1f3f5;font-weight:800;height:10mm}.roster-page th:first-child,.roster-page td:first-child{width:12mm}.roster-page th:nth-child(2),.roster-page td:nth-child(2){width:43mm}.roster-page th:nth-child(3),.roster-page td:nth-child(3){width:26mm}.roster-page th:nth-child(4),.roster-page td:nth-child(4){width:43mm}.roster-page th:last-child,.roster-page td:last-child{width:30mm}.roster-page-number{position:absolute;right:14mm;bottom:8mm;margin:0;color:#64748b;font-size:11px}.signature{height:12mm}@media print{body{margin:0}}</style></head><body>${qrPage}${rosterPages}<script>window.onload=()=>window.print()<\/script></body></html>`);
+  const rosterStyle = popup.document.createElement("style");
+  rosterStyle.textContent = `
+    @media screen {
+      body { background:#edf1f5; }
+      .qr-page, .roster-page { margin:12px auto; background:#fff; box-shadow:0 8px 28px rgba(15,23,42,.16); }
+    }
+    .roster-page { margin-left:auto; margin-right:auto; overflow:hidden; }
+    .roster-page h1, .roster-heading, .roster-meta, .roster-page th, .roster-page td {
+      word-break:keep-all;
+      overflow-wrap:anywhere;
+    }
+    .roster-meta { padding-bottom:5mm; border-bottom:2px solid #172033; }
+    .roster-page table { border:2px solid #172033; border-collapse:collapse; empty-cells:show; }
+    .roster-page th, .roster-page td { border:1px solid #172033; }
+    .roster-page tbody tr { border-bottom:1px solid #172033; }
+    @media print {
+      body { background:#fff; }
+      .qr-page, .roster-page { margin:0 auto; box-shadow:none; }
+    }
+  `;
+  popup.document.head.appendChild(rosterStyle);
   popup.document.close();
 }
 
@@ -4903,6 +4924,7 @@ function renderApplications() {
               <span>
                 <strong>${escapeHtml(courseName(group.courseId))}</strong>
                 <br><span class="muted">${escapeHtml(group.course?.starts_at ? shortDate(group.course.starts_at) : "일정 미정")} · ${escapeHtml(group.course ? (statusLabels[effectiveCourseStatus(group.course)] || effectiveCourseStatus(group.course)) : "교육 정보 확인 필요")}</span>
+                <br><span class="muted">단체 · ${escapeHtml(organizationById(group.course?.organization_id)?.name || "단체 미정")}</span>
               </span>
               <span class="actions">
                 ${applicationCountBadges(group.applications)}

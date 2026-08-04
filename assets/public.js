@@ -1824,7 +1824,7 @@ function renderLandingCoursesPage() {
   const featuredLabel = "진행 중이거나 곧 시작할 교육";
   const hasMore = featured.length < total;
   setPageHeader({
-    title: "교육 검색",
+    title: "진행 예정 교육 검색",
     description: "필요한 교육을 바로 검색하거나 아래로 내려 더 많은 교육을 둘러보세요.",
     showCourseTools: true,
     summary: hasFeatured
@@ -1860,7 +1860,7 @@ function renderCoursesPage() {
   const courses = matchingCourses.slice(0, state.visibleCourseCount);
   const organizations = publicOrganizations();
   setPageHeader({
-    title: "교육 검색",
+    title: "진행 예정 교육 검색",
     description: "관심 있는 교육을 교육명, 부제, 알림 키워드, 강사, 장소, 단체명으로 찾아보세요.",
     showCourseTools: true,
     summary: state.courses.length
