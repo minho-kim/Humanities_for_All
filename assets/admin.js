@@ -116,6 +116,7 @@ const state = {
     data: null,
     loading: false,
     error: "",
+    selectedCourseIds: [],
   },
   formDrafts: {},
 };
@@ -4083,6 +4084,47 @@ function notificationDeliveryStatusLabel(delivery) {
   return "처리 중";
 }
 
+function notificationChannelLabel(channel) {
+  if (channel === "TELEGRAM") return "Telegram";
+  if (channel === "SMS") return "문자";
+  return "알림 꺼짐";
+}
+
+function notificationManagementCourses() {
+  const courses = Array.isArray(state.notificationManagement.data?.courses)
+    ? state.notificationManagement.data.courses
+    : [];
+  return courses
+    .filter((course) => !["finished", "cancelled"].includes(effectiveCourseStatus(courseById(course.id) || course)))
+    .sort((a, b) => new Date(a.starts_at || 0) - new Date(b.starts_at || 0));
+}
+
+function notificationRecipientSummary(setting = {}) {
+  const channel = setting.notification_channel || (setting.notification_enabled ? "SMS" : "OFF");
+  if (channel === "TELEGRAM") return "연결된 관리자 Telegram";
+  if (channel === "SMS") {
+    const phone = String(setting.notification_recipient_phone || "").replace(/\D/g, "");
+    const masked = phone.length === 11 ? `${phone.slice(0, 3)}-****-${phone.slice(-4)}` : "수신번호 확인 필요";
+    return `${setting.notification_recipient_name || "문자 담당자"} · ${masked}`;
+  }
+  return "현장 실시간 알림을 보내지 않음";
+}
+
+function updateNotificationSelectionSummary() {
+  const availableIds = new Set(notificationManagementCourses().map((course) => String(course.id)));
+  state.notificationManagement.selectedCourseIds = state.notificationManagement.selectedCourseIds
+    .filter((courseId) => availableIds.has(String(courseId)));
+  const selectedIds = new Set(state.notificationManagement.selectedCourseIds);
+  document.querySelectorAll("[data-notification-course-select]").forEach((input) => {
+    input.checked = selectedIds.has(String(input.dataset.notificationCourseSelect));
+  });
+  const count = selectedIds.size;
+  const countTarget = document.querySelector("[data-notification-selected-count]");
+  if (countTarget) countTarget.textContent = count.toLocaleString();
+  const saveButton = document.querySelector("[data-save-selected-notifications]");
+  if (saveButton) saveButton.disabled = count === 0;
+}
+
 async function loadNotificationManagement({ showToastMessage = false } = {}) {
   if (state.notificationManagement.loading) return;
   state.notificationManagement.loading = true;
@@ -4090,7 +4132,10 @@ async function loadNotificationManagement({ showToastMessage = false } = {}) {
   if (state.tab === "notifications") renderNotificationManagement();
   try {
     state.notificationManagement.data = await invokeCheckinNotificationManagement("admin_notification_get");
-    if (showToastMessage) showToast("Telegram 연결 상태와 발송 이력을 새로 확인했습니다.");
+    const availableIds = new Set(notificationManagementCourses().map((course) => String(course.id)));
+    state.notificationManagement.selectedCourseIds = state.notificationManagement.selectedCourseIds
+      .filter((courseId) => availableIds.has(String(courseId)));
+    if (showToastMessage) showToast("교육별 현장 알림·QR 상태와 발송 이력을 새로 확인했습니다.");
   } catch (error) {
     state.notificationManagement.error = error.message || "알림 관리 정보를 불러오지 못했습니다.";
   } finally {
@@ -4104,7 +4149,9 @@ function renderNotificationManagement() {
   const data = management.data || {};
   const profile = data.profile || {};
   const history = Array.isArray(data.history) ? data.history : [];
-  const selectedCourses = Array.isArray(data.selected_courses) ? data.selected_courses : [];
+  const courses = notificationManagementCourses();
+  const excludedCourseCount = Math.max(0, (Array.isArray(data.courses) ? data.courses.length : 0) - courses.length);
+  const selectedIds = new Set(management.selectedCourseIds.map(String));
   if (!management.data && !management.loading && !management.error) {
     window.setTimeout(() => loadNotificationManagement(), 0);
   }
@@ -4112,12 +4159,20 @@ function renderNotificationManagement() {
     <div class="section-heading">
       <div>
         <h2>알림 관리</h2>
-        <p class="muted">개인 Telegram 연결은 여기서, 교육별 알림 방식과 담당자 선택은 교육 관리의 ‘QR 출석·알림’에서 설정합니다.</p>
+        <p class="muted">교육 전에 이 화면에서 현장 알림을 설정하고 체크인 QR 안내문을 출력할 수 있습니다.</p>
       </div>
       <button class="btn secondary" type="button" data-refresh-notification-management ${management.loading ? "disabled" : ""}>상태 새로고침</button>
     </div>
     ${management.loading && !management.data ? '<div class="empty">알림 연결 상태를 불러오는 중입니다.</div>' : ""}
     ${management.error ? `<div class="section"><p class="inline-message danger">${escapeHtml(management.error)}</p></div>` : ""}
+    <section class="section">
+      <h3>이 알림은 왜 사용하나요?</h3>
+      <div class="admin-search-selected">
+        <strong>현장 체크인이 출석으로 정상 등록됐는지 실시간으로 확인하기 위한 관리자 알림입니다.</strong>
+        <span>참가자가 QR 체크인을 마치면 교육 제목, 이름, 가린 휴대전화번호와 체크인 시간이 담당자에게 전달됩니다. 종이 명단을 바로 확인하듯 온라인 출석 등록 여부를 현장에서 확인할 수 있습니다.</span>
+      </div>
+      <p class="muted" style="margin-top: 10px;">참가자에게 보내는 신청 완료 문자가 아닙니다. Telegram 또는 문자를 선택한 교육의 담당 관리자에게만 전송됩니다.</p>
+    </section>
     <section class="section">
       <h3>내 Telegram 연결</h3>
       <div class="admin-search-selected">
@@ -4137,21 +4192,69 @@ function renderNotificationManagement() {
         <li>위의 ‘Telegram 연결 링크 만들기’를 누릅니다. 링크는 10분 동안 한 번만 사용할 수 있습니다.</li>
         <li>안내창의 ‘Telegram에서 열기’를 누르고 봇 대화에서 <strong>시작</strong> 버튼을 누릅니다.</li>
         <li>관리자 페이지로 돌아와 ‘상태 새로고침’을 누릅니다.</li>
-        <li>교육 관리에서 교육을 열고 ‘QR 출석·알림’ → 알림 방식 ‘Telegram’ → 연결된 관리자를 선택합니다.</li>
+        <li>아래 교육을 전체 또는 개별 선택하고 알림 방식 ‘Telegram’을 적용합니다.</li>
       </ol>
       <p class="muted">Telegram 연결을 도저히 할 수 없는 담당자는 교육별 알림 방식을 ‘문자’로 선택하세요. 모두의 인문학 문자 계정과 협동조합 메시지 계정은 서로 공유하지 않습니다.</p>
     </section>
     <section class="section" style="margin-top: 14px;">
-      <h3>내가 Telegram 담당자인 교육 ${selectedCourses.length.toLocaleString()}개</h3>
-      ${selectedCourses.length ? `<div class="admin-list">${selectedCourses.map((course) => `<div class="admin-row"><div><strong>${escapeHtml(course.title || "교육")}</strong><p>${escapeHtml(formatDateTime(course.starts_at))}</p></div></div>`).join("")}</div>` : '<p class="muted">아직 내 Telegram으로 설정된 교육이 없습니다.</p>'}
+      <div class="section-heading">
+        <div>
+          <h3>교육별 현장 알림·QR 준비</h3>
+          <p class="muted">현재 진행 중이거나 예정된 교육만 표시합니다.${excludedCourseCount ? ` 완료·취소 교육 ${excludedCourseCount.toLocaleString()}개는 제외했습니다.` : ""}</p>
+        </div>
+        <div class="actions">
+          <button class="btn small secondary" type="button" data-select-all-notification-courses>전체 선택</button>
+          <button class="btn small secondary" type="button" data-clear-notification-courses>전체 해제</button>
+        </div>
+      </div>
+      <form id="notificationBulkForm" class="section" style="margin-top: 12px;">
+        <p><strong>선택한 교육 <span data-notification-selected-count>${selectedIds.size.toLocaleString()}</span>개에 일괄 적용</strong></p>
+        <div class="admin-grid">
+          <label>알림 방식
+            <select name="notification_channel">
+              <option value="OFF">사용 안 함</option>
+              <option value="TELEGRAM" ${profile.telegram_active ? "" : "disabled"}>내 Telegram${profile.telegram_active ? "" : " · 연결 필요"}</option>
+              <option value="SMS">문자</option>
+            </select>
+          </label>
+          <label>문자 수신자 이름<input name="notification_recipient_name" maxlength="80" placeholder="문자를 선택할 때 입력"></label>
+          <label>문자 수신 전화번호<input name="notification_recipient_phone" maxlength="13" inputmode="tel" placeholder="010-0000-0000"></label>
+        </div>
+        <label style="margin-top: 10px;"><span><input name="partner_notification_dedup" type="checkbox" style="width:auto;min-height:auto;"> 연결된 협동조합 교육과 담당자가 같음</span></label>
+        <p class="muted" style="margin-top: 8px;">일괄 Telegram은 현재 로그인한 관리자의 연결 계정으로 설정됩니다. 다른 관리자를 지정하거나 교육마다 수신자를 다르게 하려면 해당 교육의 ‘상세 설정’을 이용하세요.</p>
+        <div class="actions" style="margin-top: 12px;"><button class="btn" type="button" data-save-selected-notifications ${selectedIds.size ? "" : "disabled"}>선택 교육에 일괄 적용</button></div>
+      </form>
+      ${courses.length ? `<div class="admin-list" style="margin-top: 14px;">${courses.map((course) => {
+        const setting = course.setting || {};
+        const channel = setting.notification_channel || (setting.notification_enabled ? "SMS" : "OFF");
+        const qrReady = setting.enabled === true && Boolean(setting.qr_token);
+        return `
+          <div class="admin-row" style="align-items:flex-start;gap:14px;">
+            <label style="display:flex;align-items:flex-start;gap:8px;flex:1;cursor:pointer;">
+              <input type="checkbox" data-notification-course-select="${escapeHtml(course.id)}" ${selectedIds.has(String(course.id)) ? "checked" : ""} style="width:auto;min-height:auto;margin-top:4px;">
+              <span>
+                <strong>${escapeHtml(course.title || "교육")}</strong>
+                <span style="display:block;">${escapeHtml(formatDateTime(course.starts_at))} · ${escapeHtml(organizationById(course.organization_id)?.name || "단체 미정")}</span>
+                <span class="muted" style="display:block;margin-top:4px;">${escapeHtml(notificationChannelLabel(channel))} · ${escapeHtml(notificationRecipientSummary(setting))}${setting.partner_notification_dedup ? " · 같은 담당자 중복 생략" : ""}</span>
+              </span>
+            </label>
+            <div>
+              <div class="badge-row" style="justify-content:flex-end;"><span class="badge ${channel === "OFF" ? "gray" : "green"}">${escapeHtml(notificationChannelLabel(channel))}</span><span class="badge ${qrReady ? "green" : "gray"}">${qrReady ? "QR 사용 중" : "QR 설정 필요"}</span></div>
+              <div class="actions" style="margin-top:8px;justify-content:flex-end;">
+                <button class="btn small secondary" type="button" data-open-course-checkin="${escapeHtml(course.id)}">상세 설정</button>
+                <button class="btn small secondary" type="button" data-print-notification-course-qr="${escapeHtml(course.id)}" ${qrReady ? "" : "disabled"}>QR 안내문 인쇄</button>
+              </div>
+            </div>
+          </div>`;
+      }).join("")}</div>` : '<div class="empty">현재 진행 중이거나 예정된 교육이 없습니다.</div>'}
     </section>
     <section class="section" style="margin-top: 14px;">
-      <h3>최근 체크인 알림 이력</h3>
+      <h3>최근 현장 체크인 알림 이력</h3>
       ${history.length ? `<div class="admin-list">${history.map((delivery) => `
         <div class="admin-row">
           <div><strong>${escapeHtml(delivery.course_title || "교육")}</strong><p>${escapeHtml(delivery.channel === "TELEGRAM" ? "Telegram" : "문자")} · ${escapeHtml(formatDateTime(delivery.sent_at || delivery.created_at))}</p></div>
           <span class="badge ${delivery.status === "SENT" ? "green" : delivery.status === "FAILED" ? "cancelled" : "gray"}">${escapeHtml(notificationDeliveryStatusLabel(delivery))}</span>
-        </div>`).join("")}</div>` : '<p class="muted">아직 내 담당 교육의 체크인 알림 이력이 없습니다.</p>'}
+        </div>`).join("")}</div>` : '<p class="muted">아직 담당 범위의 체크인 알림 이력이 없습니다.</p>'}
     </section>
   `;
 }
@@ -4231,16 +4334,50 @@ function renderCourseCheckinQr() {
   new window.QRCode(target, { text: target.dataset.qrUrl, width: 190, height: 190, correctLevel: window.QRCode.CorrectLevel.H });
 }
 
-function printCourseCheckinQr(course) {
-  const target = document.getElementById("courseCheckinQrCode");
-  const imageUrl = target?.querySelector("canvas")?.toDataURL("image/png") || target?.querySelector("img")?.src || "";
-  if (!imageUrl) throw new Error("QR 이미지를 아직 만들지 못했습니다.");
-  const form = document.getElementById("courseCheckinAdminForm");
-  const organizationName = String(new FormData(form).get("print_organization_name") || "모두의 인문학").trim();
+function courseCheckinQrImage(qrUrl) {
+  if (!qrUrl || typeof window.QRCode !== "function") throw new Error("QR 이미지를 만들 수 없습니다.");
+  const target = document.createElement("div");
+  target.style.position = "fixed";
+  target.style.left = "-10000px";
+  target.style.top = "0";
+  document.body.appendChild(target);
+  try {
+    new window.QRCode(target, { text: qrUrl, width: 560, height: 560, correctLevel: window.QRCode.CorrectLevel.H });
+    const imageUrl = target.querySelector("canvas")?.toDataURL("image/png") || target.querySelector("img")?.src || "";
+    if (!imageUrl) throw new Error("QR 이미지를 아직 만들지 못했습니다.");
+    return imageUrl;
+  } finally {
+    target.remove();
+  }
+}
+
+function printCourseCheckinDocument(course, imageUrl, organizationName) {
   const popup = window.open("", "humanities-course-checkin-print", "width=820,height=980");
   if (!popup) throw new Error("인쇄 창이 차단되었습니다. 팝업을 허용해 주세요.");
   popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>교육 QR 체크인</title><style>@page{size:A4;margin:18mm}body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;text-align:center;color:#172033}h1{font-size:30px;margin:42px 0 18px}p{font-size:18px;line-height:1.6}img{width:420px;height:420px;margin:28px auto 18px}.org{margin-top:42px;font-weight:800;font-size:22px}.note{color:#5d6775;font-size:15px}</style></head><body><p>교육 출석 QR</p><h1>${escapeHtml(course.title || "교육")}</h1><p>${escapeHtml(formatDateTime(course.starts_at))}</p><img src="${imageUrl}" alt="교육 체크인 QR"><p>QR을 스캔하고 이름과 휴대전화번호를 입력해 주세요.</p><p class="note">개인정보는 교육 종료 후 6개월 이내 보관 후 익명화합니다.</p><div class="org">${escapeHtml(organizationName)}</div><script>window.onload=()=>window.print()<\/script></body></html>`);
   popup.document.close();
+}
+
+function printCourseCheckinQr(course) {
+  const target = document.getElementById("courseCheckinQrCode");
+  const qrUrl = target?.dataset.qrUrl || "";
+  const form = document.getElementById("courseCheckinAdminForm");
+  const organizationName = String(new FormData(form).get("print_organization_name") || "모두의 인문학").trim();
+  printCourseCheckinDocument(course, courseCheckinQrImage(qrUrl), organizationName);
+}
+
+function printNotificationManagementCourseQr(courseId) {
+  const course = notificationManagementCourses().find((item) => String(item.id) === String(courseId));
+  const setting = course?.setting || {};
+  if (!course || setting.enabled !== true || !setting.qr_token) {
+    throw new Error("먼저 이 교육의 상세 설정에서 QR 체크인 사용을 켜고 저장해 주세요.");
+  }
+  const qrUrl = `${PUBLIC_SITE_URL}index.html?checkin=${encodeURIComponent(setting.qr_token)}`;
+  printCourseCheckinDocument(
+    courseById(course.id) || course,
+    courseCheckinQrImage(qrUrl),
+    String(setting.print_organization_name || "모두의 인문학").trim(),
+  );
 }
 
 async function openCourseCheckinAdmin(courseId) {
@@ -4267,6 +4404,7 @@ async function openCourseCheckinAdmin(courseId) {
           partner_notification_dedup: formData.get("partner_notification_dedup") === "on",
         });
         showToast("QR 출석 설정을 저장했습니다.");
+        if (state.tab === "notifications") await loadNotificationManagement();
         await openCourseCheckinAdmin(courseId);
       } catch (error) { showToast(error.message); }
     });
@@ -4274,6 +4412,7 @@ async function openCourseCheckinAdmin(courseId) {
       try {
         await invokeCourseCheckinAdmin("admin_rotate", courseId);
         showToast("새 QR을 만들었습니다. 기존 QR은 즉시 사용할 수 없습니다.");
+        if (state.tab === "notifications") await loadNotificationManagement();
         await openCourseCheckinAdmin(courseId);
       } catch (error) { showToast(error.message); }
     });
@@ -6028,7 +6167,7 @@ async function reload() {
     state.memberSummary = null;
     state.operationalHealth = null;
     state.operationalHealthError = "";
-    state.notificationManagement = { data: null, loading: false, error: "" };
+    state.notificationManagement = { data: null, loading: false, error: "", selectedCourseIds: [] };
     state.organizationAdmins = [];
     state.platformAdmins = [];
     state.organizationAdminsError = "";
@@ -6104,6 +6243,61 @@ function bindEvents() {
     const createTelegramLinkButton = event.target.closest("[data-create-telegram-link]");
     const testHumanitiesTelegramButton = event.target.closest("[data-test-humanities-telegram]");
     const disconnectHumanitiesTelegramButton = event.target.closest("[data-disconnect-humanities-telegram]");
+    const selectAllNotificationCoursesButton = event.target.closest("[data-select-all-notification-courses]");
+    const clearNotificationCoursesButton = event.target.closest("[data-clear-notification-courses]");
+    const notificationCourseSelect = event.target.closest("[data-notification-course-select]");
+    const saveSelectedNotificationsButton = event.target.closest("[data-save-selected-notifications]");
+    const printNotificationCourseQrButton = event.target.closest("[data-print-notification-course-qr]");
+    if (selectAllNotificationCoursesButton) {
+      state.notificationManagement.selectedCourseIds = notificationManagementCourses().map((course) => String(course.id));
+      updateNotificationSelectionSummary();
+      return;
+    }
+    if (clearNotificationCoursesButton) {
+      state.notificationManagement.selectedCourseIds = [];
+      updateNotificationSelectionSummary();
+      return;
+    }
+    if (notificationCourseSelect) {
+      const selectedIds = new Set(state.notificationManagement.selectedCourseIds.map(String));
+      const courseId = String(notificationCourseSelect.dataset.notificationCourseSelect || "");
+      if (notificationCourseSelect.checked) selectedIds.add(courseId);
+      else selectedIds.delete(courseId);
+      state.notificationManagement.selectedCourseIds = [...selectedIds];
+      updateNotificationSelectionSummary();
+      return;
+    }
+    if (saveSelectedNotificationsButton) {
+      const form = document.getElementById("notificationBulkForm");
+      try {
+        if (!(form instanceof HTMLFormElement)) throw new Error("일괄 알림 설정 화면을 다시 열어 주세요.");
+        const formData = new FormData(form);
+        saveSelectedNotificationsButton.disabled = true;
+        saveSelectedNotificationsButton.textContent = "적용 중...";
+        const result = await invokeCheckinNotificationManagement("admin_notification_bulk_save", {
+          course_ids: state.notificationManagement.selectedCourseIds,
+          notification_channel: String(formData.get("notification_channel") || "OFF"),
+          notification_recipient_name: String(formData.get("notification_recipient_name") || ""),
+          notification_recipient_phone: String(formData.get("notification_recipient_phone") || ""),
+          partner_notification_dedup: formData.get("partner_notification_dedup") === "on",
+        });
+        await loadNotificationManagement();
+        showToast(`교육 ${Number(result.updated_count || 0).toLocaleString()}개의 현장 알림 설정을 적용했습니다.`);
+      } catch (error) {
+        showToast(error.message || "선택 교육의 알림 설정을 적용하지 못했습니다.");
+        saveSelectedNotificationsButton.disabled = false;
+        saveSelectedNotificationsButton.textContent = "선택 교육에 일괄 적용";
+      }
+      return;
+    }
+    if (printNotificationCourseQrButton) {
+      try {
+        printNotificationManagementCourseQr(printNotificationCourseQrButton.dataset.printNotificationCourseQr);
+      } catch (error) {
+        showToast(error.message || "QR 안내문을 인쇄하지 못했습니다.");
+      }
+      return;
+    }
     if (refreshNotificationManagementButton) {
       await loadNotificationManagement({ showToastMessage: true });
       return;
