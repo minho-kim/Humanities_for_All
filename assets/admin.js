@@ -117,6 +117,8 @@ const state = {
     loading: false,
     error: "",
     selectedCourseIds: [],
+    organizationId: "",
+    sortBy: "date",
   },
   formDrafts: {},
 };
@@ -4096,7 +4098,28 @@ function notificationManagementCourses() {
     : [];
   return courses
     .filter((course) => !["finished", "cancelled"].includes(effectiveCourseStatus(courseById(course.id) || course)))
-    .sort((a, b) => new Date(a.starts_at || 0) - new Date(b.starts_at || 0));
+    .filter((course) => !state.notificationManagement.organizationId
+      || String(course.organization_id || "") === String(state.notificationManagement.organizationId))
+    .sort((a, b) => {
+      if (state.notificationManagement.sortBy === "organization") {
+        const organizationCompare = rosterNameSorter.compare(
+          organizationById(a.organization_id)?.name || "단체 미정",
+          organizationById(b.organization_id)?.name || "단체 미정",
+        );
+        if (organizationCompare !== 0) return organizationCompare;
+      }
+      return new Date(a.starts_at || 0) - new Date(b.starts_at || 0);
+    });
+}
+
+function notificationManagementOrganizations() {
+  const courses = Array.isArray(state.notificationManagement.data?.courses)
+    ? state.notificationManagement.data.courses
+    : [];
+  const organizationIds = [...new Set(courses.map((course) => String(course.organization_id || "")).filter(Boolean))];
+  return organizationIds
+    .map((organizationId) => ({ id: organizationId, name: organizationById(organizationId)?.name || "단체 미정" }))
+    .sort((a, b) => rosterNameSorter.compare(a.name, b.name));
 }
 
 function notificationRecipientSummary(setting = {}) {
@@ -4105,9 +4128,28 @@ function notificationRecipientSummary(setting = {}) {
   if (channel === "SMS") {
     const phone = String(setting.notification_recipient_phone || "").replace(/\D/g, "");
     const masked = phone.length === 11 ? `${phone.slice(0, 3)}-****-${phone.slice(-4)}` : "수신번호 확인 필요";
-    return `${setting.notification_recipient_name || "문자 담당자"} · ${masked}`;
+    return masked;
   }
   return "현장 실시간 알림을 보내지 않음";
+}
+
+function syncNotificationChannelFields(scope) {
+  if (!(scope instanceof HTMLElement)) return;
+  const channel = String(scope.querySelector('[name="notification_channel"]')?.value || "OFF");
+  scope.querySelectorAll("[data-notification-telegram-fields]").forEach((element) => {
+    element.hidden = channel !== "TELEGRAM";
+    element.querySelectorAll("select,input").forEach((input) => {
+      input.disabled = channel !== "TELEGRAM";
+      if (input.name === "notification_admin_user_id") input.required = channel === "TELEGRAM";
+    });
+  });
+  scope.querySelectorAll("[data-notification-sms-fields]").forEach((element) => {
+    element.hidden = channel !== "SMS";
+    element.querySelectorAll("input").forEach((input) => {
+      input.disabled = channel !== "SMS";
+      if (input.name === "notification_recipient_phone") input.required = channel === "SMS";
+    });
+  });
 }
 
 function updateNotificationSelectionSummary() {
@@ -4149,8 +4191,11 @@ function renderNotificationManagement() {
   const data = management.data || {};
   const profile = data.profile || {};
   const history = Array.isArray(data.history) ? data.history : [];
+  const allCourses = (Array.isArray(data.courses) ? data.courses : [])
+    .filter((course) => !["finished", "cancelled"].includes(effectiveCourseStatus(courseById(course.id) || course)));
   const courses = notificationManagementCourses();
-  const excludedCourseCount = Math.max(0, (Array.isArray(data.courses) ? data.courses.length : 0) - courses.length);
+  const organizations = notificationManagementOrganizations();
+  const excludedCourseCount = Math.max(0, (Array.isArray(data.courses) ? data.courses.length : 0) - allCourses.length);
   const selectedIds = new Set(management.selectedCourseIds.map(String));
   if (!management.data && !management.loading && !management.error) {
     window.setTimeout(() => loadNotificationManagement(), 0);
@@ -4200,12 +4245,26 @@ function renderNotificationManagement() {
       <div class="section-heading">
         <div>
           <h3>교육별 현장 알림·QR 준비</h3>
-          <p class="muted">현재 진행 중이거나 예정된 교육만 표시합니다.${excludedCourseCount ? ` 완료·취소 교육 ${excludedCourseCount.toLocaleString()}개는 제외했습니다.` : ""}</p>
+          <p class="muted">현재 진행 중이거나 예정된 교육 ${allCourses.length.toLocaleString()}개 중 ${courses.length.toLocaleString()}개를 표시합니다.${excludedCourseCount ? ` 완료·취소 교육 ${excludedCourseCount.toLocaleString()}개는 제외했습니다.` : ""}</p>
         </div>
         <div class="actions">
           <button class="btn small secondary" type="button" data-select-all-notification-courses>전체 선택</button>
           <button class="btn small secondary" type="button" data-clear-notification-courses>전체 해제</button>
         </div>
+      </div>
+      <div class="notification-course-toolbar" aria-label="교육 목록 정렬과 필터">
+        <label>단체
+          <select data-notification-organization-filter>
+            <option value="">전체 단체</option>
+            ${organizations.map((organization) => `<option value="${escapeHtml(organization.id)}" ${String(management.organizationId || "") === String(organization.id) ? "selected" : ""}>${escapeHtml(organization.name)}</option>`).join("")}
+          </select>
+        </label>
+        <label>정렬
+          <select data-notification-sort>
+            <option value="date" ${management.sortBy === "date" ? "selected" : ""}>가까운 일정순</option>
+            <option value="organization" ${management.sortBy === "organization" ? "selected" : ""}>단체명순</option>
+          </select>
+        </label>
       </div>
       <form id="notificationBulkForm" class="section" style="margin-top: 12px;">
         <p><strong>선택한 교육 <span data-notification-selected-count>${selectedIds.size.toLocaleString()}</span>개에 일괄 적용</strong></p>
@@ -4217,36 +4276,35 @@ function renderNotificationManagement() {
               <option value="SMS">문자</option>
             </select>
           </label>
-          <label>문자 수신자 이름<input name="notification_recipient_name" maxlength="80" placeholder="문자를 선택할 때 입력"></label>
-          <label>문자 수신 전화번호<input name="notification_recipient_phone" maxlength="13" inputmode="tel" placeholder="010-0000-0000"></label>
+          <label data-notification-sms-fields hidden>문자 수신 전화번호<input name="notification_recipient_phone" maxlength="13" inputmode="tel" placeholder="010-0000-0000"></label>
         </div>
         <label style="margin-top: 10px;"><span><input name="partner_notification_dedup" type="checkbox" style="width:auto;min-height:auto;"> 연결된 협동조합 교육과 담당자가 같음</span></label>
         <p class="muted" style="margin-top: 8px;">일괄 Telegram은 현재 로그인한 관리자의 연결 계정으로 설정됩니다. 다른 관리자를 지정하거나 교육마다 수신자를 다르게 하려면 해당 교육의 ‘상세 설정’을 이용하세요.</p>
         <div class="actions" style="margin-top: 12px;"><button class="btn" type="button" data-save-selected-notifications ${selectedIds.size ? "" : "disabled"}>선택 교육에 일괄 적용</button></div>
       </form>
-      ${courses.length ? `<div class="admin-list" style="margin-top: 14px;">${courses.map((course) => {
+      ${courses.length ? `<div class="notification-course-list" style="margin-top: 14px;">${courses.map((course) => {
         const setting = course.setting || {};
         const channel = setting.notification_channel || (setting.notification_enabled ? "SMS" : "OFF");
         const qrReady = setting.enabled === true && Boolean(setting.qr_token);
         return `
-          <div class="admin-row" style="align-items:flex-start;gap:14px;">
-            <label style="display:flex;align-items:flex-start;gap:8px;flex:1;cursor:pointer;">
-              <input type="checkbox" data-notification-course-select="${escapeHtml(course.id)}" ${selectedIds.has(String(course.id)) ? "checked" : ""} style="width:auto;min-height:auto;margin-top:4px;">
-              <span>
+          <article class="notification-course-row">
+            <label class="notification-course-select">
+              <input type="checkbox" data-notification-course-select="${escapeHtml(course.id)}" ${selectedIds.has(String(course.id)) ? "checked" : ""}>
+              <span class="notification-course-copy">
                 <strong>${escapeHtml(course.title || "교육")}</strong>
                 <span style="display:block;">${escapeHtml(formatDateTime(course.starts_at))} · ${escapeHtml(organizationById(course.organization_id)?.name || "단체 미정")}</span>
                 <span class="muted" style="display:block;margin-top:4px;">${escapeHtml(notificationChannelLabel(channel))} · ${escapeHtml(notificationRecipientSummary(setting))}${setting.partner_notification_dedup ? " · 같은 담당자 중복 생략" : ""}</span>
               </span>
             </label>
-            <div>
-              <div class="badge-row" style="justify-content:flex-end;"><span class="badge ${channel === "OFF" ? "gray" : "green"}">${escapeHtml(notificationChannelLabel(channel))}</span><span class="badge ${qrReady ? "green" : "gray"}">${qrReady ? "QR 사용 중" : "QR 설정 필요"}</span></div>
-              <div class="actions" style="margin-top:8px;justify-content:flex-end;">
+            <div class="notification-course-actions">
+              <div class="badge-row"><span class="badge ${channel === "OFF" ? "gray" : "green"}">${escapeHtml(notificationChannelLabel(channel))}</span><span class="badge ${qrReady ? "green" : "gray"}">${qrReady ? "QR 사용 중" : "QR 설정 필요"}</span></div>
+              <div class="actions">
                 <button class="btn small secondary" type="button" data-open-course-checkin="${escapeHtml(course.id)}">상세 설정</button>
                 <button class="btn small secondary" type="button" data-print-notification-course-qr="${escapeHtml(course.id)}" ${qrReady ? "" : "disabled"}>QR 안내문 인쇄</button>
               </div>
             </div>
-          </div>`;
-      }).join("")}</div>` : '<div class="empty">현재 진행 중이거나 예정된 교육이 없습니다.</div>'}
+          </article>`;
+      }).join("")}</div>` : '<div class="empty">현재 조건에 맞는 진행 중·예정 교육이 없습니다.</div>'}
     </section>
     <section class="section" style="margin-top: 14px;">
       <h3>최근 현장 체크인 알림 이력</h3>
@@ -4257,6 +4315,7 @@ function renderNotificationManagement() {
         </div>`).join("")}</div>` : '<p class="muted">아직 담당 범위의 체크인 알림 이력이 없습니다.</p>'}
     </section>
   `;
+  window.requestAnimationFrame(() => syncNotificationChannelFields(document.getElementById("notificationBulkForm")));
 }
 
 function courseCheckinAdminHtml(course, result) {
@@ -4280,7 +4339,7 @@ function courseCheckinAdminHtml(course, result) {
       </div>
       <section class="section" style="margin-top: 14px;">
         <h3>관리자 실시간 알림</h3>
-        <p class="muted">기본값은 꺼짐입니다. 모두의 인문학 알림과 협동조합 ERP 알림은 서로 다른 설정과 발송 이력을 사용합니다.</p>
+        <p class="muted">Telegram을 선택하면 연결된 관리자만 고르면 되며 이름이나 전화번호를 입력하지 않습니다. Telegram을 연결하기 어려운 경우에만 문자를 선택하고 받을 전화번호를 입력하세요.</p>
         <div class="admin-grid">
           <label>알림 방식
             <select name="notification_channel">
@@ -4289,22 +4348,21 @@ function courseCheckinAdminHtml(course, result) {
               <option value="SMS" ${notificationChannel === "SMS" ? "selected" : ""}>문자</option>
             </select>
           </label>
-          <label>Telegram 수신 관리자
+          <label data-notification-telegram-fields hidden>Telegram 수신 관리자
             <select name="notification_admin_user_id">
               <option value="">연결된 관리자를 선택하세요</option>
               ${notificationRecipients.map((recipient) => `<option value="${escapeHtml(recipient.user_id)}" ${String(setting.notification_admin_user_id || "") === String(recipient.user_id) ? "selected" : ""} ${recipient.telegram_connected ? "" : "disabled"}>${escapeHtml(recipient.display_name || "관리자")} · ${recipient.telegram_connected ? `연결됨${recipient.telegram_username ? ` (@${recipient.telegram_username})` : ""}` : "미연결"}</option>`).join("")}
             </select>
             <small>개인 Telegram 연결은 왼쪽 ‘알림 관리’ 메뉴에서 합니다.</small>
           </label>
-          <label>문자 수신자 이름<input name="notification_recipient_name" maxlength="80" value="${escapeHtml(setting.notification_recipient_name || "")}"></label>
-          <label>문자 수신 전화번호<input name="notification_recipient_phone" maxlength="13" inputmode="tel" value="${escapeHtml(setting.notification_recipient_phone || "")}" placeholder="010-0000-0000"></label>
+          <label data-notification-sms-fields hidden>문자 수신 전화번호<input name="notification_recipient_phone" maxlength="13" inputmode="tel" value="${escapeHtml(setting.notification_recipient_phone || "")}" placeholder="010-0000-0000"></label>
         </div>
         <label style="margin-top: 12px;"><span><input name="partner_notification_dedup" type="checkbox" ${setting.partner_notification_dedup ? "checked" : ""} style="width:auto;min-height:auto;"> 연결된 협동조합 교육과 담당자가 같음 — 협동조합 알림이 성공하면 모두의 인문학 알림은 중복 생략</span></label>
         <p class="muted" style="margin-top: 8px;">담당자가 다르면 체크하지 마세요. 문자 선택 시 모두의 인문학 문자 계정만 사용하며 협동조합에서는 이 계정을 사용할 수 없습니다.</p>
       </section>
       <div class="actions" style="margin-top: 14px;">
         <button class="btn" type="submit">설정 저장</button>
-        ${qrUrl ? '<button class="btn secondary" type="button" data-rotate-course-checkin>새 QR 만들기</button><button class="btn secondary" type="button" data-print-course-checkin>QR 안내문 인쇄</button>' : ""}
+        ${qrUrl ? '<button class="btn secondary" type="button" data-rotate-course-checkin>새 QR 만들기</button><button class="btn secondary" type="button" data-print-course-checkin>인쇄 문서 선택</button>' : ""}
       </div>
     </form>
     <section class="section" style="margin-top: 16px;">
@@ -4351,22 +4409,35 @@ function courseCheckinQrImage(qrUrl) {
   }
 }
 
-function printCourseCheckinDocument(course, imageUrl, organizationName) {
+function courseCheckinRosterPrintHtml(course) {
+  const applications = activeApplications()
+    .filter((application) => application.course_id === course.id)
+    .slice()
+    .sort(compareRosterApplications);
+  const totalRowCount = Math.max(30, applications.length + 10);
+  const rows = Array.from({ length: totalRowCount }, (_, index) => {
+    const application = applications[index];
+    return `<tr><td>${index + 1}</td><td>${escapeHtml(application?.applicant_name || "")}</td><td>${escapeHtml(phoneLastFour(application?.phone))}</td><td class="signature"></td></tr>`;
+  }).join("");
+  return `<section class="roster-page"><h1>${escapeHtml(course.title || "교육")} 출석부</h1><p>${escapeHtml(course?.starts_at ? shortDate(course.starts_at) : "일정 미정")} · 신청자 ${applications.length.toLocaleString()}명 · 현장 기입 포함 ${totalRowCount.toLocaleString()}칸</p><table><thead><tr><th>번호</th><th>성명</th><th>본인확인</th><th>서명</th></tr></thead><tbody>${rows}</tbody></table></section>`;
+}
+
+function printCourseCheckinDocument(course, imageUrl, organizationName, includeRoster = false) {
   const popup = window.open("", "humanities-course-checkin-print", "width=820,height=980");
   if (!popup) throw new Error("인쇄 창이 차단되었습니다. 팝업을 허용해 주세요.");
-  popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>교육 QR 체크인</title><style>@page{size:A4;margin:18mm}body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;text-align:center;color:#172033}h1{font-size:30px;margin:42px 0 18px}p{font-size:18px;line-height:1.6}img{width:420px;height:420px;margin:28px auto 18px}.org{margin-top:42px;font-weight:800;font-size:22px}.note{color:#5d6775;font-size:15px}</style></head><body><p>교육 출석 QR</p><h1>${escapeHtml(course.title || "교육")}</h1><p>${escapeHtml(formatDateTime(course.starts_at))}</p><img src="${imageUrl}" alt="교육 체크인 QR"><p>QR을 스캔하고 이름과 휴대전화번호를 입력해 주세요.</p><p class="note">개인정보는 교육 종료 후 6개월 이내 보관 후 익명화합니다.</p><div class="org">${escapeHtml(organizationName)}</div><script>window.onload=()=>window.print()<\/script></body></html>`);
+  popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>교육 QR 체크인${includeRoster ? "·출석부" : ""}</title><style>@page{size:A4;margin:14mm}*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;color:#172033;margin:0}.qr-page{text-align:center;min-height:260mm;break-after:${includeRoster ? "page" : "auto"}}.qr-page h1{font-size:30px;margin:36px 0 16px}.qr-page p{font-size:18px;line-height:1.55;margin:8px 0}.qr-page img{width:400px;height:400px;margin:24px auto 16px}.org{margin-top:34px;font-weight:800;font-size:22px}.note{color:#5d6775!important;font-size:14px!important}.roster-page{break-before:page;text-align:left}.roster-page h1{font-size:22px;margin:0 0 6px}.roster-page>p{margin:0 0 12px;color:#555}table{width:100%;border-collapse:collapse;table-layout:fixed}thead{display:table-header-group}tr{break-inside:avoid}th,td{border:1px solid #222;padding:8px 7px;text-align:center;height:36px}th{background:#f1f3f5;font-weight:800}th:first-child,td:first-child{width:50px}th:nth-child(3),td:nth-child(3){width:90px}th:last-child,td:last-child{width:25%}.signature{height:40px}@media print{body{margin:0}}</style></head><body><section class="qr-page"><p>교육 출석 QR</p><h1>${escapeHtml(course.title || "교육")}</h1><p>${escapeHtml(formatDateTime(course.starts_at))}</p><img src="${imageUrl}" alt="교육 체크인 QR"><p>QR을 스캔하고 이름과 휴대전화번호를 입력해 주세요.</p><p class="note">개인정보는 교육 종료 후 6개월 이내 보관 후 익명화합니다.</p><div class="org">${escapeHtml(organizationName)}</div></section>${includeRoster ? courseCheckinRosterPrintHtml(course) : ""}<script>window.onload=()=>window.print()<\/script></body></html>`);
   popup.document.close();
 }
 
-function printCourseCheckinQr(course) {
+function printCourseCheckinQr(course, includeRoster = false) {
   const target = document.getElementById("courseCheckinQrCode");
   const qrUrl = target?.dataset.qrUrl || "";
   const form = document.getElementById("courseCheckinAdminForm");
   const organizationName = String(new FormData(form).get("print_organization_name") || "모두의 인문학").trim();
-  printCourseCheckinDocument(course, courseCheckinQrImage(qrUrl), organizationName);
+  printCourseCheckinDocument(course, courseCheckinQrImage(qrUrl), organizationName, includeRoster);
 }
 
-function printNotificationManagementCourseQr(courseId) {
+function printNotificationManagementCourseQr(courseId, includeRoster = false) {
   const course = notificationManagementCourses().find((item) => String(item.id) === String(courseId));
   const setting = course?.setting || {};
   if (!course || setting.enabled !== true || !setting.qr_token) {
@@ -4377,7 +4448,41 @@ function printNotificationManagementCourseQr(courseId) {
     courseById(course.id) || course,
     courseCheckinQrImage(qrUrl),
     String(setting.print_organization_name || "모두의 인문학").trim(),
+    includeRoster,
   );
+}
+
+function openCourseCheckinPrintChoice(courseId, source = "management") {
+  const course = courseById(courseId) || notificationManagementCourses().find((item) => String(item.id) === String(courseId));
+  if (!course) throw new Error("인쇄할 교육을 찾지 못했습니다.");
+  const detailQrUrl = source === "detail" ? String(document.getElementById("courseCheckinQrCode")?.dataset.qrUrl || "") : "";
+  const detailForm = source === "detail" ? document.getElementById("courseCheckinAdminForm") : null;
+  const detailOrganizationName = detailForm instanceof HTMLFormElement
+    ? String(new FormData(detailForm).get("print_organization_name") || "모두의 인문학").trim()
+    : "모두의 인문학";
+  if (source === "detail" && !detailQrUrl) throw new Error("인쇄할 QR을 찾지 못했습니다.");
+  openAdminNotice("QR·출석부 인쇄", `
+    <div class="admin-search-selected"><strong>${escapeHtml(course.title || "교육")}</strong><span>${escapeHtml(formatDateTime(course.starts_at))}</span></div>
+    <p style="margin-top:14px;">체크인 QR 안내문만 인쇄할까요, 종이 출석부도 이어서 인쇄할까요?</p>
+    <p class="muted">출석부에는 신청자 이름과 휴대전화번호 마지막 4자리만 표시하고 현장 기입칸을 추가합니다.</p>
+    <div class="actions" style="margin-top:16px;">
+      <button class="btn secondary" type="button" data-confirm-course-print="qr">QR만 인쇄</button>
+      <button class="btn" type="button" data-confirm-course-print="bundle">QR + 출석부 인쇄</button>
+    </div>
+  `);
+  document.querySelectorAll("[data-confirm-course-print]").forEach((button) => {
+    button.addEventListener("click", () => {
+      try {
+        const includeRoster = button.dataset.confirmCoursePrint === "bundle";
+        if (source === "detail") {
+          printCourseCheckinDocument(course, courseCheckinQrImage(detailQrUrl), detailOrganizationName, includeRoster);
+        }
+        else printNotificationManagementCourseQr(courseId, includeRoster);
+      } catch (error) {
+        showToast(error.message || "인쇄 문서를 만들지 못했습니다.");
+      }
+    });
+  });
 }
 
 async function openCourseCheckinAdmin(courseId) {
@@ -4388,7 +4493,9 @@ async function openCourseCheckinAdmin(courseId) {
     const result = await invokeCourseCheckinAdmin("admin_get", courseId);
     elements.adminNoticeBody.innerHTML = courseCheckinAdminHtml(course, result);
     window.requestAnimationFrame(renderCourseCheckinQr);
-    document.getElementById("courseCheckinAdminForm")?.addEventListener("submit", async (event) => {
+    const checkinForm = document.getElementById("courseCheckinAdminForm");
+    syncNotificationChannelFields(checkinForm);
+    checkinForm?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const formData = new FormData(event.currentTarget);
       try {
@@ -4417,7 +4524,7 @@ async function openCourseCheckinAdmin(courseId) {
       } catch (error) { showToast(error.message); }
     });
     document.querySelector("[data-print-course-checkin]")?.addEventListener("click", () => {
-      try { printCourseCheckinQr(course); } catch (error) { showToast(error.message); }
+      try { openCourseCheckinPrintChoice(courseId, "detail"); } catch (error) { showToast(error.message); }
     });
   } catch (error) {
     elements.adminNoticeBody.innerHTML = `<p class="muted">${escapeHtml(error.message)}</p>`;
@@ -6167,7 +6274,9 @@ async function reload() {
     state.memberSummary = null;
     state.operationalHealth = null;
     state.operationalHealthError = "";
-    state.notificationManagement = { data: null, loading: false, error: "", selectedCourseIds: [] };
+    state.notificationManagement = {
+      data: null, loading: false, error: "", selectedCourseIds: [], organizationId: "", sortBy: "date",
+    };
     state.organizationAdmins = [];
     state.platformAdmins = [];
     state.organizationAdminsError = "";
@@ -6292,7 +6401,7 @@ function bindEvents() {
     }
     if (printNotificationCourseQrButton) {
       try {
-        printNotificationManagementCourseQr(printNotificationCourseQrButton.dataset.printNotificationCourseQr);
+        openCourseCheckinPrintChoice(printNotificationCourseQrButton.dataset.printNotificationCourseQr, "management");
       } catch (error) {
         showToast(error.message || "QR 안내문을 인쇄하지 못했습니다.");
       }
@@ -6900,6 +7009,21 @@ function bindEvents() {
   });
 
   document.body.addEventListener("change", (event) => {
+    if (event.target.matches("[data-notification-organization-filter]")) {
+      state.notificationManagement.organizationId = event.target.value;
+      state.notificationManagement.selectedCourseIds = [];
+      renderNotificationManagement();
+      return;
+    }
+    if (event.target.matches("[data-notification-sort]")) {
+      state.notificationManagement.sortBy = event.target.value === "organization" ? "organization" : "date";
+      renderNotificationManagement();
+      return;
+    }
+    if (event.target.matches('[name="notification_channel"]')) {
+      syncNotificationChannelFields(event.target.closest("form"));
+      return;
+    }
     if (event.target.id === "archivePicker") {
       captureVisibleAdminFormDraft();
       state.selectedArchiveId = event.target.value;
@@ -6908,6 +7032,11 @@ function bindEvents() {
   });
 
   document.body.addEventListener("input", (event) => {
+    const notificationPhone = event.target.closest('input[name="notification_recipient_phone"]');
+    if (notificationPhone) {
+      notificationPhone.value = formatMobilePhone(notificationPhone.value);
+      return;
+    }
     const smsTestPhone = event.target.closest("[data-sms-test-form] input[name='recipient_phone']");
     if (smsTestPhone) {
       smsTestPhone.value = formatMobilePhone(smsTestPhone.value);

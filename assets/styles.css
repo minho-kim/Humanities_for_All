@@ -360,6 +360,25 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 .course-checkin-admin-form { display: grid; gap: 12px; }
 .course-checkin-qr-layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); align-items: center; gap: 18px; }
 .course-checkin-qr-code { display: grid; place-items: center; min-height: 190px; padding: 10px; border: 1px solid var(--line); border-radius: 16px; background: #fff; }
+.notification-course-toolbar { display: grid; grid-template-columns: repeat(2, minmax(180px, 260px)); gap: 12px; margin-top: 14px; }
+.notification-course-list { display: grid; gap: 10px; }
+.notification-course-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(210px, auto);
+  gap: 18px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+}
+.notification-course-select { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; align-items: start; min-width: 0; cursor: pointer; }
+.notification-course-select > input { width: 18px; min-height: 18px; margin-top: 3px; }
+.notification-course-copy { display: grid; gap: 3px; min-width: 0; }
+.notification-course-copy strong,
+.notification-course-copy span { overflow-wrap: anywhere; }
+.notification-course-actions { display: grid; justify-items: end; gap: 9px; }
+.notification-course-actions .actions { justify-content: flex-end; margin: 0; }
 
 .course-card {
   display: flex;
@@ -1194,6 +1213,11 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
   .hero-card, .panel, .modal-card, .admin-card { padding: 18px; border-radius: 20px; }
   .filter-grid, .course-grid, .stat-grid, .media-grid, .admin-grid, .organization-grid, .resource-grid, .my-info-grid, .feedback-choice-grid { grid-template-columns: 1fr; }
   .course-checkin-qr-layout { grid-template-columns: 1fr; }
+  .notification-course-toolbar,
+  .notification-course-row { grid-template-columns: 1fr; }
+  .notification-course-actions { justify-items: stretch; }
+  .notification-course-actions .badge-row,
+  .notification-course-actions .actions { justify-content: flex-start; }
   .demographic-banner { align-items: stretch; flex-direction: column; }
   .walk-in-notice { display: grid; }
   .profile-card { grid-template-columns: 1fr; }
@@ -1302,6 +1326,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 :root[data-theme="dark"] .interest-subscription-row,
 :root[data-theme="dark"] .interest-search-result,
 :root[data-theme="dark"] .course-notice-controls label > span,
+:root[data-theme="dark"] .notification-course-row,
 :root[data-theme="dark"] .policy-table,
 :root[data-theme="dark"] .site-footer-links a,
 :root[data-theme="dark"] .site-footer-links span,
