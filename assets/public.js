@@ -119,6 +119,20 @@ const elements = {
   reportForm: document.getElementById("reportForm"),
   reportTitle: document.getElementById("reportTitle"),
   reportDescription: document.getElementById("reportDescription"),
+  qrCheckinModal: document.getElementById("qrCheckinModal"),
+  qrCheckinTitle: document.getElementById("qrCheckinTitle"),
+  qrCheckinMeta: document.getElementById("qrCheckinMeta"),
+  qrCheckinStatus: document.getElementById("qrCheckinStatus"),
+  qrCheckinConsent: document.getElementById("qrCheckinConsent"),
+  qrCheckinAge: document.getElementById("qrCheckinAge"),
+  qrCheckinPrivacy: document.getElementById("qrCheckinPrivacy"),
+  qrCheckinPartnerChoices: document.getElementById("qrCheckinPartnerChoices"),
+  qrCheckinPartnerYes: document.getElementById("qrCheckinPartnerYes"),
+  qrCheckinPartnerNo: document.getElementById("qrCheckinPartnerNo"),
+  qrCheckinForm: document.getElementById("qrCheckinForm"),
+  qrCheckinName: document.getElementById("qrCheckinName"),
+  qrCheckinPhone: document.getElementById("qrCheckinPhone"),
+  qrCheckinSubmit: document.getElementById("qrCheckinSubmit"),
   toast: document.getElementById("toast"),
 };
 
@@ -134,6 +148,10 @@ const DEMOGRAPHICS_TERMS_VERSION = "2026-07-24-v3";
 const INTEREST_NOTIFICATION_CONSENT_VERSION = "2026-07-24-v2";
 const COURSE_NOTIFICATION_TERMS_VERSION = "2026-07-24-v2";
 const ROUNDTABLE_NOTIFICATION_TERMS_VERSION = "2026-07-27-v2";
+const QR_CHECKIN_TERMS_VERSION = "course-checkin-v1-2026-08-04";
+const COURSE_CHECKIN_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/course-checkin`;
+const COOP_INTEGRATION_URL = "https://ifdqlwxgqgsvnawmhlfc.supabase.co/functions/v1/erp-humanities-integration";
+const COOP_PUBLISHABLE_KEY = "sb_publishable_lkVhLJDe8WmOPzsWOMkKdg_pjVwVS-h";
 const GUEST_CONTACT_SESSION_KEY = "humanities-guest-contact";
 const GUEST_ACCESS_TOKEN_SESSION_KEY = "humanities-guest-access-tokens";
 const APPLICATION_CLIENT_STORAGE_KEY = "humanities-application-client-id";
@@ -147,6 +165,7 @@ let residenceSearchForm = null;
 let courseLoadObserver = null;
 let courseStatusRefreshTimer = null;
 let applicationClientIdFallback = "";
+let qrCheckinState = { token: "", context: null, partner: null };
 
 function getSupabaseClient() {
   if (!supabaseClientPromise) {
@@ -4637,6 +4656,152 @@ function startAuthMonitor() {
     });
 }
 
+function setQrCheckinStatus(message = "", type = "") {
+  if (!elements.qrCheckinStatus) return;
+  elements.qrCheckinStatus.textContent = message;
+  elements.qrCheckinStatus.className = `inline-message${type ? ` ${type}` : ""}`;
+}
+
+async function callPublicFunction(url, apiKey, payload) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      apikey: apiKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || result?.ok === false) {
+    const error = new Error(result?.error || "체크인 서버에 연결하지 못했습니다.");
+    error.code = result?.code || "CHECKIN_FAILED";
+    throw error;
+  }
+  return result;
+}
+
+function qrCheckinConsentReady() {
+  if (elements.qrCheckinAge?.checked !== true) {
+    setQrCheckinStatus("만 14세 이상 확인이 필요합니다.", "warning");
+    elements.qrCheckinAge?.focus();
+    return false;
+  }
+  if (elements.qrCheckinPrivacy?.checked !== true) {
+    setQrCheckinStatus("개인정보 수집·이용 동의가 필요합니다.", "warning");
+    elements.qrCheckinPrivacy?.focus();
+    return false;
+  }
+  return true;
+}
+
+function showQrCheckinForm() {
+  elements.qrCheckinPartnerChoices?.classList.add("hidden");
+  elements.qrCheckinForm?.classList.remove("hidden");
+  window.setTimeout(() => elements.qrCheckinName?.focus(), 0);
+}
+
+async function handleQrCheckinSubmit(event) {
+  event.preventDefault();
+  if (!qrCheckinConsentReady()) return;
+  const name = elements.qrCheckinName?.value.trim() || "";
+  const phone = elements.qrCheckinPhone?.value.replace(/\D/g, "") || "";
+  if (!name) return setQrCheckinStatus("이름을 입력해 주세요.", "warning");
+  if (!/^010[0-9]{8}$/.test(phone)) return setQrCheckinStatus("010으로 시작하는 휴대전화번호 11자리를 입력해 주세요.", "warning");
+  if (elements.qrCheckinSubmit?.disabled) return;
+  elements.qrCheckinSubmit.disabled = true;
+  setQrCheckinStatus("출석을 기록하는 중입니다.");
+  try {
+    const result = await callPublicFunction(COURSE_CHECKIN_FUNCTION_URL, SUPABASE_PUBLISHABLE_KEY, {
+      action: "checkin",
+      qr_token: qrCheckinState.token,
+      participant_name: name,
+      phone,
+      age_confirmed: true,
+      privacy_consent: true,
+      terms_version: QR_CHECKIN_TERMS_VERSION,
+    });
+    if (qrCheckinState.partner?.linked && qrCheckinState.partner?.handoff_token) {
+      try {
+        await callPublicFunction(COOP_INTEGRATION_URL, COOP_PUBLISHABLE_KEY, {
+          action: "record_general_checkin",
+          handoff_token: qrCheckinState.partner.handoff_token,
+          humanities_checkin_id: result.record_id,
+          participant_name: name,
+          phone,
+          checked_in_at: result.checked_in_at,
+        });
+      } catch (syncError) {
+        console.warn("Partner roster sync deferred", syncError?.code || syncError?.message || syncError);
+      }
+    }
+    elements.qrCheckinConsent?.classList.add("hidden");
+    elements.qrCheckinForm?.classList.add("hidden");
+    setQrCheckinStatus(
+      result.status === "ALREADY_RECORDED"
+        ? `“${result.title || qrCheckinState.context?.title || "교육"}”에 이미 체크인되어 있습니다.`
+        : `“${result.title || qrCheckinState.context?.title || "교육"}” 체크인이 완료되었습니다.`,
+      "success",
+    );
+  } catch (error) {
+    setQrCheckinStatus(error?.message || "체크인을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.", "danger");
+  } finally {
+    if (elements.qrCheckinSubmit) elements.qrCheckinSubmit.disabled = false;
+  }
+}
+
+async function initializeQrCheckin() {
+  const url = new URL(window.location.href);
+  const token = String(url.searchParams.get("checkin") || "").trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(token) || !elements.qrCheckinModal) return;
+  qrCheckinState = { token, context: null, partner: null };
+  openModal(elements.qrCheckinModal);
+  elements.qrCheckinTitle.textContent = "교육 확인 중";
+  elements.qrCheckinMeta.textContent = "";
+  elements.qrCheckinConsent.classList.add("hidden");
+  elements.qrCheckinPartnerChoices.classList.add("hidden");
+  elements.qrCheckinForm.classList.add("hidden");
+  setQrCheckinStatus("QR 정보를 확인하고 있습니다.");
+  try {
+    const context = await callPublicFunction(COURSE_CHECKIN_FUNCTION_URL, SUPABASE_PUBLISHABLE_KEY, {
+      action: "context", qr_token: token,
+    });
+    qrCheckinState.context = context;
+    elements.qrCheckinTitle.textContent = context.title || "교육 QR 체크인";
+    elements.qrCheckinMeta.textContent = [
+      formatDateTime(context.starts_at),
+      context.venue,
+      context.organization_name,
+    ].filter(Boolean).join("\n");
+    if (url.searchParams.get("partner_status") === "success") {
+      setQrCheckinStatus("협동조합 조합원 확인과 모두의 인문학 체크인이 완료되었습니다.", "success");
+      return;
+    }
+    if (context.status === "NOT_OPEN") {
+      setQrCheckinStatus(`아직 체크인 시간이 아닙니다. ${formatDateTime(context.opens_at)}부터 가능합니다.`, "warning");
+      return;
+    }
+    if (context.status === "CLOSED") {
+      setQrCheckinStatus("체크인 시간이 종료되었습니다.", "warning");
+      return;
+    }
+    const partner = await callPublicFunction(COOP_INTEGRATION_URL, COOP_PUBLISHABLE_KEY, {
+      action: "resolve", humanities_course_id: context.course_id,
+    }).catch(() => ({ ok: true, linked: false }));
+    qrCheckinState.partner = partner;
+    elements.qrCheckinConsent.classList.remove("hidden");
+    if (url.searchParams.get("partner_fallback") === "1") {
+      setQrCheckinStatus("조합원 정보를 찾을 수 없어 일반 체크인으로 전환됩니다.", "warning");
+      showQrCheckinForm();
+      return;
+    }
+    setQrCheckinStatus("");
+    if (partner.linked) elements.qrCheckinPartnerChoices.classList.remove("hidden");
+    else showQrCheckinForm();
+  } catch (error) {
+    setQrCheckinStatus(error?.message || "사용할 수 없는 체크인 QR입니다.", "danger");
+  }
+}
+
 function bindEvents() {
   elements.courseFilters.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -4853,6 +5018,7 @@ function bindEvents() {
   });
 
   document.body.addEventListener("submit", (event) => {
+    if (event.target.id === "qrCheckinForm") return handleQrCheckinSubmit(event);
     if (event.target.id === "applicationForm") return handleApplicationSubmit(event);
     if (event.target.id === "guestReviewAccessForm") return handleGuestReviewAccessSubmit(event);
     if (event.target.id === "demographicsForm") return handleDemographicsSubmit(event);
@@ -4898,6 +5064,24 @@ function bindEvents() {
   elements.googleLoginButton.addEventListener("click", handleGoogleLogin);
   elements.loginForm.addEventListener("submit", handleLogin);
   elements.logoutButton.addEventListener("click", handleLogout);
+  elements.qrCheckinPartnerYes?.addEventListener("click", () => {
+    if (!qrCheckinConsentReady()) return;
+    const memberUrl = qrCheckinState.partner?.member_url;
+    if (!memberUrl) return showQrCheckinForm();
+    const url = new URL(memberUrl);
+    url.searchParams.set("humanities_qr", qrCheckinState.token);
+    window.location.href = url.toString();
+  });
+  elements.qrCheckinPartnerNo?.addEventListener("click", () => {
+    if (!qrCheckinConsentReady()) return;
+    showQrCheckinForm();
+  });
+  elements.qrCheckinPhone?.addEventListener("input", (event) => {
+    const value = event.target.value.replace(/\D/g, "").slice(0, 11);
+    event.target.value = value.length <= 3 ? value : value.length <= 7
+      ? `${value.slice(0, 3)}-${value.slice(3)}`
+      : `${value.slice(0, 3)}-${value.slice(3, 7)}-${value.slice(7)}`;
+  });
   window.addEventListener("message", handleResidenceSearchMessage);
   window.addEventListener("hashchange", async () => {
     applyRouteFromHash();
@@ -4923,6 +5107,7 @@ async function initialize() {
   }
   startCourseStatusMonitor();
   await openRequestedCourseFromUrl();
+  await initializeQrCheckin();
   startAuthMonitor();
 }
 

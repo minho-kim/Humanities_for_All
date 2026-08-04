@@ -22,7 +22,7 @@
     })();
   </script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
-  <link rel="stylesheet" href="./assets/styles.css?v=202607302322">
+  <link rel="stylesheet" href="./assets/styles.css?v=202608042200">
 </head>
 <body>
   <main class="page">
@@ -193,8 +193,36 @@
     </article>
   </div>
 
+  <div class="modal" id="qrCheckinModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="qrCheckinTitle">
+    <article class="modal-card qr-checkin-card" style="max-width: 620px;">
+      <div class="modal-header">
+        <div><span class="eyebrow">교육 QR 체크인</span><h2 id="qrCheckinTitle">교육 확인 중</h2></div>
+        <button class="icon-btn" type="button" data-close-modal aria-label="체크인 닫기">×</button>
+      </div>
+      <div id="qrCheckinMeta" class="qr-checkin-meta muted"></div>
+      <div id="qrCheckinStatus" class="inline-message" role="status" aria-live="polite"></div>
+      <div id="qrCheckinConsent" class="qr-checkin-consent hidden">
+        <label class="check-row"><input id="qrCheckinAge" type="checkbox"> <span>만 14세 이상입니다.</span></label>
+        <label class="check-row"><input id="qrCheckinPrivacy" type="checkbox"> <span>이름·휴대전화번호·출석 기록 수집과 교육 종료 후 6개월 이내 보관에 동의합니다. 연동 교육이면 공동운영 단체의 출석 확인 명단에도 같은 정보를 제공합니다.</span></label>
+      </div>
+      <div id="qrCheckinPartnerChoices" class="qr-checkin-partner hidden">
+        <p><strong>용인모두의햇빛협동조합 조합원인가요?</strong></p>
+        <div class="actions">
+          <button class="btn" type="button" id="qrCheckinPartnerYes">네, 조합원입니다</button>
+          <button class="btn secondary" type="button" id="qrCheckinPartnerNo">아니요 / 잘 모르겠어요</button>
+        </div>
+        <p class="muted small-copy">조합원이면 협동조합에서 본인 확인 후 같은 교육 출석이 모두의 인문학에 한 번 기록됩니다.</p>
+      </div>
+      <form id="qrCheckinForm" class="qr-checkin-form hidden">
+        <label>이름<input id="qrCheckinName" name="participant_name" maxlength="80" autocomplete="name" required></label>
+        <label>휴대전화번호<input id="qrCheckinPhone" name="phone" type="tel" maxlength="13" inputmode="tel" autocomplete="tel" placeholder="010-0000-0000" required></label>
+        <button class="btn" id="qrCheckinSubmit" type="submit">출석 체크인</button>
+      </form>
+    </article>
+  </div>
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <!-- public.js를 변경해 배포할 때 v 값도 함께 올려 기존 브라우저 캐시를 교체한다. -->
-  <script type="module" src="./assets/public.js?v=202608041708"></script>
+  <script type="module" src="./assets/public.js?v=202608042130"></script>
 </body>
 </html>

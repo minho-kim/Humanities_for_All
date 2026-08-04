@@ -4027,6 +4027,7 @@ function renderCourseForm(course = {}) {
       <div class="actions" style="margin-top: 14px;">
         <button class="btn" type="submit">${isEditing ? "교육 수정" : "교육 추가"}</button>
         <button class="btn secondary" type="button" id="newCourseButton">새 교육 입력</button>
+        ${isEditing ? `<button class="btn secondary" type="button" data-open-course-checkin="${escapeHtml(course.id)}">QR 출석·알림</button>` : ""}
         ${!isEditing ? `<button class="btn secondary" type="button" data-open-course-template>기존 교육 불러오기</button>` : ""}
         ${isEditing && isDeleteAllowed ? `<button class="btn danger" type="button" data-delete-course="${escapeHtml(course.id)}">교육 삭제</button>` : ""}
         ${isEditing && !isDeleteAllowed ? `<button class="btn danger" type="button" disabled>완료 교육 삭제 불가</button>` : ""}
@@ -4035,6 +4036,133 @@ function renderCourseForm(course = {}) {
       ${isEditing && isDeleteAllowed ? `<p class="muted" style="margin-top: 8px;">삭제하면 ${escapeHtml(courseDeleteSummary(course.id))}도 함께 정리됩니다.</p>` : ""}
     </form>
   `;
+}
+
+async function invokeCourseCheckinAdmin(action, courseId, payload = {}) {
+  const { data, error } = await supabase.functions.invoke("course-checkin", {
+    body: { action, course_id: courseId, ...payload },
+  });
+  if (error) {
+    let message = error.message || "QR 출석 설정을 처리하지 못했습니다.";
+    try {
+      const details = await error.context?.json();
+      if (details?.error) message = details.error;
+    } catch {}
+    throw new Error(message);
+  }
+  if (data?.ok === false) throw new Error(data.error || "QR 출석 설정을 처리하지 못했습니다.");
+  return data || {};
+}
+
+function courseCheckinAdminHtml(course, result) {
+  const setting = result.setting || {};
+  const records = Array.isArray(result.records) ? result.records : [];
+  const qrUrl = setting.qr_token ? `${PUBLIC_SITE_URL}index.html?checkin=${encodeURIComponent(setting.qr_token)}` : "";
+  return `
+    <form id="courseCheckinAdminForm" class="course-checkin-admin-form">
+      <input type="hidden" name="course_id" value="${escapeHtml(course.id)}">
+      <div class="admin-search-selected">
+        <strong>${escapeHtml(course.title || "교육")}</strong>
+        <span>${escapeHtml(formatDateTime(course.starts_at))}</span>
+      </div>
+      <div class="admin-grid" style="margin-top: 14px;">
+        <label><span><input name="enabled" type="checkbox" ${setting.enabled ? "checked" : ""} style="width:auto;min-height:auto;"> QR 체크인 사용</span></label>
+        <label>시작 전 열기(분)<input name="opens_before_minutes" type="number" min="0" max="1440" value="${escapeHtml(setting.opens_before_minutes ?? 60)}"></label>
+        <label>종료 후 닫기(분)<input name="closes_after_minutes" type="number" min="0" max="1440" value="${escapeHtml(setting.closes_after_minutes ?? 30)}"></label>
+        <label>인쇄물 아래 단체명<input name="print_organization_name" maxlength="120" value="${escapeHtml(setting.print_organization_name || "모두의 인문학")}" placeholder="예: 모두의 인문학"></label>
+      </div>
+      <section class="section" style="margin-top: 14px;">
+        <h3>관리자 실시간 알림</h3>
+        <p class="muted">기본값은 꺼짐입니다. 협동조합 연동 교육의 Telegram 수신자는 협동조합 ERP에서 선택합니다. 그 밖의 교육은 문자 알림을 사용하세요.</p>
+        <div class="admin-grid">
+          <label><span><input name="notification_enabled" type="checkbox" ${setting.notification_enabled ? "checked" : ""} style="width:auto;min-height:auto;"> 이 교육 알림 사용</span></label>
+          <div class="admin-search-selected"><strong>모두의 인문학 알림: 문자</strong><span>Telegram은 협동조합 ERP에서 해당 교육과 수신자를 연결했을 때만 사용합니다.</span></div>
+          <label>문자 수신자 이름<input name="notification_recipient_name" maxlength="80" value="${escapeHtml(setting.notification_recipient_name || "")}"></label>
+          <label>문자 수신 전화번호<input name="notification_recipient_phone" maxlength="13" inputmode="tel" value="${escapeHtml(setting.notification_recipient_phone || "")}" placeholder="010-0000-0000"></label>
+        </div>
+      </section>
+      <div class="actions" style="margin-top: 14px;">
+        <button class="btn" type="submit">설정 저장</button>
+        ${qrUrl ? '<button class="btn secondary" type="button" data-rotate-course-checkin>새 QR 만들기</button><button class="btn secondary" type="button" data-print-course-checkin>QR 안내문 인쇄</button>' : ""}
+      </div>
+    </form>
+    <section class="section" style="margin-top: 16px;">
+      <h3>QR 안내</h3>
+      ${qrUrl ? `
+        <div class="course-checkin-qr-layout">
+          <div id="courseCheckinQrCode" class="course-checkin-qr-code" data-qr-url="${escapeHtml(qrUrl)}"></div>
+          <div><p class="muted">이 QR은 해당 교육의 체크인에만 사용됩니다.</p><p class="text-break"><a href="${escapeHtml(qrUrl)}" target="_blank" rel="noopener">${escapeHtml(qrUrl)}</a></p></div>
+        </div>
+      ` : '<p class="muted">설정을 한 번 저장하면 암호학적 난수 QR 주소가 생성됩니다.</p>'}
+    </section>
+    <section class="section" style="margin-top: 16px;">
+      <h3>온라인 체크인 ${records.length.toLocaleString()}명</h3>
+      ${records.length ? `<div class="admin-list">${records.map((record) => `
+        <div class="admin-row">
+          <div><strong>${escapeHtml(record.participant_name)}</strong><p>${escapeHtml(record.phone || "번호 삭제됨")} · ${escapeHtml(formatDateTime(record.checked_in_at))}</p></div>
+          <div class="badge-row"><span class="badge">${record.checkin_method === "COOP_MEMBER_QR" ? "협동조합 확인" : "일반 QR"}</span>${record.record_status === "REVIEW" ? '<span class="badge cancelled">이름 확인 필요</span>' : ""}</div>
+        </div>`).join("")}</div>` : '<p class="muted">아직 온라인 체크인 기록이 없습니다.</p>'}
+    </section>
+  `;
+}
+
+function renderCourseCheckinQr() {
+  const target = document.getElementById("courseCheckinQrCode");
+  if (!target?.dataset.qrUrl || typeof window.QRCode !== "function") return;
+  target.innerHTML = "";
+  new window.QRCode(target, { text: target.dataset.qrUrl, width: 190, height: 190, correctLevel: window.QRCode.CorrectLevel.H });
+}
+
+function printCourseCheckinQr(course) {
+  const target = document.getElementById("courseCheckinQrCode");
+  const imageUrl = target?.querySelector("canvas")?.toDataURL("image/png") || target?.querySelector("img")?.src || "";
+  if (!imageUrl) throw new Error("QR 이미지를 아직 만들지 못했습니다.");
+  const form = document.getElementById("courseCheckinAdminForm");
+  const organizationName = String(new FormData(form).get("print_organization_name") || "모두의 인문학").trim();
+  const popup = window.open("", "humanities-course-checkin-print", "width=820,height=980");
+  if (!popup) throw new Error("인쇄 창이 차단되었습니다. 팝업을 허용해 주세요.");
+  popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>교육 QR 체크인</title><style>@page{size:A4;margin:18mm}body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;text-align:center;color:#172033}h1{font-size:30px;margin:42px 0 18px}p{font-size:18px;line-height:1.6}img{width:420px;height:420px;margin:28px auto 18px}.org{margin-top:42px;font-weight:800;font-size:22px}.note{color:#5d6775;font-size:15px}</style></head><body><p>교육 출석 QR</p><h1>${escapeHtml(course.title || "교육")}</h1><p>${escapeHtml(formatDateTime(course.starts_at))}</p><img src="${imageUrl}" alt="교육 체크인 QR"><p>QR을 스캔하고 이름과 휴대전화번호를 입력해 주세요.</p><p class="note">개인정보는 교육 종료 후 6개월 이내 보관 후 익명화합니다.</p><div class="org">${escapeHtml(organizationName)}</div><script>window.onload=()=>window.print()<\/script></body></html>`);
+  popup.document.close();
+}
+
+async function openCourseCheckinAdmin(courseId) {
+  const course = courseById(courseId);
+  if (!course) return;
+  openAdminNotice("QR 출석·알림", '<p class="muted">설정을 불러오는 중입니다.</p>');
+  try {
+    const result = await invokeCourseCheckinAdmin("admin_get", courseId);
+    elements.adminNoticeBody.innerHTML = courseCheckinAdminHtml(course, result);
+    window.requestAnimationFrame(renderCourseCheckinQr);
+    document.getElementById("courseCheckinAdminForm")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const formData = new FormData(event.currentTarget);
+      try {
+        await invokeCourseCheckinAdmin("admin_save", courseId, {
+          enabled: formData.get("enabled") === "on",
+          opens_before_minutes: Number(formData.get("opens_before_minutes") || 60),
+          closes_after_minutes: Number(formData.get("closes_after_minutes") || 30),
+          print_organization_name: String(formData.get("print_organization_name") || ""),
+          notification_enabled: formData.get("notification_enabled") === "on",
+          notification_recipient_name: String(formData.get("notification_recipient_name") || ""),
+          notification_recipient_phone: String(formData.get("notification_recipient_phone") || ""),
+        });
+        showToast("QR 출석 설정을 저장했습니다.");
+        await openCourseCheckinAdmin(courseId);
+      } catch (error) { showToast(error.message); }
+    });
+    document.querySelector("[data-rotate-course-checkin]")?.addEventListener("click", async () => {
+      try {
+        await invokeCourseCheckinAdmin("admin_rotate", courseId);
+        showToast("새 QR을 만들었습니다. 기존 QR은 즉시 사용할 수 없습니다.");
+        await openCourseCheckinAdmin(courseId);
+      } catch (error) { showToast(error.message); }
+    });
+    document.querySelector("[data-print-course-checkin]")?.addEventListener("click", () => {
+      try { printCourseCheckinQr(course); } catch (error) { showToast(error.message); }
+    });
+  } catch (error) {
+    elements.adminNoticeBody.innerHTML = `<p class="muted">${escapeHtml(error.message)}</p>`;
+  }
 }
 
 function renderCourses() {
@@ -5849,6 +5977,11 @@ function bindEvents() {
     const openApplicationDetailButton = event.target.closest("[data-open-application-detail]");
     const closeApplicationDetailButton = event.target.closest("[data-close-application-detail]");
     const copyOrganizationUrlButton = event.target.closest("[data-copy-organization-url]");
+    const openCourseCheckinButton = event.target.closest("[data-open-course-checkin]");
+    if (openCourseCheckinButton) {
+      await openCourseCheckinAdmin(openCourseCheckinButton.dataset.openCourseCheckin);
+      return;
+    }
     if (copyOrganizationUrlButton) {
       try {
         await navigator.clipboard.writeText(copyOrganizationUrlButton.dataset.copyOrganizationUrl);
