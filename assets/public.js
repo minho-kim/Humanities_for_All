@@ -160,6 +160,7 @@ const GUEST_CONTACT_SESSION_KEY = "humanities-guest-contact";
 const GUEST_ACCESS_TOKEN_SESSION_KEY = "humanities-guest-access-tokens";
 const APPLICATION_CLIENT_STORAGE_KEY = "humanities-application-client-id";
 const DEMOGRAPHIC_BANNER_DISMISS_KEY = "humanities-demographic-banner-dismissed";
+const MY_INFO_DEMOGRAPHICS_OPEN_KEY = "humanities-my-info-demographics-open";
 const OAUTH_RETURN_STATE_KEY = "humanities-google-oauth-return";
 const COOP_LINK_START_SESSION_KEY = "humanities-coop-link-start";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -2111,23 +2112,35 @@ function openArchivePhoto(archiveId) {
 function renderApplicationHistory() {
   if (!state.applications.length) return `<div class="empty">아직 신청한 교육이 없습니다.</div>`;
   return `
-    <div class="table-list">
+    <div class="application-history-list">
       ${state.applications.map((application) => {
         const course = courseById(application.course_id);
+        const courseTitle = course?.title || (state.fullDataLoaded ? "삭제된 교육" : "교육 정보를 불러오는 중입니다");
+        const schedule = course ? formatSchedule(courseScheduleStart(course), courseScheduleEnd(course)) : "일정 정보 없음";
+        const venueName = course?.venue?.name || (course ? "장소 미정" : "장소 정보 없음");
         return `
-          <div class="table-row">
-            <div class="row-top">
-              <strong>${escapeHtml(course?.title || "삭제된 교육")}</strong>
-              <span class="badge ${applicationStatusClass(application)}">${escapeHtml(applicationStatusLabel(application))}</span>
+          <details class="application-history-item">
+            <summary>
+              <span class="application-history-summary">
+                <strong>${escapeHtml(courseTitle)}</strong>
+                <span><span aria-hidden="true">📅</span> ${escapeHtml(schedule)}</span>
+                <span><span aria-hidden="true">📍</span> ${escapeHtml(venueName)}</span>
+              </span>
+            </summary>
+            <div class="application-history-body">
+              <div class="row-top">
+                <strong>신청 세부 정보</strong>
+                <span class="badge ${applicationStatusClass(application)}">${escapeHtml(applicationStatusLabel(application))}</span>
+              </div>
+              <p class="muted">신청일 ${escapeHtml(shortDate(application.created_at))} · 신청자 ${escapeHtml(application.applicant_name || "")}</p>
+              ${isAttendanceConfirmed(application) ? `<p class="muted">참석 인증: ${escapeHtml(shortDate(application.attendance_confirmed_at))}</p>` : ""}
+              ${application.note ? `<p><strong>기대평 / 강사에게 하고 싶은 질문</strong><br>${escapeHtml(application.note)}</p>` : ""}
+              ${renderCourseNotificationPreferences(application)}
+              ${renderRoundtableConsent(application)}
+              ${course ? `<button class="btn small secondary" type="button" data-open-course="${course.id}">교육 보기</button>` : ""}
+              ${course ? "" : `<p class="muted">교육 원본이 삭제되어 상세 정보는 열 수 없습니다.</p>`}
             </div>
-            <p class="muted">신청일 ${escapeHtml(shortDate(application.created_at))} · 신청자 ${escapeHtml(application.applicant_name || "")}</p>
-            ${isAttendanceConfirmed(application) ? `<p class="muted">참석 인증: ${escapeHtml(shortDate(application.attendance_confirmed_at))}</p>` : ""}
-            ${application.note ? `<p><strong>기대평 / 강사에게 하고 싶은 질문</strong><br>${escapeHtml(application.note)}</p>` : ""}
-            ${renderCourseNotificationPreferences(application)}
-            ${renderRoundtableConsent(application)}
-            ${course ? `<button class="btn small secondary" type="button" data-open-course="${course.id}">교육 보기</button>` : ""}
-            ${course ? "" : `<p class="muted">교육 원본이 삭제되어 상세 정보는 열 수 없습니다.</p>`}
-          </div>
+          </details>
         `;
       }).join("")}
     </div>
@@ -2266,9 +2279,27 @@ function renderApplicationNoteHistory() {
 }
 
 function renderMyReviewHistory() {
-  if (!state.myReviews.length) return `<div class="empty">아직 작성한 후기가 없습니다.</div>`;
+  const pendingApplications = activeApplications().filter((application) => (
+    isAttendanceConfirmed(application)
+    && courseById(application.course_id)
+    && !myReviewForCourse(application.course_id)
+  ));
+  if (!pendingApplications.length && !state.myReviews.length) return `<div class="empty compact-empty">현재 작성할 후기나 작성한 후기가 없습니다.</div>`;
   return `
     <div class="table-list">
+      ${pendingApplications.map((application) => {
+        const course = courseById(application.course_id);
+        return `
+          <div class="table-row">
+            <div class="row-top">
+              <strong>${escapeHtml(course.title)}</strong>
+              <span class="badge gray">작성 가능</span>
+            </div>
+            <p class="muted">참석이 확인되어 공개 후기를 작성할 수 있습니다.</p>
+            <button class="btn small" type="button" data-open-course="${course.id}">후기 작성</button>
+          </div>
+        `;
+      }).join("")}
       ${state.myReviews.map((review) => {
         const course = courseById(review.course_id);
         return `
@@ -2288,9 +2319,27 @@ function renderMyReviewHistory() {
 }
 
 function renderMyFeedbackHistory() {
-  if (!state.myFeedback.length) return `<div class="empty">아직 남긴 교육 피드백이 없습니다.</div>`;
+  const pendingApplications = activeApplications().filter((application) => (
+    isAttendanceConfirmed(application)
+    && courseById(application.course_id)
+    && !myFeedbackForCourse(application.course_id)
+  ));
+  if (!pendingApplications.length && !state.myFeedback.length) return `<div class="empty compact-empty">현재 작성할 교육 피드백이나 작성한 피드백이 없습니다.</div>`;
   return `
     <div class="table-list">
+      ${pendingApplications.map((application) => {
+        const course = courseById(application.course_id);
+        return `
+          <div class="table-row">
+            <div class="row-top">
+              <strong>${escapeHtml(course.title)}</strong>
+              <span class="badge gray">작성 가능</span>
+            </div>
+            <p class="muted">참석이 확인되어 운영진에게 교육 피드백을 남길 수 있습니다.</p>
+            <button class="btn small" type="button" data-open-course="${course.id}">피드백 작성</button>
+          </div>
+        `;
+      }).join("")}
       ${state.myFeedback.map((feedback) => {
         const course = courseById(feedback.course_id);
         return `
@@ -2375,19 +2424,19 @@ function clearResidenceSelection(button) {
   showToast("거주지역을 저장하지 않도록 비웠습니다.");
 }
 
-function renderDemographicsForm() {
+function renderDemographicsForm({ showHeading = true } = {}) {
   const profile = state.demographics || {};
   const currentYear = Number(new Intl.DateTimeFormat("en", { year: "numeric", timeZone: "Asia/Seoul" }).format(new Date()));
   const storedResidence = [profile.residence_district, profile.residence_neighborhood].filter(Boolean).join(" ");
   return `
     <form id="demographicsForm" class="demographics-form">
-      <div class="row-top">
+      ${showHeading ? `<div class="row-top">
         <div>
           <h3>선택 이용자 정보</h3>
           <p class="muted">참여자 구성을 통계로 파악하기 위한 선택 항목입니다. 입력하지 않아도 교육 신청과 이용에 불이익이 없습니다.</p>
         </div>
         <span class="badge gray">모든 항목 선택 입력</span>
-      </div>
+      </div>` : ""}
       <div class="residence-search-panel">
         <input name="residence_district" type="hidden" value="${escapeHtml(profile.residence_district || "")}">
         <input name="residence_neighborhood" type="hidden" value="${escapeHtml(profile.residence_neighborhood || "")}">
@@ -2542,17 +2591,17 @@ function renderInterestSubscriptionRows() {
   }).join("");
 }
 
-function renderInterestNotificationsForm() {
+function renderInterestNotificationsForm({ showHeading = true } = {}) {
   const hasSmsPhone = /^010\d{8}$/.test(String(state.applicantProfile?.phone || "").replace(/\D/g, ""));
   return `
     <form id="interestNotificationsForm" class="interest-notifications-form">
-      <div class="row-top">
+      ${showHeading ? `<div class="row-top">
         <div>
           <h3>관심 강사·키워드 새 교육 알림</h3>
           <p class="muted">새 교육이 공개되면 다음 오전 10시에 관심 항목과 일치하는 교육을 한 번에 모아 알려드립니다.</p>
         </div>
         <span class="badge gray">선택 알림</span>
-      </div>
+      </div>` : ""}
       <div class="interest-subscription-list" data-interest-subscription-list>
         ${renderInterestSubscriptionRows()}
       </div>
@@ -2628,21 +2677,94 @@ function renderCoopDemographicConflicts(conflicts = {}) {
 
 function renderCoopLinkSection() {
   const link = state.coopLink || {};
+  const conflictsHtml = renderCoopDemographicConflicts(link.pending_conflicts || {});
+  if (link.linked) {
+    return `
+      <section class="section coop-link-section linked" id="coopAccountLinkSection">
+        <div class="coop-link-status">
+          <strong>용인모두의햇빛협동조합</strong>
+          <span class="badge green">연동됨</span>
+        </div>
+        ${conflictsHtml}
+      </section>
+    `;
+  }
   return `
-    <section class="section" id="coopAccountLinkSection" style="margin-top: 14px;">
+    <section class="section coop-link-section" id="coopAccountLinkSection">
       <div class="row-top">
         <div>
           <h3>용인모두의햇빛협동조합 연동</h3>
           <p class="muted">용인모두의햇빛협동조합 조합원 정보를 연동하면 교육 신청과 QR 체크인을 더 간편하게 이용할 수 있습니다. 개인 정보는 꼭 필요한 항목에 한해 이용자의 동의 후 가져옵니다.</p>
         </div>
-        <span class="badge ${link.linked ? "green" : "gray"}">${link.linked ? "연동됨" : "연동 안 됨"}</span>
+        <span class="badge gray">연동 안 됨</span>
       </div>
-      ${link.linked
-        ? `<p class="muted">두 서비스의 로그인은 서로 분리되어 있으며, 임의 연결번호만 사용합니다. 협동조합 비밀번호나 로그인 토큰은 모두의 인문학에 저장하지 않습니다.</p>`
-        : `<div class="actions"><button class="btn small" type="button" data-start-coop-link>조합원 정보 연동하기</button></div>`}
-      ${renderCoopDemographicConflicts(link.pending_conflicts || {})}
+      <div class="actions"><button class="btn small" type="button" data-start-coop-link>조합원 정보 연동하기</button></div>
     </section>
   `;
+}
+
+function readDemographicsAccordionOpen() {
+  try {
+    const saved = window.localStorage.getItem(MY_INFO_DEMOGRAPHICS_OPEN_KEY);
+    return saved === null ? true : saved === "true";
+  } catch {
+    return true;
+  }
+}
+
+function saveDemographicsAccordionOpen(open) {
+  try {
+    window.localStorage.setItem(MY_INFO_DEMOGRAPHICS_OPEN_KEY, open ? "true" : "false");
+  } catch {
+    // 저장소를 사용할 수 없어도 현재 화면의 아코디언은 정상 동작한다.
+  }
+}
+
+function pendingApplicationNotes() {
+  return activeApplications().filter((application) => (
+    !String(application.note || "").trim()
+    && canEditApplicationNote(application)
+  ));
+}
+
+function pendingFeedbackApplications() {
+  return activeApplications().filter((application) => (
+    isAttendanceConfirmed(application)
+    && courseById(application.course_id)
+    && !myFeedbackForCourse(application.course_id)
+  ));
+}
+
+function pendingReviewApplications() {
+  return activeApplications().filter((application) => (
+    isAttendanceConfirmed(application)
+    && courseById(application.course_id)
+    && !myReviewForCourse(application.course_id)
+  ));
+}
+
+function renderMyInfoAccordion({ id, title, description, badge, badgeClass = "gray", open = false, content }) {
+  return `
+    <details class="my-info-accordion" id="${escapeHtml(id)}" ${open ? "open" : ""}>
+      <summary>
+        <span class="my-info-accordion-heading">
+          <strong>${escapeHtml(title)}</strong>
+          <small>${escapeHtml(description)}</small>
+        </span>
+        <span class="badge ${escapeHtml(badgeClass)}">${escapeHtml(badge)}</span>
+      </summary>
+      <div class="my-info-accordion-body">${content}</div>
+    </details>
+  `;
+}
+
+function openMyInfoSection(sectionId, focusSelector = "") {
+  openMyInfo();
+  const section = document.getElementById(sectionId);
+  if (section instanceof HTMLDetailsElement) section.open = true;
+  window.setTimeout(() => {
+    if (focusSelector) document.querySelector(focusSelector)?.focus();
+  }, 0);
 }
 
 function openMyInfo() {
@@ -2650,6 +2772,18 @@ function openMyInfo() {
     openModal(elements.loginModal);
     return;
   }
+
+  if (!state.fullDataLoaded && !state.fullDataLoadingPromise) {
+    ensureFullDataLoaded().then(() => {
+      if (elements.profileModal.classList.contains("open") && elements.profileEyebrow.textContent === "나의 정보") openMyInfo();
+    }).catch((error) => console.warn("[모두의 인문학] 나의 교육 정보 확인 지연", error));
+  }
+
+  const noteTodos = pendingApplicationNotes();
+  const feedbackTodos = pendingFeedbackApplications();
+  const reviewTodos = pendingReviewApplications();
+  const writtenNotes = activeApplications().filter((application) => String(application.note || "").trim()).length;
+  const demographicsOpen = readDemographicsAccordionOpen();
 
   elements.profileEyebrow.textContent = "나의 정보";
   elements.profileTitle.textContent = "나의 활동";
@@ -2673,29 +2807,62 @@ function openMyInfo() {
       </section>
     </div>
     ${renderCoopLinkSection()}
-    <section class="section" id="interestNotificationsSection" style="margin-top: 14px;">
-      ${renderInterestNotificationsForm()}
-    </section>
-    <section class="section" id="demographicsSection" style="margin-top: 14px;">
-      ${renderDemographicsForm()}
-    </section>
-    <section class="section" style="margin-top: 14px;">
-      <h3>교육 신청 현황</h3>
+    <section class="section my-info-application-section">
+      <div class="row-top">
+        <div>
+          <h3>교육 신청 현황</h3>
+          <p class="muted">교육명·교육일시·장소를 확인하고 필요한 교육만 펼쳐보세요.</p>
+        </div>
+        <span class="badge gray">${state.applications.length.toLocaleString("ko-KR")}건</span>
+      </div>
       ${renderApplicationHistory()}
     </section>
-    <section class="section" style="margin-top: 14px;">
-      <h3>기대평·질문 작성 현황</h3>
-      ${renderApplicationNoteHistory()}
-    </section>
-    <section class="section" style="margin-top: 14px;">
-      <h3>교육 피드백 작성 현황</h3>
-      ${renderMyFeedbackHistory()}
-    </section>
-    <section class="section" style="margin-top: 14px;">
-      <h3>후기 작성 현황</h3>
-      ${renderMyReviewHistory()}
-    </section>
+    ${renderMyInfoAccordion({
+      id: "applicationNotesSection",
+      title: "기대평·질문",
+      description: noteTodos.length ? `아직 작성할 수 있는 교육 ${noteTodos.length}개` : writtenNotes ? `작성 완료 ${writtenNotes}개` : "현재 작성할 내용이 없습니다",
+      badge: noteTodos.length ? `작성 필요 ${noteTodos.length}` : writtenNotes ? `작성 ${writtenNotes}` : "없음",
+      badgeClass: noteTodos.length ? "green" : "gray",
+      open: noteTodos.length > 0,
+      content: renderApplicationNoteHistory(),
+    })}
+    ${renderMyInfoAccordion({
+      id: "myFeedbackSection",
+      title: "교육 피드백",
+      description: feedbackTodos.length ? `참석 확인 후 작성할 교육 ${feedbackTodos.length}개` : state.myFeedback.length ? `작성 완료 ${state.myFeedback.length}개` : "현재 작성할 피드백이 없습니다",
+      badge: feedbackTodos.length ? `작성 필요 ${feedbackTodos.length}` : state.myFeedback.length ? `작성 ${state.myFeedback.length}` : "없음",
+      badgeClass: feedbackTodos.length ? "green" : "gray",
+      open: feedbackTodos.length > 0,
+      content: renderMyFeedbackHistory(),
+    })}
+    ${renderMyInfoAccordion({
+      id: "myReviewsSection",
+      title: "공개 후기",
+      description: reviewTodos.length ? `참석 확인 후 작성할 교육 ${reviewTodos.length}개` : state.myReviews.length ? `작성 완료 ${state.myReviews.length}개` : "현재 작성할 후기가 없습니다",
+      badge: reviewTodos.length ? `작성 필요 ${reviewTodos.length}` : state.myReviews.length ? `작성 ${state.myReviews.length}` : "없음",
+      badgeClass: reviewTodos.length ? "green" : "gray",
+      open: reviewTodos.length > 0,
+      content: renderMyReviewHistory(),
+    })}
+    ${renderMyInfoAccordion({
+      id: "interestNotificationsSection",
+      title: "관심 교육 알림",
+      description: "관심 강사·키워드에 맞는 새 교육을 이메일이나 문자로 받습니다",
+      badge: state.interestSubscriptions.length ? `${state.interestSubscriptions.length}개 설정` : "선택 설정",
+      content: renderInterestNotificationsForm({ showHeading: false }),
+    })}
+    ${renderMyInfoAccordion({
+      id: "demographicsSection",
+      title: "선택 정보 수정",
+      description: "거주지역·출생연도 등 통계용 선택 항목을 관리합니다",
+      badge: state.demographics ? "입력됨" : "선택 입력",
+      open: demographicsOpen,
+      content: renderDemographicsForm({ showHeading: false }),
+    })}
   `;
+  document.getElementById("demographicsSection")?.addEventListener("toggle", (event) => {
+    saveDemographicsAccordionOpen(event.currentTarget.open);
+  });
   openModal(elements.profileModal);
 }
 
@@ -4363,8 +4530,7 @@ function addInterestSubscription(button) {
     sms_enabled: false,
   });
   state.interestSearch = "";
-  openMyInfo();
-  window.setTimeout(() => document.querySelector("[data-interest-search]")?.focus(), 0);
+  openMyInfoSection("interestNotificationsSection", "[data-interest-search]");
   showToast("관심 대상을 추가했습니다. 채널을 확인한 뒤 설정을 저장해 주세요.");
 }
 
@@ -4395,8 +4561,7 @@ function addInterestKeyword() {
     sms_enabled: false,
   });
   state.interestKeywordInput = "";
-  openMyInfo();
-  window.setTimeout(() => document.querySelector("[data-interest-keyword-input]")?.focus(), 0);
+  openMyInfoSection("interestNotificationsSection", "[data-interest-keyword-input]");
   showToast("관심 키워드를 추가했습니다. 채널을 확인한 뒤 설정을 저장해 주세요.");
 }
 
@@ -4408,7 +4573,7 @@ function removeInterestSubscription(button) {
   state.interestSubscriptions = state.interestSubscriptions.filter((subscription) => !(
     subscription.target_type === targetType && subscription.target_key === targetKey
   ));
-  openMyInfo();
+  openMyInfoSection("interestNotificationsSection");
   showToast("관심 대상을 삭제했습니다. 설정 저장을 누르면 반영됩니다.");
 }
 
@@ -4455,7 +4620,7 @@ async function handleInterestNotificationsSubmit(event) {
     });
     if (error) throw error;
     await loadApplicationState(supabase);
-    openMyInfo();
+    openMyInfoSection("interestNotificationsSection");
     showToast(subscriptions.length ? "관심 알림 설정을 저장했습니다." : "관심 알림을 모두 해지했습니다.");
   } catch (error) {
     console.error("Interest notification settings save failed", error);
@@ -5162,7 +5327,8 @@ function bindEvents() {
       return;
     }
     if (openDemographicsButton) {
-      openMyInfo();
+      await ensureFullDataLoaded();
+      openMyInfoSection("demographicsSection");
       window.setTimeout(() => document.getElementById("demographicsSection")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
       return;
     }
@@ -5295,8 +5461,11 @@ function bindEvents() {
     trapModalFocus(event, activeModal);
   });
 
-  elements.loginButton.addEventListener("click", () => {
-    if (state.user) openMyInfo();
+  elements.loginButton.addEventListener("click", async () => {
+    if (state.user) {
+      await ensureFullDataLoaded();
+      openMyInfo();
+    }
     else openModal(elements.loginModal);
   });
   elements.googleLoginButton.addEventListener("click", handleGoogleLogin);
