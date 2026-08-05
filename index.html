@@ -72,7 +72,8 @@
         <label>통합 검색<input id="searchInput" type="search" placeholder="교육명, 부제, 알림 키워드, 강사, 장소, 단체명으로 검색"></label>
         <label>단체<select id="orgFilter"></select></label>
         <label>강사<select id="instructorFilter"></select></label>
-        <label>시간대<select id="timeFilter"><option value="">전체</option><option value="오전">오전</option><option value="오후">오후</option><option value="저녁">저녁</option></select></label>
+        <label class="hidden" id="courseFilterField">강의<select id="courseFilter"><option value="">전체 강의</option></select></label>
+        <label id="timeFilterField">시간대<select id="timeFilter"><option value="">전체</option><option value="오전">오전</option><option value="오후">오후</option><option value="저녁">저녁</option></select></label>
         <label id="statusFilterField">상태<select id="statusFilter"><option value="">전체</option><option value="open">모집 중</option><option value="in_progress">교육 중</option><option value="cancelled">취소</option></select></label>
         <div class="filter-actions">
           <button class="btn small" type="submit">검색하기</button>
@@ -228,6 +229,6 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <!-- public.js를 변경해 배포할 때 v 값도 함께 올려 기존 브라우저 캐시를 교체한다. -->
-  <script type="module" src="./assets/public.js?v=202608051552"></script>
+  <script type="module" src="./assets/public.js?v=202608051637"></script>
 </body>
 </html>

@@ -61,6 +61,7 @@ const state = {
     q: "",
     org: "",
     instructor: "",
+    course: "",
     time: "",
     status: "",
   },
@@ -101,7 +102,10 @@ const elements = {
   searchInput: document.getElementById("searchInput"),
   orgFilter: document.getElementById("orgFilter"),
   instructorFilter: document.getElementById("instructorFilter"),
+  courseFilter: document.getElementById("courseFilter"),
+  courseFilterField: document.getElementById("courseFilterField"),
   timeFilter: document.getElementById("timeFilter"),
+  timeFilterField: document.getElementById("timeFilterField"),
   statusFilter: document.getElementById("statusFilter"),
   statusFilterField: document.getElementById("statusFilterField"),
   searchResetButton: document.getElementById("searchResetButton"),
@@ -1195,12 +1199,18 @@ function pageNeedsSupplementaryData(page) {
   return ["completed", "reviews", "expectations", "archive"].includes(page);
 }
 
-function setPageHeader({ title, description, showCourseTools = false, showStatusFilter = true, summary = "" }) {
+function setPageHeader({ title, description, showCourseTools = false, showContentTools = false, showStatusFilter = true, summary = "" }) {
+  const showFilters = showCourseTools || showContentTools;
   elements.searchTitle.textContent = title;
   elements.viewDescription.textContent = description;
-  elements.courseFilters.classList.toggle("hidden", !showCourseTools);
+  elements.courseFilters.classList.toggle("hidden", !showFilters);
   elements.viewToggle.classList.toggle("hidden", !showCourseTools);
+  elements.courseFilterField?.classList.toggle("hidden", !showContentTools);
+  elements.timeFilterField?.classList.toggle("hidden", showContentTools || !showCourseTools);
   elements.statusFilterField?.classList.toggle("hidden", !showCourseTools || !showStatusFilter);
+  elements.searchInput.placeholder = showContentTools
+    ? "내용, 강의명, 강사, 단체명으로 검색"
+    : "교육명, 부제, 알림 키워드, 강사, 장소, 단체명으로 검색";
   elements.resultSummary.textContent = summary;
   if (!showCourseTools) updateCourseLoadMore();
   document.querySelectorAll(".page-tabs [data-route]").forEach((item) => {
@@ -1393,7 +1403,7 @@ async function resolveDataRequests(requestMap) {
 async function loadSupplementaryData() {
   const sequence = ++supplementaryLoadSequence;
   const supplementaryRequestMap = [
-    ["archives", loadPublicRows("course_archives", { order: "sort_order.asc" })],
+    ["archives", loadPublicRows("course_archives", { order: "created_at.desc" })],
     ["reviews", loadPublicReviews()],
     ["expectations", loadPublicExpectations()],
   ];
@@ -1522,6 +1532,7 @@ function populateFilters() {
   if (!state.fullDataLoaded) {
     populateSelect(elements.orgFilter, "전체 단체", []);
     elements.instructorFilter.innerHTML = `<option value="">전체 강사</option>`;
+    elements.courseFilter.innerHTML = `<option value="">전체 강의</option>`;
     syncCourseFilterInputs();
     return;
   }
@@ -1533,7 +1544,35 @@ function populateFilters() {
   const instructors = [...instructorsById.values()].sort((a, b) => a.name.localeCompare(b.name, "ko"));
   populateSelect(elements.orgFilter, "전체 단체", orgNames);
   elements.instructorFilter.innerHTML = `<option value="">전체 강사</option>${instructors.map((instructor) => `<option value="${escapeHtml(instructor.id)}">${escapeHtml(instructor.name)}</option>`).join("")}`;
+  const courses = state.composedCourses.slice().sort((a, b) => (
+    new Date(courseScheduleStart(b) || 0).getTime() - new Date(courseScheduleStart(a) || 0).getTime()
+    || String(a.title || "").localeCompare(String(b.title || ""), "ko")
+  ));
+  elements.courseFilter.innerHTML = `<option value="">전체 강의</option>${courses.map(courseFilterOptionHtml).join("")}`;
   syncCourseFilterInputs();
+}
+
+function courseFilterOptionHtml(course) {
+  return `<option value="${escapeHtml(course.id)}">${escapeHtml(course.title || "교육")} · ${escapeHtml(shortDate(courseScheduleStart(course)))}</option>`;
+}
+
+function populateSupplementaryCourseFilter(page) {
+  const sourceItems = page === "reviews"
+    ? state.reviews
+    : page === "expectations"
+      ? state.expectations
+      : publicArchiveItems();
+  const courseIds = new Set(sourceItems.map((item) => item.course_id).filter(Boolean));
+  const selectedCourseId = String(state.appliedFilters.course || "");
+  if (selectedCourseId) courseIds.add(selectedCourseId);
+  const courses = state.composedCourses
+    .filter((course) => courseIds.has(course.id))
+    .sort((a, b) => (
+      new Date(courseScheduleStart(b) || 0).getTime() - new Date(courseScheduleStart(a) || 0).getTime()
+      || String(a.title || "").localeCompare(String(b.title || ""), "ko")
+    ));
+  elements.courseFilter.innerHTML = `<option value="">전체 강의</option>${courses.map(courseFilterOptionHtml).join("")}`;
+  elements.courseFilter.value = selectedCourseId;
 }
 
 function emptyCourseFilters() {
@@ -1541,6 +1580,7 @@ function emptyCourseFilters() {
     q: "",
     org: "",
     instructor: "",
+    course: "",
     time: "",
     status: "",
   };
@@ -1551,6 +1591,7 @@ function readCourseFilterInputs() {
     q: elements.searchInput.value.trim().toLowerCase(),
     org: elements.orgFilter.value,
     instructor: elements.instructorFilter.value,
+    course: elements.courseFilter.value,
     time: elements.timeFilter.value,
     status: elements.statusFilter.value,
   };
@@ -1560,6 +1601,7 @@ function syncCourseFilterInputs(filters = state.appliedFilters) {
   elements.searchInput.value = filters.q || "";
   elements.orgFilter.value = filters.org || "";
   elements.instructorFilter.value = filters.instructor || "";
+  elements.courseFilter.value = filters.course || "";
   elements.timeFilter.value = filters.time || "";
   elements.statusFilter.value = filters.status || "";
 }
@@ -1570,7 +1612,7 @@ async function applyCourseFilters() {
   state.visibleCourseCount = COURSE_PAGE_SIZE;
   state.coursePageError = "";
   await ensureFullDataLoaded();
-  if (!["courses", "completed"].includes(state.activePage)) {
+  if (!["courses", "completed", "reviews", "expectations", "archive"].includes(state.activePage)) {
     navigate("courses");
     return;
   }
@@ -1583,7 +1625,7 @@ function resetCourseFilters() {
   state.visibleCourseCount = COURSE_PAGE_SIZE;
   state.coursePageError = "";
   syncCourseFilterInputs();
-  if (!["courses", "completed"].includes(state.activePage)) {
+  if (!["courses", "completed", "reviews", "expectations", "archive"].includes(state.activePage)) {
     navigate("courses");
     return;
   }
@@ -1619,6 +1661,35 @@ function filteredCourses() {
       && (!filters.instructor || course.instructor?.id === filters.instructor)
       && (!filters.time || course.timeLabel === filters.time)
       && (isCompletedPage || !filters.status || course.status === filters.status);
+  });
+}
+
+function newestContentFirst(items) {
+  return items.slice().sort((a, b) => (
+    new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+    || String(b.id || "").localeCompare(String(a.id || ""))
+  ));
+}
+
+function filterSupplementaryContent(items, contentText = () => "") {
+  const filters = getFilters();
+  return newestContentFirst(items).filter((item) => {
+    const course = courseById(item.course_id);
+    const haystack = [
+      contentText(item),
+      course?.title,
+      course?.subtitle,
+      course?.summary,
+      course?.description,
+      course?.organization?.name,
+      course?.instructor?.name,
+      course?.venue?.name,
+      course?.venue?.address,
+    ].join(" ").toLowerCase();
+    return (!filters.q || haystack.includes(filters.q))
+      && (!filters.org || course?.organization?.name === filters.org)
+      && (!filters.instructor || course?.instructor?.id === filters.instructor)
+      && (!filters.course || course?.id === filters.course);
   });
 }
 
@@ -2126,15 +2197,18 @@ function reportButtonHtml(contentType, contentId) {
 }
 
 function renderReviewsPage() {
+  populateSupplementaryCourseFilter("reviews");
+  const reviews = filterSupplementaryContent(state.reviews, (review) => review.body || "");
   setPageHeader({
     title: "후기 모아보기",
-    description: "교육에 참여한 사람들이 남긴 후기를 한곳에서 볼 수 있습니다.",
-    summary: `${state.reviews.length.toLocaleString("ko-KR")}개 후기가 있습니다.`,
+    description: "최신 후기부터 확인하고 내용·강의·강사·단체로 찾아볼 수 있습니다.",
+    showContentTools: true,
+    summary: `${reviews.length.toLocaleString("ko-KR")}개 후기가 검색되었습니다.`,
   });
   elements.courseResults.className = "content-stack";
   elements.courseResults.innerHTML = `
     <div class="table-list">
-      ${state.reviews.map((review) => {
+      ${reviews.map((review) => {
         const course = courseById(review.course_id);
         return `
           <article class="review-card">
@@ -2144,7 +2218,7 @@ function renderReviewsPage() {
             </div>
             <p>${escapeHtml(review.body)}</p>
             <div class="footer">
-              <span class="muted">${escapeHtml(course?.title || "교육 정보")} · ${escapeHtml(course?.organization?.name || "")}</span>
+              <span class="muted">${escapeHtml(shortDate(review.created_at))} · ${escapeHtml(course?.title || "교육 정보")} · ${escapeHtml(course?.instructor?.name || "강사 미정")} · ${escapeHtml(course?.organization?.name || "")}</span>
               <div class="actions">
                 ${course ? `<button class="btn small secondary" type="button" data-open-course="${course.id}">교육 보기</button>` : ""}
                 ${reportButtonHtml("review", review.id)}
@@ -2152,21 +2226,24 @@ function renderReviewsPage() {
             </div>
           </article>
         `;
-      }).join("") || `<div class="empty">아직 등록된 후기가 없습니다.</div>`}
+      }).join("") || `<div class="empty">선택한 조건에 맞는 후기가 없습니다.</div>`}
     </div>
   `;
 }
 
 function renderExpectationsPage() {
+  populateSupplementaryCourseFilter("expectations");
+  const expectations = filterSupplementaryContent(state.expectations, (expectation) => expectation.body || "");
   setPageHeader({
     title: "기대평·질문 모아보기",
-    description: "교육 신청자가 남긴 기대평과 강사에게 하고 싶은 질문을 모아볼 수 있습니다.",
-    summary: state.expectations.length ? "공개된 기대평과 질문을 최신순으로 보여드립니다." : "아직 공개된 기대평이나 질문이 없습니다.",
+    description: "최신 기대평과 질문부터 확인하고 내용·강의·강사·단체로 찾아볼 수 있습니다.",
+    showContentTools: true,
+    summary: `${expectations.length.toLocaleString("ko-KR")}개 기대평·질문이 검색되었습니다.`,
   });
   elements.courseResults.className = "content-stack";
   elements.courseResults.innerHTML = `
     <div class="table-list">
-      ${state.expectations.map((expectation) => {
+      ${expectations.map((expectation) => {
         const course = courseById(expectation.course_id);
         return `
           <article class="review-card">
@@ -2176,7 +2253,7 @@ function renderExpectationsPage() {
             </div>
             <p>${escapeHtml(expectation.body)}</p>
             <div class="footer">
-              <span class="muted">${escapeHtml(course?.title || "교육 정보")} · ${escapeHtml(course?.organization?.name || "")}</span>
+              <span class="muted">${escapeHtml(shortDate(expectation.created_at))} · ${escapeHtml(course?.title || "교육 정보")} · ${escapeHtml(course?.instructor?.name || "강사 미정")} · ${escapeHtml(course?.organization?.name || "")}</span>
               <div class="actions">
                 ${course ? `<button class="btn small secondary" type="button" data-open-course="${course.id}">교육 보기</button>` : ""}
                 ${reportButtonHtml("expectation", expectation.id)}
@@ -2184,7 +2261,7 @@ function renderExpectationsPage() {
             </div>
           </article>
         `;
-      }).join("") || `<div class="empty">아직 공개된 기대평이나 질문이 없습니다.</div>`}
+      }).join("") || `<div class="empty">선택한 조건에 맞는 기대평이나 질문이 없습니다.</div>`}
     </div>
   `;
 }
@@ -2219,15 +2296,33 @@ function archiveCourseGroups(items = publicArchiveItems()) {
     groups.get(course.id).items.push(item);
   });
   return [...groups.values()]
-    .map((group) => ({
-      ...group,
-      items: group.items.slice().sort((a, b) => (
-        Number(a.sort_order || 0) - Number(b.sort_order || 0)
-        || new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
-      )),
-    }))
+    .map((group) => {
+      const newestByArchiveGroup = new Map();
+      group.items.forEach((item) => {
+        const groupId = String(item.archive_group_id || item.id || "");
+        const createdAt = new Date(item.created_at || 0).getTime();
+        newestByArchiveGroup.set(groupId, Math.max(newestByArchiveGroup.get(groupId) || 0, createdAt));
+      });
+      const latestCreatedAt = Math.max(0, ...newestByArchiveGroup.values());
+      return {
+        ...group,
+        latestCreatedAt,
+        items: group.items.slice().sort((a, b) => {
+          const aGroupId = String(a.archive_group_id || a.id || "");
+          const bGroupId = String(b.archive_group_id || b.id || "");
+          const groupOrder = (newestByArchiveGroup.get(bGroupId) || 0) - (newestByArchiveGroup.get(aGroupId) || 0);
+          if (groupOrder) return groupOrder;
+          if (aGroupId === bGroupId) {
+            return Number(a.sort_order || 0) - Number(b.sort_order || 0)
+              || new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+          }
+          return String(a.title || "").localeCompare(String(b.title || ""), "ko");
+        }),
+      };
+    })
     .sort((a, b) => (
-      new Date(courseScheduleStart(b.course) || 0).getTime() - new Date(courseScheduleStart(a.course) || 0).getTime()
+      b.latestCreatedAt - a.latestCreatedAt
+      || new Date(courseScheduleStart(b.course) || 0).getTime() - new Date(courseScheduleStart(a.course) || 0).getTime()
       || String(a.course.title || "").localeCompare(String(b.course.title || ""), "ko")
     ));
 }
@@ -3139,7 +3234,8 @@ function openMyInfo() {
 }
 
 function renderArchivePage() {
-  const items = publicArchiveItems();
+  populateSupplementaryCourseFilter("archive");
+  const items = filterSupplementaryContent(publicArchiveItems(), (item) => `${item.title || ""} ${item.caption || ""} ${archiveTypeLabel(item.type)}`);
   const filterCounts = items.reduce((counts, item) => {
     const type = archiveFilterType(item.type);
     counts[type] = (counts[type] || 0) + 1;
@@ -3154,7 +3250,8 @@ function renderArchivePage() {
   const filterLabels = { photo: "사진", video: "영상", material: "자료" };
   setPageHeader({
     title: "사진·영상·자료",
-    description: "교육 현장의 사진과 영상, PDF 자료를 모아볼 수 있습니다.",
+    description: "최근 등록된 현장 기록부터 확인하고 제목·강의·강사·단체로 찾아볼 수 있습니다.",
+    showContentTools: true,
     summary: `${filteredItems.length.toLocaleString("ko-KR")}개 자료가 있습니다.`,
   });
   elements.courseResults.className = "archive-page";
@@ -3168,13 +3265,13 @@ function renderArchivePage() {
       </div>
     ` : ""}
     <div class="archive-course-list">
-      ${groups.map(({ course, items: courseItems }) => `
+      ${groups.map(({ course, items: courseItems, latestCreatedAt }) => `
         <section class="archive-course-group" aria-labelledby="archive-course-${escapeHtml(course.id)}">
           <div class="archive-course-heading">
             <div>
               <span class="eyebrow">${escapeHtml(course.organization?.name || "모두의 인문학")}</span>
               <h3 id="archive-course-${escapeHtml(course.id)}">${escapeHtml(course.title || "교육 기록")}</h3>
-              <p class="muted">${escapeHtml(formatDateTime(courseScheduleStart(course)))}</p>
+              <p class="muted">${escapeHtml(formatDateTime(courseScheduleStart(course)))} · ${escapeHtml(course.instructor?.name || "강사 미정")} · 최근 등록 ${escapeHtml(shortDate(latestCreatedAt))}</p>
             </div>
             <span class="badge gray">${courseItems.length.toLocaleString("ko-KR")}개</span>
           </div>
