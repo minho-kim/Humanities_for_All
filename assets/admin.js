@@ -59,6 +59,7 @@ const state = {
     instructor: "",
     venue: "",
     course: "",
+    archive: "",
   },
   adminBrowse: {
     kind: "",
@@ -94,6 +95,17 @@ const state = {
     courseId: "",
   },
   selectedArchiveId: "",
+  archiveEditor: {
+    pendingFiles: [],
+    removedArchiveIds: [],
+    existingCaptions: {},
+  },
+  archiveViewer: {
+    items: [],
+    index: 0,
+    pointerStart: null,
+    suppressClickUntil: 0,
+  },
   organizations: [],
   instructors: [],
   venues: [],
@@ -365,9 +377,11 @@ function trapModalFocus(event, modal) {
   }
 }
 
-function openAdminNotice(title, bodyHtml) {
+function openAdminNotice(title, bodyHtml, { wide = false } = {}) {
   elements.adminNoticeTitle.textContent = title;
   elements.adminNoticeBody.innerHTML = bodyHtml;
+  const card = elements.adminNoticeModal.querySelector(".modal-card");
+  if (card) card.style.maxWidth = wide ? "960px" : "640px";
   openModal(elements.adminNoticeModal);
 }
 
@@ -629,6 +643,106 @@ function courseSearchText(course) {
 
 function archiveById(archiveId) {
   return state.archives.find((archive) => archive.id === archiveId);
+}
+
+function archiveGroupId(archive) {
+  return String(archive?.archive_group_id || archive?.id || "");
+}
+
+function archiveGroups() {
+  const groups = new Map();
+  state.archives.forEach((archive) => {
+    const groupId = archiveGroupId(archive);
+    if (!groupId) return;
+    if (!groups.has(groupId)) groups.set(groupId, []);
+    groups.get(groupId).push(archive);
+  });
+  return [...groups.entries()]
+    .map(([id, items]) => {
+      const sortedItems = items.slice().sort((a, b) => {
+        const orderDifference = Number(a.sort_order || 0) - Number(b.sort_order || 0);
+        if (orderDifference) return orderDifference;
+        return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+      });
+      const primary = sortedItems[0] || {};
+      return {
+        id,
+        course_id: primary.course_id || "",
+        type: primary.type || "photo",
+        title: primary.title || "",
+        url: primary.url || "",
+        caption: primary.caption || "",
+        created_at: sortedItems.reduce((latest, item) => (
+          new Date(item.created_at || 0).getTime() > new Date(latest || 0).getTime() ? item.created_at : latest
+        ), primary.created_at || ""),
+        items: sortedItems,
+      };
+    })
+    .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+}
+
+function archiveGroupById(groupId) {
+  return archiveGroups().find((group) => group.id === groupId);
+}
+
+function archiveGroupSearchText(group) {
+  const course = courseById(group.course_id);
+  const organization = organizationById(course?.organization_id);
+  return [
+    group.title,
+    archiveTypeLabel(group.type),
+    course?.title,
+    course?.subtitle,
+    organization?.name,
+    shortDate(course?.starts_at),
+    ...group.items.flatMap((item) => [item.caption, item.url]),
+  ].join(" ");
+}
+
+function archiveGroupResultHtml(group, selectedId = "") {
+  const course = courseById(group.course_id);
+  const photoCount = group.type === "photo" ? group.items.length : 0;
+  return `
+    <button class="admin-search-result ${group.id === selectedId ? "selected" : ""}" type="button" data-admin-select="archive" data-entity-id="${escapeHtml(group.id)}">
+      <span class="admin-search-title">
+        <strong>${escapeHtml(group.title || "제목 없음")}</strong>
+        <span class="badge">${escapeHtml(archiveTypeLabel(group.type))}${photoCount ? ` ${photoCount}장` : ""}</span>
+      </span>
+      <span class="muted">${escapeHtml(course?.title || "교육 미정")} · ${escapeHtml(shortDate(course?.starts_at) || "일정 미정")}</span>
+    </button>
+  `;
+}
+
+function newArchiveGroupId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const value = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
+}
+
+function syncArchivePendingCaptions() {
+  state.archiveEditor.pendingFiles.forEach((item) => {
+    const input = document.querySelector(`[data-pending-archive-caption="${CSS.escape(item.key)}"]`);
+    if (input instanceof HTMLTextAreaElement) item.caption = input.value;
+  });
+}
+
+function syncArchiveExistingCaptions() {
+  document.querySelectorAll("[data-existing-archive-caption]").forEach((input) => {
+    if (input instanceof HTMLTextAreaElement) state.archiveEditor.existingCaptions[input.dataset.existingArchiveCaption] = input.value;
+  });
+}
+
+function resetArchiveEditor() {
+  state.archiveEditor.pendingFiles.forEach((item) => {
+    if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+  });
+  state.archiveEditor.pendingFiles = [];
+  state.archiveEditor.removedArchiveIds = [];
+  state.archiveEditor.existingCaptions = {};
 }
 
 function seoulDateKey(value) {
@@ -2301,6 +2415,7 @@ function clearCoursePickerSelection(kind) {
 
 function adminSearchSelectedLabel(kind, item) {
   if (!item) return "";
+  if (kind === "archive") return `${item.title || "제목 없음"} · ${courseName(item.course_id)}`;
   if (kind === "course") return item.title || "교육명 없음";
   if (kind === "organization") return item.name || "단체명 없음";
   if (kind === "venue") return `${item.name || "장소명 없음"}${item.address ? ` · ${item.address}` : ""}`;
@@ -2389,9 +2504,9 @@ function adminSearchResultConfig(kind) {
       emptyQueryText: "장소명, 주소, 세부 장소, 지도 URL 중 하나를 입력하면 검색 결과가 표시됩니다.",
     };
   }
-    if (kind === "course") {
-      const selectedId = state.adminSelections.courseId || "";
-      return {
+  if (kind === "course") {
+    const selectedId = state.adminSelections.courseId || "";
+    return {
       query: state.adminSearch.course,
       selectedItem: state.courses.find((course) => course.id === selectedId) || {},
       items: state.courses,
@@ -2400,6 +2515,19 @@ function adminSearchResultConfig(kind) {
       emptyText: "검색어에 맞는 교육이 없습니다.",
       hideResultsUntilQuery: true,
       emptyQueryText: "교육명, 부제, 알림 키워드, 단체, 강사, 장소, 상태 중 하나를 입력하면 검색 결과가 표시됩니다.",
+    };
+  }
+  if (kind === "archive") {
+    const selectedId = state.selectedArchiveId || "";
+    return {
+      query: state.adminSearch.archive,
+      selectedItem: archiveGroupById(selectedId) || {},
+      items: archiveGroups(),
+      textBuilder: archiveGroupSearchText,
+      resultBuilder: archiveGroupResultHtml,
+      emptyText: "검색어에 맞는 아카이브가 없습니다.",
+      hideResultsUntilQuery: true,
+      emptyQueryText: "아카이브 제목, 교육명, 단체명, 설명, 유형 중 하나를 입력하면 검색 결과가 표시됩니다.",
     };
   }
   return null;
@@ -2411,6 +2539,7 @@ function adminBrowseKindLabel(kind) {
     instructor: "강사",
     venue: "장소",
     course: "교육",
+    archive: "아카이브",
   }[kind] || "항목";
 }
 
@@ -2420,6 +2549,7 @@ function adminBrowseSearchPlaceholder(kind) {
     instructor: "강사명, 직함, 소개, 홈페이지/SNS로 목록 좁히기",
     venue: "장소명, 주소, 세부 장소, 소유 단체로 목록 좁히기",
     course: "교육명, 부제, 알림 키워드, 단체, 강사, 장소로 목록 좁히기",
+    archive: "제목, 교육명, 단체명, 설명, 유형으로 목록 좁히기",
   }[kind] || "목록에서 검색";
 }
 
@@ -2427,6 +2557,10 @@ function sortedAdminBrowseItems(kind, items) {
   return items.slice().sort((a, b) => {
     if (kind === "course") {
       const timeDifference = new Date(b.starts_at || 0).getTime() - new Date(a.starts_at || 0).getTime();
+      if (timeDifference) return timeDifference;
+    }
+    if (kind === "archive") {
+      const timeDifference = new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
       if (timeDifference) return timeDifference;
     }
     return rosterNameSorter.compare(adminSearchSelectedLabel(kind, a), adminSearchSelectedLabel(kind, b));
@@ -2517,7 +2651,7 @@ function courseDeleteBlockNotice(course) {
 function courseRelatedCounts(courseId) {
   return {
     sessions: state.sessions.filter((session) => session.course_id === courseId).length,
-    archives: state.archives.filter((archive) => archive.course_id === courseId).length,
+    archives: archiveGroups().filter((archive) => archive.course_id === courseId).length,
     applications: state.applications.filter((application) => application.course_id === courseId).length,
     attendanceDocuments: state.attendanceDocuments.filter((document) => document.course_id === courseId).length,
     reviews: state.reviews.filter((review) => review.course_id === courseId).length,
@@ -3413,7 +3547,7 @@ function renderDashboard() {
       <div class="stat admin-stat-card"><strong>${state.organizations.length}</strong><span>단체</span></div>
       <div class="stat admin-stat-card"><strong>${state.courses.length}</strong><span>교육</span></div>
       <div class="stat admin-stat-card"><strong>${applications.length}</strong><span>신청</span></div>
-      <div class="stat admin-stat-card"><strong>${state.archives.length}</strong><span>아카이브</span></div>
+      <div class="stat admin-stat-card"><strong>${archiveGroups().length}</strong><span>아카이브</span></div>
       <div class="stat admin-stat-card"><strong>${state.feedbacks.length}</strong><span>교육 피드백</span></div>
       <div class="stat admin-stat-card"><strong>${state.reviews.length}</strong><span>후기</span></div>
       <div class="stat admin-stat-card"><strong>${roundtablePeople}</strong><span>정담회 동의</span></div>
@@ -4599,54 +4733,212 @@ function renderCourses() {
   prepareVisibleAdminFormDraft();
 }
 
-function renderArchive() {
-  const selectedId = state.selectedArchiveId || document.getElementById("archivePicker")?.value || "";
-  const selectedArchive = archiveById(selectedId) || {};
-  state.selectedArchiveId = selectedArchive.id || "";
-  const isEditing = Boolean(selectedArchive.id);
-  elements.adminContent.innerHTML = `
-    <h2>아카이브 등록</h2>
-    <p class="muted">영상은 YouTube/Vimeo 등 외부 링크를 권장합니다. 사진이나 PDF는 Supabase Storage에 업로드할 수 있습니다. 등록한 아카이브는 공개 페이지에 노출되므로 참여자 촬영·공개 동의를 확인한 자료만 올려 주세요.</p>
-    <label>수정할 아카이브 선택<select id="archivePicker"><option value="">새 아카이브</option>${state.archives.map((item) => `<option value="${item.id}" ${item.id === selectedArchive.id ? "selected" : ""}>${escapeHtml(item.title)} · ${escapeHtml(courseName(item.course_id))}</option>`).join("")}</select></label>
-    <form id="archiveForm" class="section">
-      <input type="hidden" name="archive_id" value="${escapeHtml(selectedArchive.id || "")}">
-      <div>
-        <span class="course-picker-label">교육 *</span>
-        ${renderCourseFilterControl("archive", selectedArchive.course_id || "", { emptyLabel: "교육을 선택하지 않았습니다.", required: true })}
+function archiveEditorActiveItems(group) {
+  const removed = new Set(state.archiveEditor.removedArchiveIds);
+  return (group?.items || []).filter((item) => !removed.has(item.id));
+}
+
+function archiveEditorCaption(item) {
+  return Object.hasOwn(state.archiveEditor.existingCaptions, item.id)
+    ? state.archiveEditor.existingCaptions[item.id]
+    : String(item.caption || "");
+}
+
+function archiveEditorPhotoCard(item) {
+  const imageUrl = normalizeSafeUrl(item.url, URL_RULES.image);
+  if (!imageUrl) return "";
+  return `
+    <article class="archive-editor-photo">
+      <button class="archive-editor-photo-preview" type="button" data-preview-archive-photo="existing" data-archive-photo-id="${escapeHtml(item.id)}" aria-label="${escapeHtml(item.title || "사진")} 크게 보기">
+        <img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(archiveEditorCaption(item) || item.title || "아카이브 사진")}" loading="lazy" decoding="async">
+      </button>
+      <button class="archive-editor-photo-remove" type="button" data-remove-existing-archive-photo="${escapeHtml(item.id)}" aria-label="이 사진 삭제 예약">×</button>
+      <label>사진 설명(선택)<textarea data-existing-archive-caption="${escapeHtml(item.id)}" name="existing_caption_${escapeHtml(item.id)}" placeholder="이 사진에만 표시할 설명">${escapeHtml(archiveEditorCaption(item))}</textarea></label>
+    </article>
+  `;
+}
+
+function pendingArchivePhotoCard(item) {
+  return `
+    <article class="archive-editor-photo pending">
+      <button class="archive-editor-photo-preview" type="button" data-preview-archive-photo="pending" data-archive-photo-id="${escapeHtml(item.key)}" aria-label="${escapeHtml(item.file.name || "새 사진")} 크게 보기">
+        <img src="${escapeHtml(item.previewUrl)}" alt="${escapeHtml(item.file.name || "새 아카이브 사진")}">
+      </button>
+      <button class="archive-editor-photo-remove" type="button" data-remove-pending-archive-photo="${escapeHtml(item.key)}" aria-label="선택한 사진 빼기">×</button>
+      <span class="badge green">새 사진</span>
+      <label>사진 설명(선택)<textarea data-pending-archive-caption="${escapeHtml(item.key)}" name="pending_caption_${escapeHtml(item.key)}" placeholder="이 사진에만 표시할 설명">${escapeHtml(item.caption || "")}</textarea></label>
+    </article>
+  `;
+}
+
+function archiveEditorPreviewHtml(group, type) {
+  if (type === "photo") {
+    const existingItems = archiveEditorActiveItems(group).filter((item) => item.type === "photo");
+    const pendingItems = state.archiveEditor.pendingFiles.filter((item) => item.archiveType === "photo");
+    const removedItems = (group?.items || []).filter((item) => state.archiveEditor.removedArchiveIds.includes(item.id));
+    return `
+      <div class="archive-editor-grid">
+        ${existingItems.map(archiveEditorPhotoCard).join("")}
+        ${pendingItems.map(pendingArchivePhotoCard).join("")}
       </div>
-      <div class="admin-grid" style="margin-top: 10px;">
-        <label>자료 유형<select name="type"><option value="photo" ${selectedArchive.type === "photo" ? "selected" : ""}>사진</option><option value="video" ${selectedArchive.type === "video" ? "selected" : ""}>영상</option><option value="file" ${selectedArchive.type === "file" ? "selected" : ""}>파일</option><option value="link" ${selectedArchive.type === "link" ? "selected" : ""}>링크</option></select></label>
-        <label>제목<input name="title" value="${escapeHtml(selectedArchive.title || "")}" required></label>
-      </div>
-      <label style="margin-top: 10px;">외부 URL<input name="url" value="${escapeHtml(selectedArchive.url || "")}" placeholder="영상 링크 또는 업로드 파일이 없을 때 입력"></label>
-      <label style="margin-top: 10px;">파일 업로드<input name="files" type="file" accept="image/*,.pdf" multiple></label>
-      <p class="media-upload-note">사진은 여러 장을 선택할 수 있습니다. 기존 아카이브 수정 중 여러 장을 선택하면 첫 파일은 현재 항목을 대체하고 나머지는 새 항목으로 추가됩니다.</p>
-      <label style="margin-top: 10px;">설명(선택)<textarea name="caption">${escapeHtml(selectedArchive.caption || "")}</textarea></label>
-      <p class="media-upload-note">아카이브는 공개 자료입니다. 내부 운영 문서나 개인정보가 포함된 파일은 업로드하지 마세요.</p>
-      <div class="actions" style="margin-top: 14px;">
-        <button class="btn" type="submit">${isEditing ? "아카이브 수정" : "아카이브 등록"}</button>
-        <button class="btn secondary" type="button" id="newArchiveButton">새 아카이브 입력</button>
-        ${isEditing ? `<button class="btn danger" type="button" data-delete-archive="${escapeHtml(selectedArchive.id)}">삭제</button>` : ""}
-      </div>
-    </form>
-    <h3>최근 아카이브</h3>
-    <div class="table-list">
-      ${state.archives.slice(0, 15).map((item) => `
-        <div class="table-row">
-          <div class="row-top">
-            <strong>${escapeHtml(item.title)}</strong>
-            <span class="badge">${escapeHtml(archiveTypeLabel(item.type))}</span>
-          </div>
-          <span class="muted">${escapeHtml(courseName(item.course_id))}${item.caption ? ` · ${escapeHtml(item.caption)}` : ""}</span>
-          <div class="actions" style="margin-top: 10px;">
-            <button class="btn small secondary" type="button" data-edit-archive="${escapeHtml(item.id)}">수정</button>
-            <button class="btn small danger" type="button" data-delete-archive="${escapeHtml(item.id)}">삭제</button>
-          </div>
+      ${existingItems.length || pendingItems.length ? "" : `<div class="empty">선택된 사진이 없습니다. 아래에서 사진을 추가해 주세요.</div>`}
+      ${removedItems.length ? `
+        <div class="archive-editor-removed">
+          <strong>저장하면 삭제되는 사진 ${removedItems.length}장</strong>
+          ${removedItems.map((item) => `<button class="btn small secondary" type="button" data-restore-existing-archive-photo="${escapeHtml(item.id)}">${escapeHtml(item.caption || item.title || "사진")} 되돌리기</button>`).join("")}
         </div>
-      `).join("") || `<div class="empty">등록된 자료가 없습니다.</div>`}
+      ` : ""}
+    `;
+  }
+  if (type === "file") {
+    const pending = state.archiveEditor.pendingFiles[0];
+    return `
+      ${group?.url ? `<p class="media-upload-note">현재 파일: <a href="${escapeHtml(normalizeSafeUrl(group.url, URL_RULES.archive))}" target="_blank" rel="noopener noreferrer">새 창에서 확인</a></p>` : ""}
+      ${pending ? `<div class="archive-editor-file"><span>${escapeHtml(pending.file.name)}</span><button class="btn small secondary" type="button" data-remove-pending-archive-photo="${escapeHtml(pending.key)}">선택 취소</button></div>` : ""}
+    `;
+  }
+  return "";
+}
+
+function updateArchiveEditorPreviews() {
+  const container = document.querySelector("[data-archive-editor-previews]");
+  const form = document.getElementById("archiveForm");
+  if (!container || !(form instanceof HTMLFormElement)) return;
+  syncArchiveExistingCaptions();
+  syncArchivePendingCaptions();
+  const type = String(new FormData(form).get("type") || "photo");
+  container.innerHTML = archiveEditorPreviewHtml(archiveGroupById(state.selectedArchiveId), type);
+}
+
+function syncArchiveTypeFields() {
+  const form = document.getElementById("archiveForm");
+  if (!(form instanceof HTMLFormElement)) return;
+  const type = String(new FormData(form).get("type") || "photo");
+  const urlField = form.querySelector("[data-archive-url-field]");
+  const uploadField = form.querySelector("[data-archive-upload-field]");
+  const uploadNote = form.querySelector("[data-archive-upload-note]");
+  const captionField = form.querySelector("[data-archive-shared-caption-field]");
+  const fileInput = form.querySelector("input[name='files']");
+  if (urlField) urlField.hidden = !["video", "link"].includes(type);
+  if (uploadField) uploadField.hidden = !["photo", "file"].includes(type);
+  if (uploadNote) uploadNote.hidden = !["photo", "file"].includes(type);
+  if (captionField) captionField.hidden = type === "photo";
+  if (fileInput instanceof HTMLInputElement) {
+    fileInput.accept = type === "photo" ? "image/*" : ".pdf,application/pdf";
+    fileInput.multiple = type === "photo";
+  }
+  updateArchiveEditorPreviews();
+}
+
+function adminArchivePreviewItems() {
+  const group = archiveGroupById(state.selectedArchiveId);
+  return [
+    ...archiveEditorActiveItems(group)
+      .filter((item) => item.type === "photo")
+      .map((item) => ({ id: item.id, source: "existing", url: normalizeSafeUrl(item.url, URL_RULES.image), title: item.title || group?.title || "사진", caption: archiveEditorCaption(item) })),
+    ...state.archiveEditor.pendingFiles
+      .filter((item) => item.archiveType === "photo")
+      .map((item) => ({ id: item.key, source: "pending", url: item.previewUrl, title: item.file.name || "새 사진", caption: item.caption || "" })),
+  ].filter((item) => item.url);
+}
+
+function adminArchiveViewerHtml() {
+  const items = state.archiveViewer.items;
+  const item = items[state.archiveViewer.index];
+  if (!item) return `<div class="empty">확인할 사진이 없습니다.</div>`;
+  return `
+    <div class="archive-photo-viewer" data-admin-archive-viewer>
+      <div class="archive-photo-stage" data-admin-archive-photo-stage>
+        <img src="${escapeHtml(item.url)}" alt="${escapeHtml(item.caption || item.title || "아카이브 사진")}">
+        <button class="archive-photo-nav prev" type="button" data-admin-archive-photo-step="-1" ${state.archiveViewer.index === 0 ? "disabled" : ""} aria-label="이전 사진">‹</button>
+        <button class="archive-photo-nav next" type="button" data-admin-archive-photo-step="1" ${state.archiveViewer.index >= items.length - 1 ? "disabled" : ""} aria-label="다음 사진">›</button>
+      </div>
+      <div class="archive-photo-meta"><strong>${escapeHtml(item.title || "사진")}</strong><span>${state.archiveViewer.index + 1} / ${items.length}</span></div>
+      ${item.caption ? `<p class="archive-photo-caption">${escapeHtml(item.caption)}</p>` : ""}
+      <p class="archive-photo-help muted">모바일에서는 좌우로 밀고, PC에서는 화살표 키·버튼·사진 좌우를 눌러 넘길 수 있습니다.</p>
     </div>
   `;
+}
+
+function showAdminArchiveViewerAt(index) {
+  const nextIndex = Math.max(0, Math.min(state.archiveViewer.items.length - 1, Number(index)));
+  state.archiveViewer.index = nextIndex;
+  elements.adminNoticeBody.innerHTML = adminArchiveViewerHtml();
+}
+
+function openAdminArchiveViewer(source, id) {
+  syncArchivePendingCaptions();
+  const items = adminArchivePreviewItems();
+  const index = items.findIndex((item) => item.source === source && item.id === id);
+  if (index < 0) return;
+  state.archiveViewer.items = items;
+  state.archiveViewer.index = index;
+  state.archiveViewer.pointerStart = null;
+  openAdminNotice("사진 미리보기", adminArchiveViewerHtml(), { wide: true });
+}
+
+function stepAdminArchiveViewer(direction) {
+  showAdminArchiveViewerAt(state.archiveViewer.index + Number(direction));
+}
+
+function renderArchive() {
+  const selectedGroup = archiveGroupById(state.selectedArchiveId) || {};
+  state.selectedArchiveId = selectedGroup.id || "";
+  const isEditing = Boolean(selectedGroup.id);
+  const type = selectedGroup.type || "photo";
+  elements.adminContent.innerHTML = `
+    <div class="section-heading">
+      <div>
+        <h2>아카이브 관리</h2>
+        <p class="muted">사진 여러 장을 한 아카이브로 묶고 사진별 설명을 선택해서 남길 수 있습니다. 영상은 YouTube/Vimeo 등 외부 링크를 권장합니다.</p>
+      </div>
+    </div>
+    ${renderAdminSearchPicker({
+      kind: "archive",
+      label: "수정할 아카이브 검색",
+      placeholder: "제목, 교육명, 단체명, 설명, 유형으로 검색",
+      query: state.adminSearch.archive,
+      selectedItem: selectedGroup,
+      items: archiveGroups(),
+      textBuilder: archiveGroupSearchText,
+      resultBuilder: archiveGroupResultHtml,
+      emptyText: "검색어에 맞는 아카이브가 없습니다.",
+      hideResultsUntilQuery: true,
+      emptyQueryText: "제목, 교육명, 단체명, 설명, 유형 중 하나를 입력하면 검색 결과가 표시됩니다.",
+    })}
+    <form id="archiveForm" class="section" style="margin-top: 14px;">
+      <input type="hidden" name="archive_id" value="${escapeHtml(selectedGroup.id || "")}">
+      <div>
+        <span class="course-picker-label">교육 *</span>
+        ${renderCourseFilterControl("archive", selectedGroup.course_id || "", { emptyLabel: "교육을 선택하지 않았습니다.", required: true })}
+      </div>
+      <div class="admin-grid" style="margin-top: 10px;">
+        <label>자료 유형
+          <select name="type" ${isEditing ? "disabled" : ""}>
+            <option value="photo" ${type === "photo" ? "selected" : ""}>사진 앨범</option>
+            <option value="video" ${type === "video" ? "selected" : ""}>영상</option>
+            <option value="file" ${type === "file" ? "selected" : ""}>파일</option>
+            <option value="link" ${type === "link" ? "selected" : ""}>링크</option>
+          </select>
+          ${isEditing ? `<input type="hidden" name="type" value="${escapeHtml(type)}"><span class="muted">기존 아카이브의 자료 유형은 바꿀 수 없습니다.</span>` : ""}
+        </label>
+        <label>아카이브 제목<input name="title" value="${escapeHtml(selectedGroup.title || "")}" required placeholder="사진 전체가 함께 사용할 제목"></label>
+      </div>
+      <label data-archive-url-field style="margin-top: 10px;" ${["video", "link"].includes(type) ? "" : "hidden"}>외부 URL<input name="url" value="${escapeHtml(["video", "link"].includes(type) ? selectedGroup.url || "" : "")}" placeholder="https://..."></label>
+      <div data-archive-editor-previews style="margin-top: 12px;">${archiveEditorPreviewHtml(selectedGroup, type)}</div>
+      <label data-archive-upload-field style="margin-top: 10px;" ${["photo", "file"].includes(type) ? "" : "hidden"}><span data-archive-upload-label>${type === "photo" ? "사진 추가" : "PDF 업로드"}</span><input name="files" type="file" accept="${type === "photo" ? "image/*" : ".pdf,application/pdf"}" ${type === "photo" ? "multiple" : ""}></label>
+      <p class="media-upload-note" data-archive-upload-note>${type === "photo" ? "여러 사진을 한 번에 고를 수 있습니다. 미리보기의 ×는 즉시 삭제하지 않고, 저장할 때 반영합니다." : "파일은 15MB 이하 PDF를 업로드해 주세요."}</p>
+      <label data-archive-shared-caption-field style="margin-top: 10px;" ${type === "photo" ? "hidden" : ""}>설명(선택)<textarea name="caption">${escapeHtml(selectedGroup.caption || "")}</textarea></label>
+      <p class="media-upload-note">아카이브는 공개 자료입니다. 참여자 촬영·공개 동의를 확인하고 개인정보나 내부 문서가 포함되지 않았는지 확인해 주세요.</p>
+      <div class="actions" style="margin-top: 14px;">
+        <button class="btn" type="submit">${isEditing ? "아카이브 저장" : "아카이브 등록"}</button>
+        <button class="btn secondary" type="button" id="newArchiveButton">새 아카이브 입력</button>
+        ${isEditing ? `<button class="btn danger" type="button" data-delete-archive="${escapeHtml(selectedGroup.id)}">아카이브 전체 삭제</button>` : ""}
+      </div>
+    </form>
+  `;
   prepareVisibleAdminFormDraft();
+  syncArchiveTypeFields();
 }
 
 function filteredFeedbacks() {
@@ -5711,20 +6003,66 @@ async function deleteCourse(courseId) {
   return true;
 }
 
+function queueArchiveFiles(files, type) {
+  const selectedFiles = Array.from(files || []).filter(hasSelectedFile);
+  if (!selectedFiles.length) return;
+  const expectedType = type === "photo" ? "photo" : type === "file" ? "file" : "";
+  if (!expectedType) throw new Error("영상과 링크는 외부 URL을 입력해 주세요.");
+  selectedFiles.forEach((file) => {
+    const rule = ARCHIVE_FILE_TYPES.get(file.type);
+    if (!rule || rule.type !== expectedType) {
+      throw new Error(type === "photo" ? "사진은 JPG, PNG, WEBP, GIF, HEIC 형식만 선택할 수 있습니다." : "파일 자료는 PDF만 선택할 수 있습니다.");
+    }
+    if (file.size > ARCHIVE_FILE_MAX_BYTES) throw new Error("파일 한 개당 15MB 이하로 선택해 주세요.");
+  });
+  syncArchivePendingCaptions();
+  if (type === "file") {
+    state.archiveEditor.pendingFiles.forEach((item) => {
+      if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+    });
+    state.archiveEditor.pendingFiles = [];
+  }
+  const additions = (type === "file" ? selectedFiles.slice(0, 1) : selectedFiles).map((file) => ({
+    key: newArchiveGroupId(),
+    file,
+    archiveType: expectedType,
+    previewUrl: expectedType === "photo" ? URL.createObjectURL(file) : "",
+    caption: "",
+  }));
+  state.archiveEditor.pendingFiles.push(...additions);
+  updateArchiveEditorPreviews();
+}
+
+async function updateArchiveRows(rows) {
+  for (const row of rows) {
+    const { id, ...payload } = row;
+    const { error } = await supabase.from("course_archives").update(payload).eq("id", id);
+    if (error) throw error;
+  }
+}
+
+async function deleteArchiveRowsAndFiles(rows) {
+  if (!rows.length) return;
+  const ids = rows.map((row) => row.id);
+  const paths = [...new Set(rows.map((row) => archiveStoragePathFromUrl(row.url)).filter(Boolean))];
+  const { error } = await supabase.from("course_archives").delete().in("id", ids);
+  if (error) throw error;
+  for (const path of paths) await removeUploadedArchiveFile(path);
+}
+
 async function saveArchive(event) {
   event.preventDefault();
   const form = getSubmitForm(event);
   if (!form) return;
+  syncArchivePendingCaptions();
   const formData = new FormData(form);
-  const archiveId = String(formData.get("archive_id") || "");
-  const existingArchive = archiveById(archiveId);
+  const selectedGroupId = String(formData.get("archive_id") || "");
+  const existingGroup = archiveGroupById(selectedGroupId);
+  const groupId = existingGroup?.id || newArchiveGroupId();
   const courseId = String(formData.get("course_id") || "");
   const title = String(formData.get("title") || "").trim();
-  let url = requireSafeUrl(formData.get("url"), "외부 URL", URL_RULES.archive);
-  const files = Array.from(form.querySelector("input[name='files']")?.files || []).filter(hasSelectedFile);
-  let archiveType = String(formData.get("type"));
+  const archiveType = String(formData.get("type") || "photo");
   const caption = String(formData.get("caption") || "").trim();
-  const isPublic = true;
 
   if (!courseId) {
     showToast("교육을 선택해 주세요.");
@@ -5734,93 +6072,113 @@ async function saveArchive(event) {
     showToast("아카이브 제목을 입력해 주세요.");
     return;
   }
-
+  const pendingFiles = state.archiveEditor.pendingFiles.slice();
   const uploadedFiles = [];
-  let primarySaved = false;
+  let insertedRowsSaved = false;
   try {
-    for (const file of files) {
-      uploadedFiles.push(await uploadArchiveFile(file, courseId, title));
-    }
-
-    const primaryUpload = uploadedFiles[0] || null;
-    if (primaryUpload) {
-      url = primaryUpload.publicUrl;
-      archiveType = primaryUpload.archiveType;
-    }
-
-    if (!url) {
-      showToast("외부 URL 또는 업로드 파일이 필요합니다.");
-      return;
-    }
-
-    const primaryPayload = {
-      course_id: courseId,
-      type: archiveType,
-      title,
-      url,
-      caption,
-      is_public: isPublic,
-      created_by: state.user.id,
-    };
-
-    if (existingArchive) {
-      const oldStoragePath = primaryUpload ? archiveStoragePathFromUrl(existingArchive.url) : "";
-      const { error } = await supabase.from("course_archives").update(primaryPayload).eq("id", existingArchive.id);
-      if (error) throw error;
-      primarySaved = true;
-      if (primaryUpload && oldStoragePath && oldStoragePath !== primaryUpload.path) await removeUploadedArchiveFile(oldStoragePath);
-    } else {
-      const { error } = await supabase.from("course_archives").insert(primaryPayload);
-      if (error) throw error;
-      primarySaved = true;
-    }
-
-    const extraUploads = uploadedFiles.slice(1);
-    if (extraUploads.length) {
-      const rows = extraUploads.map((uploaded, index) => ({
-        course_id: courseId,
-        type: uploaded.archiveType,
-        title: uploadedFiles.length > 1 ? `${title} ${index + 2}` : title,
-        url: uploaded.publicUrl,
-        caption,
-        is_public: isPublic,
-        created_by: state.user.id,
-      }));
-      const { error } = await supabase.from("course_archives").insert(rows);
-      if (error) {
-        await Promise.all(extraUploads.map((uploaded) => removeUploadedArchiveFile(uploaded.path)));
-        throw error;
+    if (archiveType === "photo") {
+      const activeItems = archiveEditorActiveItems(existingGroup).filter((item) => item.type === "photo");
+      const pendingPhotos = pendingFiles.filter((item) => item.archiveType === "photo");
+      if (!activeItems.length && !pendingPhotos.length) {
+        showToast("사진을 한 장 이상 선택해 주세요.");
+        return;
       }
+      for (const item of pendingPhotos) {
+        const uploaded = await uploadArchiveFile(item.file, courseId, title);
+        uploadedFiles.push({ ...uploaded, caption: String(item.caption || "").trim() });
+      }
+      await updateArchiveRows(activeItems.map((item, index) => ({
+        id: item.id,
+        course_id: courseId,
+        archive_group_id: groupId,
+        type: "photo",
+        title,
+        caption: String(archiveEditorCaption(item) || "").trim(),
+        is_public: true,
+        sort_order: index,
+      })));
+      if (uploadedFiles.length) {
+        const { error } = await supabase.from("course_archives").insert(uploadedFiles.map((uploaded, index) => ({
+          course_id: courseId,
+          archive_group_id: groupId,
+          type: "photo",
+          title,
+          url: uploaded.publicUrl,
+          caption: uploaded.caption,
+          is_public: true,
+          sort_order: activeItems.length + index,
+          created_by: state.user.id,
+        })));
+        if (error) throw error;
+        insertedRowsSaved = true;
+      }
+      const removedRows = (existingGroup?.items || []).filter((item) => state.archiveEditor.removedArchiveIds.includes(item.id));
+      await deleteArchiveRowsAndFiles(removedRows);
+    } else {
+      const primary = existingGroup?.items?.[0] || null;
+      let url = "";
+      if (["video", "link"].includes(archiveType)) {
+        url = requireSafeUrl(formData.get("url"), "외부 URL", URL_RULES.archive);
+      } else if (archiveType === "file") {
+        const pendingFile = pendingFiles.find((item) => item.archiveType === "file");
+        if (pendingFile) uploadedFiles.push(await uploadArchiveFile(pendingFile.file, courseId, title));
+        url = uploadedFiles[0]?.publicUrl || normalizeSafeUrl(primary?.url, URL_RULES.archive);
+      }
+      if (!url) {
+        showToast(archiveType === "file" ? "PDF 파일을 선택해 주세요." : "외부 URL을 입력해 주세요.");
+        return;
+      }
+      const payload = {
+        course_id: courseId,
+        archive_group_id: groupId,
+        type: archiveType,
+        title,
+        url,
+        caption,
+        is_public: true,
+        sort_order: 0,
+      };
+      if (primary) {
+        const oldPath = uploadedFiles.length ? archiveStoragePathFromUrl(primary.url) : "";
+        const { error } = await supabase.from("course_archives").update(payload).eq("id", primary.id);
+        if (error) throw error;
+        if (uploadedFiles.length) insertedRowsSaved = true;
+        if (oldPath && oldPath !== uploadedFiles[0]?.path) await removeUploadedArchiveFile(oldPath);
+      } else {
+        const { error } = await supabase.from("course_archives").insert({ ...payload, created_by: state.user.id });
+        if (error) throw error;
+        insertedRowsSaved = true;
+      }
+      await deleteArchiveRowsAndFiles((existingGroup?.items || []).slice(1));
     }
   } catch (error) {
-    if (!primarySaved) await Promise.all(uploadedFiles.map((uploaded) => removeUploadedArchiveFile(uploaded.path)));
+    if (!insertedRowsSaved) await Promise.all(uploadedFiles.map((uploaded) => removeUploadedArchiveFile(uploaded.path)));
     throw error;
   }
 
   clearAdminFormDraft(form);
-  showToast(existingArchive ? "아카이브를 수정했습니다." : "아카이브를 등록했습니다.");
+  resetArchiveEditor();
+  showToast(existingGroup ? "아카이브를 저장했습니다." : "아카이브를 등록했습니다.");
   await reload();
   state.tab = "archive";
-  state.selectedArchiveId = existingArchive ? existingArchive.id : "";
+  state.selectedArchiveId = groupId;
+  state.adminSearch.archive = title;
   render();
 }
 
-async function deleteArchive(archiveId) {
-  const archive = archiveById(archiveId);
-  if (!archive) {
+async function deleteArchive(groupId) {
+  const group = archiveGroupById(groupId);
+  if (!group) {
     showToast("삭제할 아카이브를 찾지 못했습니다.");
     return;
   }
-
-  const storagePath = archiveStoragePathFromUrl(archive.url);
-  if (storagePath) await removeUploadedArchiveFile(storagePath, { strict: true });
-  const { error } = await supabase.from("course_archives").delete().eq("id", archive.id);
-  if (error) throw error;
-
-  showToast("아카이브를 삭제했습니다.");
+  await deleteArchiveRowsAndFiles(group.items);
+  resetArchiveEditor();
+  showToast("아카이브와 포함된 자료를 삭제했습니다.");
   await reload();
   state.tab = "archive";
   state.selectedArchiveId = "";
+  state.adminSearch.archive = "";
   render();
 }
 
@@ -6356,6 +6714,12 @@ function bindEvents() {
     const attendanceDocumentButton = event.target.closest("[data-open-attendance-document]");
     const editArchiveButton = event.target.closest("[data-edit-archive]");
     const deleteArchiveButton = event.target.closest("[data-delete-archive]");
+    const previewArchivePhotoButton = event.target.closest("[data-preview-archive-photo]");
+    const removeExistingArchivePhotoButton = event.target.closest("[data-remove-existing-archive-photo]");
+    const restoreExistingArchivePhotoButton = event.target.closest("[data-restore-existing-archive-photo]");
+    const removePendingArchivePhotoButton = event.target.closest("[data-remove-pending-archive-photo]");
+    const adminArchivePhotoStepButton = event.target.closest("[data-admin-archive-photo-step]");
+    const adminArchivePhotoStage = event.target.closest("[data-admin-archive-photo-stage]");
     const deleteCourseButton = event.target.closest("[data-delete-course]");
     const courseManagementModeButton = event.target.closest("[data-course-management-mode]");
     const selectCourseSeriesButton = event.target.closest("[data-select-course-series]");
@@ -6753,6 +7117,11 @@ function bindEvents() {
         state.adminSelections.courseId = entityId;
         renderCourses();
       }
+      if (kind === "archive") {
+        resetArchiveEditor();
+        state.selectedArchiveId = entityId;
+        renderArchive();
+      }
       return;
     }
     if (adminClearSelectionButton) {
@@ -6780,11 +7149,18 @@ function bindEvents() {
         state.adminSearch.course = "";
         renderCourses();
       }
+      if (kind === "archive") {
+        resetArchiveEditor();
+        state.selectedArchiveId = "";
+        state.adminSearch.archive = "";
+        renderArchive();
+      }
       return;
     }
     if (tabButton) {
       const draftResult = captureVisibleAdminFormDraft();
       if (draftResult.fileSelectionDiscarded) showToast("작성 내용은 임시 보관했지만 파일은 다시 선택해야 합니다.");
+      if (state.tab === "archive" && tabButton.dataset.adminTab !== "archive") resetArchiveEditor();
       state.tab = tabButton.dataset.adminTab;
       render();
       return;
@@ -6912,9 +7288,47 @@ function bindEvents() {
       }
       return;
     }
+    if (previewArchivePhotoButton) {
+      openAdminArchiveViewer(previewArchivePhotoButton.dataset.previewArchivePhoto, previewArchivePhotoButton.dataset.archivePhotoId || "");
+      return;
+    }
+    if (removeExistingArchivePhotoButton) {
+      syncArchivePendingCaptions();
+      const archiveId = removeExistingArchivePhotoButton.dataset.removeExistingArchivePhoto;
+      if (archiveId && !state.archiveEditor.removedArchiveIds.includes(archiveId)) state.archiveEditor.removedArchiveIds.push(archiveId);
+      updateArchiveEditorPreviews();
+      return;
+    }
+    if (restoreExistingArchivePhotoButton) {
+      const archiveId = restoreExistingArchivePhotoButton.dataset.restoreExistingArchivePhoto;
+      state.archiveEditor.removedArchiveIds = state.archiveEditor.removedArchiveIds.filter((id) => id !== archiveId);
+      updateArchiveEditorPreviews();
+      return;
+    }
+    if (removePendingArchivePhotoButton) {
+      syncArchivePendingCaptions();
+      const key = removePendingArchivePhotoButton.dataset.removePendingArchivePhoto;
+      const removedItem = state.archiveEditor.pendingFiles.find((item) => item.key === key);
+      if (removedItem?.previewUrl) URL.revokeObjectURL(removedItem.previewUrl);
+      state.archiveEditor.pendingFiles = state.archiveEditor.pendingFiles.filter((item) => item.key !== key);
+      updateArchiveEditorPreviews();
+      return;
+    }
+    if (adminArchivePhotoStepButton) {
+      stepAdminArchiveViewer(adminArchivePhotoStepButton.dataset.adminArchivePhotoStep);
+      return;
+    }
+    if (adminArchivePhotoStage) {
+      if (Date.now() < state.archiveViewer.suppressClickUntil) return;
+      const rect = adminArchivePhotoStage.getBoundingClientRect();
+      stepAdminArchiveViewer(event.clientX < rect.left + rect.width / 2 ? -1 : 1);
+      return;
+    }
     if (editArchiveButton) {
       captureVisibleAdminFormDraft();
-      state.selectedArchiveId = editArchiveButton.dataset.editArchive;
+      resetArchiveEditor();
+      const archiveId = editArchiveButton.dataset.editArchive;
+      state.selectedArchiveId = archiveGroupId(archiveById(archiveId)) || archiveId;
       state.tab = "archive";
       renderArchive();
       return;
@@ -7028,9 +7442,9 @@ function bindEvents() {
     if (event.target.id === "newArchiveButton") {
       captureVisibleAdminFormDraft();
       clearNewAdminFormDraft("archiveForm");
-      const picker = document.getElementById("archivePicker");
-      if (picker) picker.value = "";
+      resetArchiveEditor();
       state.selectedArchiveId = "";
+      state.adminSearch.archive = "";
       renderArchive();
     }
     if (event.target.id === "newOrganizationButton") {
@@ -7072,11 +7486,52 @@ function bindEvents() {
       syncNotificationChannelFields(event.target.closest("form"));
       return;
     }
-    if (event.target.id === "archivePicker") {
-      captureVisibleAdminFormDraft();
-      state.selectedArchiveId = event.target.value;
-      renderArchive();
+    if (event.target.matches("#archiveForm select[name='type']")) {
+      resetArchiveEditor();
+      syncArchiveTypeFields();
+      const note = document.querySelector("[data-archive-upload-note]");
+      const uploadLabel = document.querySelector("[data-archive-upload-label]");
+      const type = event.target.value;
+      if (note) note.textContent = type === "photo"
+        ? "여러 사진을 한 번에 고를 수 있습니다. 미리보기의 ×는 즉시 삭제하지 않고, 저장할 때 반영합니다."
+        : "파일은 15MB 이하 PDF를 업로드해 주세요.";
+      if (uploadLabel) uploadLabel.textContent = type === "photo" ? "사진 추가" : "PDF 업로드";
+      return;
     }
+    if (event.target.matches("#archiveForm input[name='files']")) {
+      try {
+        const type = String(new FormData(event.target.form).get("type") || "photo");
+        queueArchiveFiles(event.target.files, type);
+        event.target.value = "";
+      } catch (error) {
+        event.target.value = "";
+        showToast(error.message);
+      }
+      return;
+    }
+  });
+
+  document.body.addEventListener("pointerdown", (event) => {
+    const stage = event.target.closest("[data-admin-archive-photo-stage]");
+    if (!stage) return;
+    state.archiveViewer.pointerStart = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    stage.setPointerCapture?.(event.pointerId);
+  });
+
+  document.body.addEventListener("pointerup", (event) => {
+    const stage = event.target.closest("[data-admin-archive-photo-stage]");
+    const start = state.archiveViewer.pointerStart;
+    state.archiveViewer.pointerStart = null;
+    if (!stage || !start || start.id !== event.pointerId) return;
+    const deltaX = event.clientX - start.x;
+    const deltaY = event.clientY - start.y;
+    if (Math.abs(deltaX) < 42 || Math.abs(deltaX) <= Math.abs(deltaY)) return;
+    state.archiveViewer.suppressClickUntil = Date.now() + 350;
+    stepAdminArchiveViewer(deltaX < 0 ? 1 : -1);
+  });
+
+  document.body.addEventListener("pointercancel", () => {
+    state.archiveViewer.pointerStart = null;
   });
 
   document.body.addEventListener("input", (event) => {
@@ -7113,6 +7568,15 @@ function bindEvents() {
       const kind = adminSearchInput.dataset.adminSearch;
       state.adminSearch[kind] = adminSearchInput.value;
       updateAdminSearchResults(kind);
+      return;
+    }
+    if (event.target.matches("[data-existing-archive-caption]")) {
+      state.archiveEditor.existingCaptions[event.target.dataset.existingArchiveCaption] = event.target.value;
+      return;
+    }
+    if (event.target.matches("[data-pending-archive-caption]")) {
+      const item = state.archiveEditor.pendingFiles.find((pending) => pending.key === event.target.dataset.pendingArchiveCaption);
+      if (item) item.caption = event.target.value;
       return;
     }
     if (event.target.matches("[data-course-picker-search]")) {
@@ -7173,6 +7637,13 @@ function bindEvents() {
       if (activeModal === elements.adminNoticeModal) closeModal(elements.adminNoticeModal);
       else if (activeModal === elements.applicationDetailModal) closeApplicationDetailModal();
       return;
+    }
+    if (activeModal === elements.adminNoticeModal && elements.adminNoticeBody.querySelector("[data-admin-archive-viewer]")) {
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        stepAdminArchiveViewer(event.key === "ArrowLeft" ? -1 : 1);
+        return;
+      }
     }
     trapModalFocus(event, activeModal);
   });

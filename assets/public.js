@@ -69,6 +69,15 @@ const state = {
   activeInstructorId: "",
   activeView: "cards",
   activeCourseId: null,
+  archiveFilter: "all",
+  archiveViewer: {
+    items: [],
+    index: 0,
+    loadVersion: 0,
+    pointerStart: null,
+    suppressClickUntil: 0,
+    transitionTimer: 0,
+  },
   user: null,
   applicantProfile: null,
   demographics: null,
@@ -886,25 +895,36 @@ function archiveTypeLabel(type) {
   return "링크";
 }
 
+function archiveFilterType(type) {
+  if (type === "photo") return "photo";
+  if (type === "video") return "video";
+  return "material";
+}
+
 function archiveMediaHtml(item, className = "media") {
   const url = normalizeSafeUrl(item.url, URL_RULES.archive);
   const label = archiveTypeLabel(item.type);
   const caption = item.caption || "자료 보기";
   if (item.type === "photo") {
     return `
-      <button class="${escapeHtml(className)} media-button media-photo" type="button" data-open-archive-photo="${escapeHtml(item.id)}" style="background-image: linear-gradient(135deg, rgba(24, 32, 41, 0.58), rgba(24, 32, 41, 0.18)), url('${escapeHtml(url)}');">
-        <span class="badge">${escapeHtml(label)}</span>
-        <strong>${escapeHtml(item.title)}</strong>
-        <small>${escapeHtml(caption)}</small>
+      <button class="${escapeHtml(className)} media-button media-photo" type="button" data-open-archive-photo="${escapeHtml(item.id)}">
+        <span class="media-photo-frame"><img src="${escapeHtml(url)}" alt="${escapeHtml(item.title || "교육 사진")}" loading="lazy" decoding="async"></span>
+        <span class="media-copy">
+          <span class="badge">${escapeHtml(label)}</span>
+          <strong>${escapeHtml(item.title)}</strong>
+          ${caption ? `<small>${escapeHtml(caption)}</small>` : ""}
+        </span>
       </button>
     `;
   }
 
   return `
     <a class="${escapeHtml(className)}" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">
-      <span class="badge">${escapeHtml(label)}</span>
-      <strong>${escapeHtml(item.title)}</strong>
-      <small>${escapeHtml(caption)}</small>
+      <span class="media-copy">
+        <span class="badge">${escapeHtml(label)}</span>
+        <strong>${escapeHtml(item.title)}</strong>
+        ${caption ? `<small>${escapeHtml(caption)}</small>` : ""}
+      </span>
     </a>
   `;
 }
@@ -2190,27 +2210,170 @@ function openInstructorProfile(instructorId) {
   openModal(elements.profileModal);
 }
 
+function archiveCourseGroups(items = publicArchiveItems()) {
+  const groups = new Map();
+  items.forEach((item) => {
+    const course = courseById(item.course_id);
+    if (!course) return;
+    if (!groups.has(course.id)) groups.set(course.id, { course, items: [] });
+    groups.get(course.id).items.push(item);
+  });
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      items: group.items.slice().sort((a, b) => (
+        Number(a.sort_order || 0) - Number(b.sort_order || 0)
+        || new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
+      )),
+    }))
+    .sort((a, b) => (
+      new Date(courseScheduleStart(b.course) || 0).getTime() - new Date(courseScheduleStart(a.course) || 0).getTime()
+      || String(a.course.title || "").localeCompare(String(b.course.title || ""), "ko")
+    ));
+}
+
+function publicArchivePhotoItems(scopeCourseId = "") {
+  return archiveCourseGroups()
+    .filter((group) => !scopeCourseId || group.course.id === scopeCourseId)
+    .flatMap((group) => group.items.filter((item) => item.type === "photo"));
+}
+
+function archivePhotoCoursePosition(items, index) {
+  const item = items[index];
+  const courseItems = items.filter((candidate) => candidate.course_id === item?.course_id);
+  const courseIndex = courseItems.findIndex((candidate) => candidate.id === item?.id);
+  return { position: courseIndex + 1, total: courseItems.length };
+}
+
+function archivePhotoViewerHtml() {
+  return `
+    <div class="archive-photo-viewer" data-archive-photo-viewer>
+      <div class="archive-photo-stage" data-archive-photo-stage>
+        <img data-archive-photo-image alt="교육 사진" draggable="false">
+        <span class="archive-photo-loading" data-archive-photo-loading role="status" aria-live="polite">로딩 중…</span>
+        <button class="archive-photo-nav prev" type="button" data-archive-photo-prev aria-label="이전 사진">‹</button>
+        <button class="archive-photo-nav next" type="button" data-archive-photo-next aria-label="다음 사진">›</button>
+        <span class="archive-photo-transition" data-archive-photo-transition aria-live="polite"></span>
+      </div>
+      <div class="archive-photo-meta">
+        <strong data-archive-photo-course></strong>
+        <span data-archive-photo-position></span>
+      </div>
+      <p class="archive-photo-caption" data-archive-photo-caption></p>
+      <p class="muted archive-photo-help">모바일은 좌우로 밀고, PC는 사진 좌우·방향키 또는 마우스 드래그로 넘길 수 있습니다.</p>
+    </div>
+  `;
+}
+
+function loadArchivePhoto(url) {
+  return new Promise((resolve, reject) => {
+    const probe = new Image();
+    probe.onload = () => resolve(url);
+    probe.onerror = () => reject(new Error("사진을 불러오지 못했습니다."));
+    probe.src = url;
+  });
+}
+
+async function showArchivePhotoAt(index, { announceBoundary = true } = {}) {
+  const items = state.archiveViewer.items;
+  if (!items.length || index < 0 || index >= items.length) return;
+  const item = items[index];
+  const url = normalizeSafeUrl(item.url, URL_RULES.archive);
+  const image = elements.profileBody.querySelector("[data-archive-photo-image]");
+  const loading = elements.profileBody.querySelector("[data-archive-photo-loading]");
+  if (!url || !image || !loading) return;
+
+  const previousIndex = state.archiveViewer.index;
+  const previousItem = items[previousIndex];
+  state.archiveViewer.index = index;
+  const loadVersion = ++state.archiveViewer.loadVersion;
+  image.classList.add("is-loading");
+  loading.hidden = false;
+
+  const course = courseById(item.course_id);
+  const coursePosition = archivePhotoCoursePosition(items, index);
+  elements.profileEyebrow.textContent = "사진 아카이브";
+  elements.profileTitle.textContent = item.title || course?.title || "사진 보기";
+  elements.profileBody.querySelector("[data-archive-photo-course]").textContent = [course?.title, course?.organization?.name].filter(Boolean).join(" · ");
+  elements.profileBody.querySelector("[data-archive-photo-position]").textContent = `이 교육 ${coursePosition.position}/${coursePosition.total} · 전체 ${index + 1}/${items.length}`;
+  elements.profileBody.querySelector("[data-archive-photo-caption]").textContent = item.caption || "";
+  const previousButton = elements.profileBody.querySelector("[data-archive-photo-prev]");
+  const nextButton = elements.profileBody.querySelector("[data-archive-photo-next]");
+  if (previousButton) previousButton.disabled = index === 0;
+  if (nextButton) nextButton.disabled = index === items.length - 1;
+
+  const transition = elements.profileBody.querySelector("[data-archive-photo-transition]");
+  window.clearTimeout(state.archiveViewer.transitionTimer);
+  if (transition) {
+    transition.classList.remove("show");
+    transition.textContent = "";
+    if (announceBoundary && previousItem && previousItem.course_id !== item.course_id) {
+      transition.textContent = `${index > previousIndex ? "다음" : "이전"} 교육 · ${course?.title || "교육 사진"}`;
+      transition.classList.add("show");
+      state.archiveViewer.transitionTimer = window.setTimeout(() => transition.classList.remove("show"), 1400);
+    }
+  }
+
+  try {
+    await loadArchivePhoto(url);
+    if (loadVersion !== state.archiveViewer.loadVersion) return;
+    image.alt = item.title || course?.title || "교육 사진";
+    image.src = url;
+  } catch (error) {
+    if (loadVersion === state.archiveViewer.loadVersion) showToast(error.message || "사진을 불러오지 못했습니다.");
+  } finally {
+    if (loadVersion === state.archiveViewer.loadVersion) {
+      image.classList.remove("is-loading");
+      loading.hidden = true;
+    }
+  }
+}
+
+function stepArchivePhoto(delta) {
+  const nextIndex = state.archiveViewer.index + Number(delta || 0);
+  if (nextIndex < 0 || nextIndex >= state.archiveViewer.items.length) return;
+  showArchivePhotoAt(nextIndex);
+}
+
+function beginArchivePhotoPointer(event) {
+  const stage = event.target.closest("[data-archive-photo-stage]");
+  if (!event.isPrimary || !stage) return;
+  state.archiveViewer.pointerStart = {
+    pointerId: event.pointerId,
+    x: event.clientX,
+    y: event.clientY,
+  };
+  stage.setPointerCapture?.(event.pointerId);
+}
+
+function endArchivePhotoPointer(event) {
+  const start = state.archiveViewer.pointerStart;
+  state.archiveViewer.pointerStart = null;
+  if (!start || start.pointerId !== event.pointerId) return;
+  const dx = event.clientX - start.x;
+  const dy = event.clientY - start.y;
+  if (Math.abs(dx) < 44 || Math.abs(dx) <= Math.abs(dy)) return;
+  state.archiveViewer.suppressClickUntil = Date.now() + 350;
+  stepArchivePhoto(dx < 0 ? 1 : -1);
+}
+
 function openArchivePhoto(archiveId) {
-  const item = state.archives.find((archive) => archive.id === archiveId);
-  const url = normalizeSafeUrl(item?.url, URL_RULES.archive);
-  if (!item || item.type !== "photo" || !url) {
+  const selected = state.archives.find((archive) => archive.id === archiveId);
+  const url = normalizeSafeUrl(selected?.url, URL_RULES.archive);
+  if (!selected || selected.type !== "photo" || !url) {
     showToast("사진 정보를 찾지 못했습니다.");
     return;
   }
 
-  const course = courseById(item.course_id);
-  elements.profileEyebrow.textContent = "사진";
-  elements.profileTitle.textContent = item.title || "사진 보기";
-  elements.profileBody.innerHTML = `
-    <figure class="photo-viewer">
-      <img src="${escapeHtml(url)}" alt="${escapeHtml(item.title || "교육 사진")}">
-      <figcaption>
-        ${item.caption ? `<p>${escapeHtml(item.caption)}</p>` : ""}
-        ${course ? `<p class="muted">${escapeHtml(course.title)} · ${escapeHtml(course.organization?.name || "")}</p>` : ""}
-      </figcaption>
-    </figure>
-  `;
+  const scopeCourseId = state.activePage === "archive" ? "" : selected.course_id;
+  const items = publicArchivePhotoItems(scopeCourseId);
+  const selectedIndex = items.findIndex((item) => item.id === selected.id);
+  state.archiveViewer.items = items;
+  state.archiveViewer.index = Math.max(0, selectedIndex);
+  state.archiveViewer.pointerStart = null;
+  elements.profileBody.innerHTML = archivePhotoViewerHtml();
   openModal(elements.profileModal);
+  showArchivePhotoAt(state.archiveViewer.index, { announceBoundary: false });
 }
 
 function renderApplicationHistory() {
@@ -2977,16 +3140,51 @@ function openMyInfo() {
 
 function renderArchivePage() {
   const items = publicArchiveItems();
+  const filterCounts = items.reduce((counts, item) => {
+    const type = archiveFilterType(item.type);
+    counts[type] = (counts[type] || 0) + 1;
+    return counts;
+  }, { photo: 0, video: 0, material: 0 });
+  const availableFilters = ["photo", "video", "material"].filter((type) => filterCounts[type] > 0);
+  if (state.archiveFilter !== "all" && !availableFilters.includes(state.archiveFilter)) state.archiveFilter = "all";
+  const filteredItems = state.archiveFilter === "all"
+    ? items
+    : items.filter((item) => archiveFilterType(item.type) === state.archiveFilter);
+  const groups = archiveCourseGroups(filteredItems);
+  const filterLabels = { photo: "사진", video: "영상", material: "자료" };
   setPageHeader({
     title: "사진·영상·자료",
     description: "교육 현장의 사진과 영상, PDF 자료를 모아볼 수 있습니다.",
-    summary: `${items.length.toLocaleString("ko-KR")}개 자료가 있습니다.`,
+    summary: `${filteredItems.length.toLocaleString("ko-KR")}개 자료가 있습니다.`,
   });
-  elements.courseResults.className = "resource-grid";
-  elements.courseResults.innerHTML = items.map((item) => {
-    const course = courseById(item.course_id);
-    return archiveMediaHtml({ ...item, caption: item.caption || course?.title || "자료 보기" }, "media resource-card");
-  }).join("") || `<div class="empty">등록된 사진·영상·자료가 없습니다.</div>`;
+  elements.courseResults.className = "archive-page";
+  elements.courseResults.innerHTML = `
+    ${availableFilters.length > 1 ? `
+      <div class="archive-filter-bar" role="group" aria-label="자료 유형 필터">
+        <button type="button" data-archive-filter="all" aria-pressed="${state.archiveFilter === "all"}">전체 <span>${items.length.toLocaleString("ko-KR")}</span></button>
+        ${availableFilters.map((type) => `
+          <button type="button" data-archive-filter="${type}" aria-pressed="${state.archiveFilter === type}">${filterLabels[type]} <span>${filterCounts[type].toLocaleString("ko-KR")}</span></button>
+        `).join("")}
+      </div>
+    ` : ""}
+    <div class="archive-course-list">
+      ${groups.map(({ course, items: courseItems }) => `
+        <section class="archive-course-group" aria-labelledby="archive-course-${escapeHtml(course.id)}">
+          <div class="archive-course-heading">
+            <div>
+              <span class="eyebrow">${escapeHtml(course.organization?.name || "모두의 인문학")}</span>
+              <h3 id="archive-course-${escapeHtml(course.id)}">${escapeHtml(course.title || "교육 기록")}</h3>
+              <p class="muted">${escapeHtml(formatDateTime(courseScheduleStart(course)))}</p>
+            </div>
+            <span class="badge gray">${courseItems.length.toLocaleString("ko-KR")}개</span>
+          </div>
+          <div class="resource-grid">
+            ${courseItems.map((item) => archiveMediaHtml(item, "media resource-card")).join("")}
+          </div>
+        </section>
+      `).join("") || `<div class="empty">등록된 사진·영상·자료가 없습니다.</div>`}
+    </div>
+  `;
 }
 
 function render() {
@@ -5340,6 +5538,10 @@ function bindEvents() {
     const cancelApplicationButton = event.target.closest("[data-cancel-application]");
     const cancelGuestApplicationButton = event.target.closest("[data-cancel-guest-application]");
     const archivePhotoButton = event.target.closest("[data-open-archive-photo]");
+    const archiveFilterButton = event.target.closest("[data-archive-filter]");
+    const archivePhotoPreviousButton = event.target.closest("[data-archive-photo-prev]");
+    const archivePhotoNextButton = event.target.closest("[data-archive-photo-next]");
+    const archivePhotoStage = event.target.closest("[data-archive-photo-stage]");
     const deleteReviewButton = event.target.closest("[data-delete-review]");
     const deleteGuestReviewButton = event.target.closest("[data-delete-guest-review]");
     const deleteApplicationNoteButton = event.target.closest("[data-delete-application-note]");
@@ -5357,6 +5559,24 @@ function bindEvents() {
     const addInterestKeywordButton = event.target.closest("[data-add-interest-keyword]");
     const removeInterestButton = event.target.closest("[data-remove-interest]");
     const applicationConsentPresetButton = event.target.closest("[data-application-consent-preset]");
+    if (archiveFilterButton) {
+      state.archiveFilter = archiveFilterButton.dataset.archiveFilter || "all";
+      renderArchivePage();
+      return;
+    }
+    if (archivePhotoPreviousButton) {
+      stepArchivePhoto(-1);
+      return;
+    }
+    if (archivePhotoNextButton) {
+      stepArchivePhoto(1);
+      return;
+    }
+    if (archivePhotoStage && Date.now() >= state.archiveViewer.suppressClickUntil) {
+      const bounds = archivePhotoStage.getBoundingClientRect();
+      stepArchivePhoto(event.clientX < bounds.left + bounds.width / 2 ? -1 : 1);
+      return;
+    }
     if (applicationConsentPresetButton) {
       applyApplicationConsentPreset(applicationConsentPresetButton);
       return;
@@ -5542,6 +5762,12 @@ function bindEvents() {
     if (consentInput) updateApplicationConsentPresetState(consentInput.form);
   });
 
+  document.body.addEventListener("pointerdown", beginArchivePhotoPointer);
+  document.body.addEventListener("pointerup", endArchivePhotoPointer);
+  document.body.addEventListener("pointercancel", () => {
+    state.archiveViewer.pointerStart = null;
+  });
+
   document.body.addEventListener("input", (event) => {
     const form = publicDraftForm(event.target);
     if (form) capturePublicFormDraft(form);
@@ -5583,6 +5809,18 @@ function bindEvents() {
     const openModals = [...document.querySelectorAll(".modal.open")];
     const activeModal = openModals[openModals.length - 1];
     if (!activeModal) return;
+    if (activeModal === elements.profileModal && activeModal.querySelector("[data-archive-photo-viewer]")) {
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        stepArchivePhoto(-1);
+        return;
+      }
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        stepArchivePhoto(1);
+        return;
+      }
+    }
     if (event.key === "Enter" && event.target.matches("[data-interest-keyword-input]")) {
       event.preventDefault();
       state.interestKeywordInput = event.target.value;
