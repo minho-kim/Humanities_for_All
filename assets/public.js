@@ -2428,6 +2428,7 @@ function renderDemographicsForm({ showHeading = true } = {}) {
   const profile = state.demographics || {};
   const currentYear = Number(new Intl.DateTimeFormat("en", { year: "numeric", timeZone: "Asia/Seoul" }).format(new Date()));
   const storedResidence = [profile.residence_district, profile.residence_neighborhood].filter(Boolean).join(" ");
+  const consentRecordedAt = profile.optional_consent_at ? formatDateTime(profile.optional_consent_at) : "";
   return `
     <form id="demographicsForm" class="demographics-form">
       ${showHeading ? `<div class="row-top">
@@ -2486,7 +2487,10 @@ function renderDemographicsForm({ showHeading = true } = {}) {
           <li><strong>거부권</strong><br>동의를 거부하거나 일부 항목만 입력할 수 있으며, 교육 신청과 서비스 이용에 불이익이 없습니다.</li>
         </ul>
       </details>
-      <label class="consent-check"><span><input name="optional_consent" type="checkbox" required style="width:auto;min-height:auto;"> 선택 정보 수집·이용에 동의합니다.</span></label>
+      <label class="consent-check">
+        <span><input name="optional_consent" type="checkbox" required style="width:auto;min-height:auto;" ${consentRecordedAt ? "checked" : ""}> 선택 정보 수집·이용에 동의합니다.</span>
+        ${consentRecordedAt ? `<small class="muted">동의 기록: ${escapeHtml(consentRecordedAt)} (한국시간)</small>` : ""}
+      </label>
       <div class="actions" style="margin-top: 12px;">
         <button class="btn small" type="submit">${state.demographics ? "선택 정보 수정" : "선택 정보 저장"}</button>
         ${state.demographics ? `<button class="btn small danger" type="button" data-delete-demographics>선택 정보 삭제</button>` : ""}
@@ -4462,6 +4466,7 @@ async function handleDemographicsSubmit(event) {
     }, { onConflict: "user_id" });
     if (error) throw error;
 
+    saveDemographicsAccordionOpen(false);
     await loadApplicationState(supabase);
     render();
     openMyInfo();
