@@ -7151,6 +7151,20 @@ function bindEvents() {
     }
   });
 
+  document.body.addEventListener("input", (event) => {
+    if (event.target instanceof Element && event.target.closest("#organizationForm, #instructorForm, #venueForm, #courseForm, #archiveForm")) {
+      captureVisibleAdminFormDraft();
+    }
+  });
+  document.body.addEventListener("change", (event) => {
+    if (event.target instanceof Element && event.target.closest("#organizationForm, #instructorForm, #venueForm, #courseForm, #archiveForm")) {
+      captureVisibleAdminFormDraft();
+    }
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") captureVisibleAdminFormDraft();
+  });
+
   document.addEventListener("keydown", (event) => {
     const openModals = [...document.querySelectorAll(".modal.open")];
     const activeModal = openModals[openModals.length - 1];
@@ -7185,7 +7199,7 @@ function bindEvents() {
     }
   });
 
-  supabase.auth.onAuthStateChange((event) => {
+  supabase.auth.onAuthStateChange((event, session) => {
     console.info("[모두의 인문학] 인증 상태 변경", event);
     if (event === "PASSWORD_RECOVERY") {
       state.isPasswordRecovery = true;
@@ -7193,6 +7207,9 @@ function bindEvents() {
       showToast("새 비밀번호를 입력해 주세요.");
     }
     if (state.isLoggingIn) return;
+    const currentUserId = String(state.user?.id || "");
+    const nextUserId = String(session?.user?.id || "");
+    if (event === "TOKEN_REFRESHED" || (["INITIAL_SESSION", "SIGNED_IN"].includes(event) && currentUserId === nextUserId)) return;
     window.setTimeout(() => {
       reload().catch((error) => {
         console.error("[모두의 인문학] 인증 상태 갱신 실패", error);

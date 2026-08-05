@@ -76,6 +76,7 @@ const state = {
   guestContact: null,
   guestAccessTokens: {},
   guestAccessByCourse: {},
+  formDrafts: {},
 };
 
 const elements = {
@@ -164,6 +165,13 @@ const MY_INFO_DEMOGRAPHICS_OPEN_KEY = "humanities-my-info-demographics-open";
 const OAUTH_RETURN_STATE_KEY = "humanities-google-oauth-return";
 const COOP_LINK_START_SESSION_KEY = "humanities-coop-link-start";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PUBLIC_DRAFT_FORM_SELECTOR = [
+  "#applicationForm",
+  "#courseFeedbackForm",
+  "#reviewForm",
+  "#demographicsForm",
+  "[data-application-note-form]",
+].join(",");
 let supplementaryLoadSequence = 0;
 let supabaseClientPromise = null;
 let residenceSearchPopup = null;
@@ -178,6 +186,102 @@ function getSupabaseClient() {
     supabaseClientPromise = import("./supabaseClient.js").then(({ supabase }) => supabase);
   }
   return supabaseClientPromise;
+}
+
+function publicDraftForm(target) {
+  if (target instanceof HTMLFormElement) return target.matches(PUBLIC_DRAFT_FORM_SELECTOR) ? target : null;
+  if (!(target instanceof Element)) return null;
+  const form = target.closest(PUBLIC_DRAFT_FORM_SELECTOR);
+  return form instanceof HTMLFormElement ? form : null;
+}
+
+function publicDraftKey(form, contextCourseId = "") {
+  if (!(form instanceof HTMLFormElement)) return "";
+  if (form.id === "applicationForm") {
+    const courseId = String(form.elements.namedItem("course_id")?.value || contextCourseId || state.activeCourseId || "");
+    const mode = String(form.elements.namedItem("application_mode")?.value || (state.user ? "account" : "guest"));
+    return courseId ? `application:${courseId}:${mode}` : "";
+  }
+  if (form.id === "courseFeedbackForm" || form.id === "reviewForm") {
+    const courseId = String(contextCourseId || state.activeCourseId || "");
+    const identityField = form.id === "courseFeedbackForm" ? "feedback_identity" : "review_identity";
+    const identity = String(form.elements.namedItem(identityField)?.value || (state.user ? "user" : "guest"));
+    return courseId ? `${form.id}:${courseId}:${identity}` : "";
+  }
+  if (form.id === "demographicsForm") {
+    return state.user?.id ? `demographics:${state.user.id}` : "";
+  }
+  if (form.matches("[data-application-note-form]")) {
+    const applicationId = String(form.elements.namedItem("application_id")?.value || "");
+    return applicationId ? `application-note:${applicationId}` : "";
+  }
+  return "";
+}
+
+function serializePublicFormDraft(form) {
+  const values = {};
+  Array.from(form.elements).forEach((control) => {
+    if (!(control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement || control instanceof HTMLSelectElement)) return;
+    if (!control.name || control.disabled) return;
+    if (control instanceof HTMLInputElement && ["hidden", "file", "password", "submit", "button", "reset"].includes(control.type)) return;
+    if (control instanceof HTMLInputElement && ["checkbox", "radio"].includes(control.type)) {
+      const saved = values[control.name]?.kind === "choices" ? values[control.name] : { kind: "choices", values: [] };
+      if (control.checked) saved.values.push(control.value);
+      values[control.name] = saved;
+      return;
+    }
+    if (control instanceof HTMLSelectElement && control.multiple) {
+      values[control.name] = { kind: "select-multiple", values: Array.from(control.selectedOptions, (option) => option.value) };
+      return;
+    }
+    values[control.name] = { kind: "value", value: control.value };
+  });
+  return values;
+}
+
+function restorePublicFormDraft(form, values = {}) {
+  Object.entries(values).forEach(([name, saved]) => {
+    const controls = Array.from(form.elements).filter((control) => control.name === name);
+    if (saved.kind === "choices") {
+      const selectedValues = new Set(Array.isArray(saved.values) ? saved.values : []);
+      controls.forEach((control) => {
+        if (control instanceof HTMLInputElement && ["checkbox", "radio"].includes(control.type)) {
+          control.checked = selectedValues.has(control.value);
+        }
+      });
+      return;
+    }
+    const control = controls[0];
+    if (!(control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement || control instanceof HTMLSelectElement)) return;
+    if (saved.kind === "select-multiple" && control instanceof HTMLSelectElement) {
+      const selectedValues = new Set(Array.isArray(saved.values) ? saved.values : []);
+      Array.from(control.options).forEach((option) => { option.selected = selectedValues.has(option.value); });
+      return;
+    }
+    control.value = String(saved.value ?? "");
+  });
+  const phoneInput = form.querySelector("input[name='phone']");
+  if (phoneInput instanceof HTMLInputElement) phoneInput.value = formatPhoneNumber(phoneInput.value);
+  if (form.id === "applicationForm") updateApplicationConsentPresetState(form);
+}
+
+function capturePublicFormDraft(form, contextCourseId = "") {
+  const key = publicDraftKey(form, contextCourseId);
+  if (!key) return false;
+  state.formDrafts[key] = serializePublicFormDraft(form);
+  return true;
+}
+
+function restorePublicFormDrafts(root, contextCourseId = "") {
+  root.querySelectorAll(PUBLIC_DRAFT_FORM_SELECTOR).forEach((form) => {
+    const draft = state.formDrafts[publicDraftKey(form, contextCourseId)];
+    if (draft) restorePublicFormDraft(form, draft);
+  });
+}
+
+function clearPublicFormDraft(form, contextCourseId = "") {
+  const key = publicDraftKey(form, contextCourseId);
+  if (key) delete state.formDrafts[key];
 }
 
 function applicationClientId() {
@@ -2864,6 +2968,7 @@ function openMyInfo() {
       content: renderDemographicsForm({ showHeading: false }),
     })}
   `;
+  restorePublicFormDrafts(elements.profileBody);
   document.getElementById("demographicsSection")?.addEventListener("toggle", (event) => {
     saveDemographicsAccordionOpen(event.currentTarget.open);
   });
@@ -3534,6 +3639,7 @@ function openCourseDetail(courseId, returnFocusElement = null) {
       ${postCourseResponseEditorHtml}
     </div>
   `;
+  restorePublicFormDrafts(elements.detailBody, course.id);
   openModal(elements.detailModal, returnFocusElement || document.activeElement);
   if (state.guestAccessTokens[course.id] && !Object.prototype.hasOwnProperty.call(state.guestAccessByCourse, course.id)) {
     refreshGuestAccessInOpenCourse(course.id);
@@ -3630,6 +3736,7 @@ async function handleApplicationSubmit(event) {
       if (state.guestAccessTokens[course.id]) await loadGuestAccessForCourse(course.id, { force: true });
       await loadApplicationSignals([course.id]);
       if (state.supplementaryLoaded && note) await loadSupplementaryData();
+      clearPublicFormDraft(form, course.id);
       showToast(result.result_state === "existing"
         ? "이미 접수된 비회원 신청이 있습니다. 기존 확인 링크를 이용해 주세요."
         : result.result_state === "reapplied"
@@ -3688,6 +3795,7 @@ async function handleApplicationSubmit(event) {
       roundtable_terms_version: ROUNDTABLE_NOTIFICATION_TERMS_VERSION,
     });
 
+    clearPublicFormDraft(form, course.id);
     await Promise.all([
       loadApplicationState(supabase),
       loadApplicationSignals([course.id]),
@@ -3920,6 +4028,7 @@ async function handleApplicationNoteSubmit(event) {
     return;
   }
 
+  clearPublicFormDraft(form);
   await loadApplicationState(supabase);
   if (state.supplementaryLoaded) await loadSupplementaryData();
   showToast(note ? "기대평/질문을 저장했습니다." : "기대평/질문을 비웠습니다.");
@@ -4231,6 +4340,7 @@ async function handleCourseFeedbackSubmit(event) {
       await loadApplicationState(supabase);
     }
 
+    clearPublicFormDraft(form, course.id);
     openCourseDetail(course.id);
     showToast(hadFeedback ? "교육 피드백을 수정했습니다." : "교육 피드백을 등록했습니다.");
   } catch (error) {
@@ -4280,6 +4390,7 @@ async function handleReviewSubmit(event) {
       return;
     }
 
+    clearPublicFormDraft(form, course.id);
     showToast(reviewId ? "후기를 수정했습니다." : "후기가 등록되었습니다.");
     await loadGuestAccessForCourse(course.id, { force: true });
     await loadData({ waitForSupplementary: true });
@@ -4316,6 +4427,7 @@ async function handleReviewSubmit(event) {
     return;
   }
 
+  clearPublicFormDraft(form, course.id);
   showToast(reviewId ? "후기를 수정했습니다." : "후기가 등록되었습니다.");
   await loadData({ waitForSupplementary: true });
   await loadApplicationState(supabase);
@@ -4467,6 +4579,7 @@ async function handleDemographicsSubmit(event) {
     if (error) throw error;
 
     saveDemographicsAccordionOpen(false);
+    clearPublicFormDraft(form);
     await loadApplicationState(supabase);
     render();
     openMyInfo();
@@ -4828,6 +4941,7 @@ async function handleGoogleLogin() {
 
 async function handleLogout() {
   const supabase = await getSupabaseClient();
+  state.formDrafts = {};
   await supabase.auth.signOut();
   await refreshSession(supabase);
   closeModal(elements.profileModal);
@@ -4839,6 +4953,7 @@ function startAuthMonitor() {
 
   async function syncAuth(supabase, session) {
     const user = session?.user || null;
+    if (String(state.user?.id || "") !== String(user?.id || "")) state.formDrafts = {};
     updateSessionUi(user);
     if (user) await Promise.all([loadApplicationState(supabase), loadCoopLinkState()]);
     else clearApplicationState();
@@ -4869,7 +4984,13 @@ function startAuthMonitor() {
 
   getSupabaseClient()
     .then((supabase) => {
-      supabase.auth.onAuthStateChange((_event, session) => {
+      supabase.auth.onAuthStateChange((event, session) => {
+        const currentUserId = String(state.user?.id || "");
+        const nextUserId = String(session?.user?.id || "");
+        if (event === "TOKEN_REFRESHED" || (["INITIAL_SESSION", "SIGNED_IN"].includes(event) && currentUserId === nextUserId)) {
+          if (session?.user) updateSessionUi(session.user);
+          return;
+        }
         window.setTimeout(() => {
           authSyncQueue = authSyncQueue
             .then(() => syncAuth(supabase, session))
@@ -5419,6 +5540,15 @@ function bindEvents() {
   document.body.addEventListener("change", (event) => {
     const consentInput = event.target.closest("#applicationForm input[name='privacy_agreement'], #applicationForm input[name='age_14_confirmation'], #applicationForm input[name='review_request_agreement'], #applicationForm input[name='roundtable_notice_agreement']");
     if (consentInput) updateApplicationConsentPresetState(consentInput.form);
+  });
+
+  document.body.addEventListener("input", (event) => {
+    const form = publicDraftForm(event.target);
+    if (form) capturePublicFormDraft(form);
+  });
+  document.body.addEventListener("change", (event) => {
+    const form = publicDraftForm(event.target);
+    if (form) capturePublicFormDraft(form);
   });
 
   document.body.addEventListener("submit", (event) => {
