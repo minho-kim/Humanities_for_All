@@ -1233,7 +1233,14 @@ function composeCourses() {
   const coursesBySeries = groupBy(state.courses.filter((course) => course.series_id), "series_id");
 
   state.composedCourses = state.courses.map((course) => {
+    const venue = venues.get(course.venue_id);
+    let venueDetailOverride = String(course.venue_detail_override || "").trim();
     const sessions = (sessionsByCourse.get(course.id) || []).slice().sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
+    if (!venueDetailOverride) {
+      venueDetailOverride = String(sessions.find((session) => (
+        session.room && String(session.room).trim() !== String(venue?.name || "").trim()
+      ))?.room || "").trim();
+    }
     const archives = (archivesByCourse.get(course.id) || [])
       .filter((item) => item.is_public !== false && normalizeSafeUrl(item.url, URL_RULES.archive))
       .slice()
@@ -1254,7 +1261,7 @@ function composeCourses() {
       status: effectiveCourseStatus(composedCourse),
       organization: organizations.get(course.organization_id),
       instructor: instructors.get(course.instructor_id),
-      venue: venues.get(course.venue_id),
+      venue: venue ? { ...venue, detail: venueDetailOverride || venue.detail || "" } : undefined,
       sessions,
       archives,
       reviews,
@@ -1649,6 +1656,7 @@ function filteredCourses() {
       course.instructor?.name,
       course.venue?.name,
       course.venue?.address,
+      course.venue?.detail,
       course.timeLabel,
     ].join(" ").toLowerCase();
 
@@ -1685,6 +1693,7 @@ function filterSupplementaryContent(items, contentText = () => "") {
       course?.instructor?.name,
       course?.venue?.name,
       course?.venue?.address,
+      course?.venue?.detail,
     ].join(" ").toLowerCase();
     return (!filters.q || haystack.includes(filters.q))
       && (!filters.org || course?.organization?.name === filters.org)

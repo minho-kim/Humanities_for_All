@@ -538,6 +538,17 @@ function venueById(venueId) {
   return state.venues.find((venue) => venue.id === venueId);
 }
 
+function courseVenueDetail(course, venue = venueById(course?.venue_id)) {
+  const override = String(course?.venue_detail_override || "").trim();
+  return override || String(venue?.detail || "").trim();
+}
+
+function courseVenueForDisplay(course) {
+  const venue = venueById(course?.venue_id);
+  if (!venue) return null;
+  return { ...venue, detail: courseVenueDetail(course, venue) };
+}
+
 function canManageVenue(venue) {
   if (isOwner()) return true;
   return Boolean(venue?.organization_id && managedOrganizationIds().has(venue.organization_id));
@@ -637,6 +648,7 @@ function courseSearchText(course) {
     instructor?.bio,
     venue?.name,
     venue?.address,
+    courseVenueDetail(course, venue),
     shortDate(course.starts_at),
   ].join(" ");
 }
@@ -838,6 +850,7 @@ function courseChangeNotificationPlan(existingCourse, payload) {
     || normalizedTimestamp(existingCourse.ends_at) !== normalizedTimestamp(payload.ends_at)
   ) changedLabels.push("일시");
   if (normalizedIdentifier(existingCourse.venue_id) !== normalizedIdentifier(payload.venue_id)) changedLabels.push("장소");
+  if (normalizedIdentifier(existingCourse.venue_detail_override) !== normalizedIdentifier(payload.venue_detail_override)) changedLabels.push("세부 장소");
   if (normalizedIdentifier(existingCourse.instructor_id) !== normalizedIdentifier(payload.instructor_id)) changedLabels.push("강사");
   if (!changedLabels.length) return null;
 
@@ -1952,6 +1965,7 @@ function courseResultHtml(course, selectedId = "") {
   const organization = organizationById(course.organization_id);
   const instructor = instructorById(course.instructor_id);
   const venue = venueById(course.venue_id);
+  const venueDetail = courseVenueDetail(course, venue);
   const status = effectiveCourseStatus(course);
   return `
     <button class="admin-search-result ${course.id === selectedId ? "selected" : ""}" type="button" data-admin-select="course" data-entity-id="${escapeHtml(course.id)}">
@@ -1960,7 +1974,7 @@ function courseResultHtml(course, selectedId = "") {
         ${statusBadge(status)}
       </span>
       ${course.subtitle ? `<span>${escapeHtml(course.subtitle)}</span>` : ""}
-      <span class="muted">${escapeHtml(shortDate(course.starts_at))} · ${escapeHtml(courseAlertKeywordText(course) || "알림 키워드 없음")} · ${escapeHtml(organization?.name || "단체 미정")} · ${escapeHtml(instructor?.name || "강사 미정")} ${instructor?.title ? `(${escapeHtml(instructor.title)})` : ""} · ${escapeHtml(venue?.name || "장소 미정")}</span>
+      <span class="muted">${escapeHtml(shortDate(course.starts_at))} · ${escapeHtml(courseAlertKeywordText(course) || "알림 키워드 없음")} · ${escapeHtml(organization?.name || "단체 미정")} · ${escapeHtml(instructor?.name || "강사 미정")} ${instructor?.title ? `(${escapeHtml(instructor.title)})` : ""} · ${escapeHtml([venue?.name, venueDetail].filter(Boolean).join(" · ") || "장소 미정")}</span>
     </button>
   `;
 }
@@ -2174,6 +2188,7 @@ function courseTemplateDraftFrom(course) {
     organization_id: course.organization_id || "",
     instructor_id: course.instructor_id || "",
     venue_id: course.venue_id || "",
+    venue_detail_override: course.venue_detail_override || "",
     starts_at: null,
     ends_at: null,
     summary: course.summary || "",
@@ -2406,7 +2421,21 @@ function setCoursePickerSelection(kind, itemId = "") {
   const hiddenInput = document.querySelector(`#courseForm input[name="${fieldName}"]`);
   if (hiddenInput) hiddenInput.value = itemId;
   updateCoursePickerSelectedField(kind);
+  if (kind === "venue") updateCourseVenueDetailDefaultHint();
   closeModal(elements.adminNoticeModal);
+}
+
+function updateCourseVenueDetailDefaultHint() {
+  const venueId = currentCoursePickerSelectedId("venue");
+  const venue = venueById(venueId);
+  const input = document.querySelector("#courseForm input[name='venue_detail_override']");
+  const hint = document.querySelector("[data-course-venue-detail-hint]");
+  if (!(input instanceof HTMLInputElement) || !hint) return;
+  const defaultDetail = String(venue?.detail || "").trim();
+  input.placeholder = defaultDetail ? `비우면 기본값: ${defaultDetail}` : "예: 3층 강의실, 1층·3층";
+  hint.textContent = defaultDetail
+    ? `비워 두면 장소 관리의 기본 세부 장소 ‘${defaultDetail}’을 사용합니다.`
+    : "이 교육에서만 사용할 층·강의실을 입력할 수 있습니다.";
 }
 
 function clearCoursePickerSelection(kind) {
@@ -4079,6 +4108,8 @@ function renderCourseForm(course = {}) {
     starts_at: course.starts_at || firstSession.starts_at,
     ends_at: course.ends_at || firstSession.ends_at,
   });
+  const selectedVenue = venueById(course.venue_id);
+  const defaultVenueDetail = String(selectedVenue?.detail || "").trim();
   const autoStatusNote = `
     <p class="muted" style="margin-top: 8px;">
       상태는 자동으로 관리됩니다. 교육 전에는 ${statusBadge("open")}, 시작 후에는 ${statusBadge("in_progress")}, 종료 후에는 ${statusBadge("finished")}가 됩니다.
@@ -4103,6 +4134,10 @@ function renderCourseForm(course = {}) {
         ${renderCoursePickerField("organization", course.organization_id || "")}
         ${renderCoursePickerField("instructor", course.instructor_id || "")}
         ${renderCoursePickerField("venue", course.venue_id || "")}
+        <label>교육별 세부 장소(선택)
+          <input name="venue_detail_override" value="${escapeHtml(course.venue_detail_override || "")}" maxlength="120" placeholder="${escapeHtml(defaultVenueDetail ? `비우면 기본값: ${defaultVenueDetail}` : "예: 3층 강의실, 1층·3층")}">
+          <small data-course-venue-detail-hint>${escapeHtml(defaultVenueDetail ? `비워 두면 장소 관리의 기본 세부 장소 ‘${defaultVenueDetail}’을 사용합니다.` : "이 교육에서만 사용할 층·강의실을 입력할 수 있습니다.")}</small>
+        </label>
         <label>시작 일시<input name="starts_at" type="datetime-local" value="${escapeHtml(startValue)}" min="${escapeHtml(startMinValue)}" required></label>
         <label>종료 일시(선택)<input name="ends_at" type="datetime-local" value="${escapeHtml(endValue)}" min="${escapeHtml(endMinValue)}"></label>
         ${renderCoursePickerField("series", seriesPreviousCourseId)}
@@ -4432,7 +4467,7 @@ async function printElectronicAttendanceReport(course, records) {
   const popup = window.open("", "humanities-electronic-attendance-report", "width=980,height=980");
   if (!popup) throw new Error("인쇄 창이 차단되었습니다. 팝업을 허용해 주세요.");
   popup.document.write("<!doctype html><html lang='ko'><meta charset='utf-8'><body>전자 출석확인서를 준비하고 있습니다.</body></html>");
-  const venue = venueById(course.venue_id);
+  const venue = courseVenueForDisplay(course);
   const organization = organizationById(course.organization_id);
   const generatedAt = new Date().toISOString();
   const rows = await Promise.all(records.map(async (record, index) => ({
@@ -4531,7 +4566,7 @@ function courseCheckinRosterPrintHtml(course) {
     .filter((application) => application.course_id === course.id)
     .slice()
     .sort(compareRosterApplications);
-  const venue = venueById(course.venue_id);
+  const venue = courseVenueForDisplay(course);
   const location = [venue?.name, venue?.address, venue?.detail].filter(Boolean).join(" · ") || "장소 미정";
   const rowsPerPage = 15;
   const totalRowCount = Math.max(30, Math.ceil(applications.length / rowsPerPage) * rowsPerPage);
@@ -4549,7 +4584,7 @@ function courseCheckinRosterPrintHtml(course) {
 function printCourseCheckinDocument(course, imageUrl, organizationName, includeRoster = false, rosterOnly = false) {
   const popup = window.open("", "humanities-course-checkin-print", "width=820,height=980");
   if (!popup) throw new Error("인쇄 창이 차단되었습니다. 팝업을 허용해 주세요.");
-  const venue = venueById(course.venue_id);
+  const venue = courseVenueForDisplay(course);
   const instructor = instructorById(course.instructor_id);
   const courseOrganization = organizationById(course.organization_id);
   const location = [venue?.name, venue?.address, venue?.detail].filter(Boolean).join(" · ") || "장소 미정";
@@ -5713,6 +5748,7 @@ async function saveCourse(event) {
   const alertKeywords = parsedKeywords.keywords;
   const audience = String(formData.get("audience") || "").trim();
   const deliveryFormat = String(formData.get("delivery_format") || "").trim();
+  const venueDetailOverride = String(formData.get("venue_detail_override") || "").trim();
   if ([...audience].length > 160 || /[\u0000-\u001f\u007f]/.test(audience)) {
     showToast("추천 대상은 160자 이내로 입력해 주세요.");
     form.elements.audience?.focus();
@@ -5721,6 +5757,11 @@ async function saveCourse(event) {
   if ([...deliveryFormat].length > 80 || /[\u0000-\u001f\u007f]/.test(deliveryFormat)) {
     showToast("교육 형태는 80자 이내로 입력해 주세요.");
     form.elements.delivery_format?.focus();
+    return;
+  }
+  if ([...venueDetailOverride].length > 120 || /[\u0000-\u001f\u007f]/.test(venueDetailOverride)) {
+    showToast("교육별 세부 장소는 120자 이내로 입력해 주세요.");
+    form.elements.venue_detail_override?.focus();
     return;
   }
   const payload = {
@@ -5732,6 +5773,7 @@ async function saveCourse(event) {
     organization_id: String(formData.get("organization_id") || "").trim(),
     instructor_id: formData.get("instructor_id") || null,
     venue_id: formData.get("venue_id") || null,
+    venue_detail_override: venueDetailOverride || null,
     status: existingCourse?.status === "cancelled" ? "cancelled" : (timing.hasEnded ? "finished" : "open"),
     starts_at: timing.startsAt,
     ends_at: timing.endsAt,
@@ -5787,7 +5829,9 @@ async function saveCourse(event) {
       title: "1강",
       starts_at: payload.starts_at,
       ends_at: payload.ends_at,
-      room: state.venues.find((venue) => venue.id === payload.venue_id)?.name || null,
+      room: venueDetailOverride
+        || state.venues.find((venue) => venue.id === payload.venue_id)?.name
+        || null,
     };
     if (firstSession) await supabase.from("course_sessions").update(sessionPayload).eq("id", firstSession.id);
     else await supabase.from("course_sessions").insert(sessionPayload);

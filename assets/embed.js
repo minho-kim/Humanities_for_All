@@ -416,7 +416,14 @@ function composeCourses() {
   const coursesBySeries = groupBy(state.courses.filter((course) => course.series_id), "series_id");
 
   state.composedCourses = state.courses.map((course) => {
+    const venue = venues.get(course.venue_id);
+    let venueDetailOverride = String(course.venue_detail_override || "").trim();
     const sessions = (sessionsByCourse.get(course.id) || []).slice().sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
+    if (!venueDetailOverride) {
+      venueDetailOverride = String(sessions.find((session) => (
+        session.room && String(session.room).trim() !== String(venue?.name || "").trim()
+      ))?.room || "").trim();
+    }
     const reviews = (reviewsByCourse.get(course.id) || []).slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     const composedCourse = { ...course, sessions };
     const seriesCourses = (coursesBySeries.get(course.series_id) || [])
@@ -428,7 +435,7 @@ function composeCourses() {
       status: effectiveCourseStatus(composedCourse),
       organization: organizations.get(course.organization_id),
       instructor: instructors.get(course.instructor_id),
-      venue: venues.get(course.venue_id),
+      venue: venue ? { ...venue, detail: venueDetailOverride || venue.detail || "" } : undefined,
       sessions,
       reviews,
       reviewCount: Number(course.review_count ?? reviews.length),
@@ -568,6 +575,7 @@ function filteredCourses() {
       course.instructor?.title,
       course.venue?.name,
       course.venue?.address,
+      course.venue?.detail,
       course.timeLabel,
     ].join(" ").toLowerCase();
 
