@@ -2421,21 +2421,17 @@ function setCoursePickerSelection(kind, itemId = "") {
   const hiddenInput = document.querySelector(`#courseForm input[name="${fieldName}"]`);
   if (hiddenInput) hiddenInput.value = itemId;
   updateCoursePickerSelectedField(kind);
-  if (kind === "venue") updateCourseVenueDetailDefaultHint();
+  if (kind === "venue") updateCourseVenueDetailPlaceholder();
   closeModal(elements.adminNoticeModal);
 }
 
-function updateCourseVenueDetailDefaultHint() {
+function updateCourseVenueDetailPlaceholder() {
   const venueId = currentCoursePickerSelectedId("venue");
   const venue = venueById(venueId);
   const input = document.querySelector("#courseForm input[name='venue_detail_override']");
-  const hint = document.querySelector("[data-course-venue-detail-hint]");
-  if (!(input instanceof HTMLInputElement) || !hint) return;
+  if (!(input instanceof HTMLInputElement)) return;
   const defaultDetail = String(venue?.detail || "").trim();
-  input.placeholder = defaultDetail ? `비우면 기본값: ${defaultDetail}` : "예: 3층 강의실, 1층·3층";
-  hint.textContent = defaultDetail
-    ? `비워 두면 장소 관리의 기본 세부 장소 ‘${defaultDetail}’을 사용합니다.`
-    : "이 교육에서만 사용할 층·강의실을 입력할 수 있습니다.";
+  input.placeholder = defaultDetail ? `비워 두면 ${defaultDetail}을 사용합니다.` : "예: 3층 강의실, 1층·3층";
 }
 
 function clearCoursePickerSelection(kind) {
@@ -4134,9 +4130,8 @@ function renderCourseForm(course = {}) {
         ${renderCoursePickerField("organization", course.organization_id || "")}
         ${renderCoursePickerField("instructor", course.instructor_id || "")}
         ${renderCoursePickerField("venue", course.venue_id || "")}
-        <label>교육별 세부 장소(선택)
-          <input name="venue_detail_override" value="${escapeHtml(course.venue_detail_override || "")}" maxlength="120" placeholder="${escapeHtml(defaultVenueDetail ? `비우면 기본값: ${defaultVenueDetail}` : "예: 3층 강의실, 1층·3층")}">
-          <small data-course-venue-detail-hint>${escapeHtml(defaultVenueDetail ? `비워 두면 장소 관리의 기본 세부 장소 ‘${defaultVenueDetail}’을 사용합니다.` : "이 교육에서만 사용할 층·강의실을 입력할 수 있습니다.")}</small>
+        <label class="admin-grid-wide">교육별 세부 장소(선택)
+          <input name="venue_detail_override" value="${escapeHtml(course.venue_detail_override || "")}" maxlength="120" placeholder="${escapeHtml(defaultVenueDetail ? `비워 두면 ${defaultVenueDetail}을 사용합니다.` : "예: 3층 강의실, 1층·3층")}">
         </label>
         <label>시작 일시<input name="starts_at" type="datetime-local" value="${escapeHtml(startValue)}" min="${escapeHtml(startMinValue)}" required></label>
         <label>종료 일시(선택)<input name="ends_at" type="datetime-local" value="${escapeHtml(endValue)}" min="${escapeHtml(endMinValue)}"></label>
