@@ -4562,7 +4562,9 @@ function courseCheckinRosterPrintHtml(course) {
     .slice()
     .sort(compareRosterApplications);
   const venue = courseVenueForDisplay(course);
+  const instructor = instructorById(course.instructor_id);
   const location = [venue?.name, venue?.address, venue?.detail].filter(Boolean).join(" · ") || "장소 미정";
+  const instructorName = instructor?.name || "강사 미정";
   const rowsPerPage = 15;
   const totalRowCount = Math.max(30, Math.ceil(applications.length / rowsPerPage) * rowsPerPage);
   const photoConsentNotice = `<p class="roster-photo-consent-notice"><strong>사진 촬영·이용 안내</strong> 교육 현장 사진은 교육 운영 증빙·홍보·아카이브 목적으로 촬영·이용될 수 있습니다. 동의하는 경우 아래 칸에 체크해 주세요. 동의하지 않아도 교육 참여에 불이익이 없으며, 식별 가능한 사진은 게시·업로드하지 않습니다. 불가피하게 촬영된 경우 식별되지 않도록 처리하거나 사용하지 않습니다.</p>`;
@@ -4573,7 +4575,7 @@ function courseCheckinRosterPrintHtml(course) {
       const application = applications[index];
       return `<tr><td>${index + 1}</td><td>${escapeHtml(application?.applicant_name || "")}</td><td>${escapeHtml(phoneLastFour(application?.phone))}</td><td class="signature"></td><td class="photo-consent-cell"><span class="photo-consent-choice"><span class="photo-consent-box" aria-hidden="true"></span><span>동의</span></span></td><td></td></tr>`;
     }).join("");
-    return `<section class="roster-page"><h1>${escapeHtml(course.title || "교육")}</h1><div class="roster-gap"></div><div class="roster-heading">출석부</div><div class="roster-meta"><div><strong>교육일시</strong> ${escapeHtml(formatDateTime(course.starts_at))}</div><div><strong>장소</strong> ${escapeHtml(location)}</div></div>${photoConsentNotice}<table><thead><tr><th>번호</th><th>성명(가나다순)</th><th>본인확인</th><th>서명</th><th>사진 촬영·이용<br>동의</th><th>비고</th></tr></thead><tbody>${rows}</tbody></table><p class="roster-page-number">${pageIndex + 1} / ${Math.ceil(totalRowCount / rowsPerPage)}</p></section>`;
+    return `<section class="roster-page"><h1>${escapeHtml(course.title || "교육")}</h1><div class="roster-gap"></div><div class="roster-heading">출석부</div><div class="roster-meta"><div><strong>교육일시</strong> ${escapeHtml(formatDateTime(course.starts_at))}</div><div><strong>장소</strong> ${escapeHtml(location)}</div><div><strong>강사</strong> ${escapeHtml(instructorName)}</div></div>${photoConsentNotice}<table><thead><tr><th>번호</th><th>성명(가나다순)</th><th>본인확인</th><th>서명</th><th>사진 촬영·이용<br>동의</th><th>비고</th></tr></thead><tbody>${rows}</tbody></table><p class="roster-page-number">${pageIndex + 1} / ${Math.ceil(totalRowCount / rowsPerPage)}</p></section>`;
   }).join("");
 }
 
