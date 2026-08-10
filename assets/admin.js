@@ -31,6 +31,7 @@ const state = {
   isLoggingIn: false,
   isPasswordRecovery: false,
   applicationFilters: {
+    courseView: "upcoming",
     courseId: "",
     applicantQuery: "",
   },
@@ -1263,13 +1264,24 @@ function renderReviewKeywordChart() {
 function filteredApplications() {
   const applicantQuery = normalizeSearchText(state.applicationFilters.applicantQuery);
   return activeApplications().filter((application) => {
+    const course = courseById(application.course_id);
+    const courseView = effectiveCourseStatus(course) === "finished" ? "completed" : "upcoming";
+    if (courseView !== state.applicationFilters.courseView) return false;
     if (state.applicationFilters.courseId && application.course_id !== state.applicationFilters.courseId) return false;
     if (applicantQuery && !normalizeSearchText(application.applicant_name).includes(applicantQuery)) return false;
     return true;
   });
 }
 
-function applicationGroups(applications) {
+function applicationCourseViewCounts() {
+  return activeApplications().reduce((counts, application) => {
+    const courseView = effectiveCourseStatus(courseById(application.course_id)) === "finished" ? "completed" : "upcoming";
+    counts[courseView] += 1;
+    return counts;
+  }, { upcoming: 0, completed: 0 });
+}
+
+function applicationGroups(applications, courseView = state.applicationFilters.courseView) {
   const groupsByCourse = new Map();
   applications.forEach((application) => {
     const key = application.course_id || "unknown";
@@ -1286,7 +1298,7 @@ function applicationGroups(applications) {
     .sort((a, b) => {
       const aTime = a.course?.starts_at ? new Date(a.course.starts_at).getTime() : Number.MAX_SAFE_INTEGER;
       const bTime = b.course?.starts_at ? new Date(b.course.starts_at).getTime() : Number.MAX_SAFE_INTEGER;
-      if (aTime !== bTime) return aTime - bTime;
+      if (aTime !== bTime) return courseView === "completed" ? bTime - aTime : aTime - bTime;
       return courseName(a.courseId).localeCompare(courseName(b.courseId), "ko");
     });
 }
@@ -2087,6 +2099,10 @@ function updateArchiveCourseFilterSelected() {
 function setCourseFilterSelection(target, courseId = "") {
   if (target === "application") {
     state.applicationFilters.courseId = courseId;
+    const selectedCourse = courseById(courseId);
+    if (selectedCourse) {
+      state.applicationFilters.courseView = effectiveCourseStatus(selectedCourse) === "finished" ? "completed" : "upcoming";
+    }
     closeModal(elements.adminNoticeModal);
     renderApplications();
     return;
@@ -5224,9 +5240,11 @@ function applyApplicationNameSearch(event) {
 function renderApplications() {
   const applications = filteredApplications();
   let groups = applicationGroups(applications);
+  const viewCounts = applicationCourseViewCounts();
   if (state.applicationFilters.courseId && !groups.some((group) => group.courseId === state.applicationFilters.courseId)) {
     const selectedCourse = courseById(state.applicationFilters.courseId);
-    if (selectedCourse) {
+    const selectedCourseView = effectiveCourseStatus(selectedCourse) === "finished" ? "completed" : "upcoming";
+    if (selectedCourse && selectedCourseView === state.applicationFilters.courseView) {
       groups = [{
         courseId: state.applicationFilters.courseId,
         course: selectedCourse,
@@ -5238,6 +5256,11 @@ function renderApplications() {
     <h2>교육 신청 관리</h2>
     <p class="muted">신청자 이름, 이메일, 전화번호는 교육 접수와 안내 목적으로만 사용하세요. 전화번호는 별도 인증 없이 신청자가 입력한 값입니다.</p>
     <div class="section" style="margin: 12px 0 14px;">
+      <div class="page-tabs" role="tablist" aria-label="신청 교육 진행 상태">
+        <button class="btn small ${state.applicationFilters.courseView === "upcoming" ? "" : "secondary"}" type="button" role="tab" aria-selected="${state.applicationFilters.courseView === "upcoming"}" data-application-course-view="upcoming">진행 예정 ${viewCounts.upcoming.toLocaleString("ko-KR")}명</button>
+        <button class="btn small ${state.applicationFilters.courseView === "completed" ? "" : "secondary"}" type="button" role="tab" aria-selected="${state.applicationFilters.courseView === "completed"}" data-application-course-view="completed">완료 ${viewCounts.completed.toLocaleString("ko-KR")}명</button>
+      </div>
+      <p class="muted" style="margin: 8px 0 14px;">교육 중인 교육은 진행 예정 탭에서 함께 관리합니다.</p>
       <h3>교육별 보기</h3>
       ${renderCourseFilterControl("application", state.applicationFilters.courseId, { emptyLabel: "전체 교육" })}
       <form data-application-name-search-form style="margin-top: 12px;">
@@ -5275,7 +5298,7 @@ function renderApplications() {
           ${renderWalkInAttendeeSection(group.courseId)}
           ${renderAttendanceDocumentSection(group.courseId)}
         </details>
-      `).join("") || `<div class="empty">${state.applications.length ? "선택한 조건에 맞는 신청이 없습니다." : "아직 교육 신청이 없습니다. 특정 교육을 선택하면 교육 종료 후 현장 참석자를 등록할 수 있습니다."}</div>`}
+      `).join("") || `<div class="empty">${state.applications.length ? (state.applicationFilters.courseView === "completed" ? "조건에 맞는 완료 교육 신청이 없습니다." : "조건에 맞는 진행 예정 교육 신청이 없습니다.") : "아직 교육 신청이 없습니다. 특정 교육을 선택하면 교육 종료 후 현장 참석자를 등록할 수 있습니다."}</div>`}
     </div>
   `;
 }
@@ -6748,6 +6771,7 @@ function bindEvents() {
     const deleteReviewButton = event.target.closest("[data-delete-review-admin]");
     const clearApplicationNoteButton = event.target.closest("[data-clear-application-note-admin]");
     const clearApplicantSearchButton = event.target.closest("[data-clear-applicant-search]");
+    const applicationCourseViewButton = event.target.closest("[data-application-course-view]");
     const reportStatusButton = event.target.closest("[data-report-status]");
     const attendanceButton = event.target.closest("[data-confirm-attendance]");
     const unconfirmAttendanceButton = event.target.closest("[data-unconfirm-attendance]");
@@ -6947,6 +6971,17 @@ function bindEvents() {
     if (clearApplicantSearchButton) {
       state.applicationFilters.applicantQuery = "";
       renderApplications();
+      return;
+    }
+    if (applicationCourseViewButton) {
+      const nextView = applicationCourseViewButton.dataset.applicationCourseView === "completed" ? "completed" : "upcoming";
+      if (state.applicationFilters.courseView !== nextView) {
+        const selectedCourse = courseById(state.applicationFilters.courseId);
+        const selectedCourseView = effectiveCourseStatus(selectedCourse) === "finished" ? "completed" : "upcoming";
+        if (selectedCourse && selectedCourseView !== nextView) state.applicationFilters.courseId = "";
+        state.applicationFilters.courseView = nextView;
+        renderApplications();
+      }
       return;
     }
     if (confirmChangeNotificationButton) {
