@@ -67,6 +67,7 @@ const state = {
   },
   activePage: "courses",
   activeOrganizationSlug: "",
+  organizationCourseView: "upcoming",
   activeInstructorId: "",
   activeView: "cards",
   activeCourseId: null,
@@ -792,7 +793,7 @@ function publicOrganizations() {
 
 function publicInstructors() {
   return state.instructors
-    .filter((instructor) => instructor.is_active !== false && instructor.name)
+    .filter((instructor) => instructor.is_active !== false && instructor.name && coursesForInstructor(instructor.id).length > 0)
     .slice()
     .sort((a, b) => a.name.localeCompare(b.name, "ko"));
 }
@@ -1122,15 +1123,38 @@ function isValidPhone(value) {
   return /^010\d{8}$/.test(digits);
 }
 
-function coursesForOrganization(organizationId) {
-  return state.composedCourses.filter((course) => course.organization_id === organizationId && course.status !== "finished");
+function isDirectoryCourse(course) {
+  return Boolean(course?.id) && course.published !== false && course.status !== "cancelled";
+}
+
+function coursesForOrganizationByStatus(organizationId) {
+  const organizationCourses = state.composedCourses.filter((course) => (
+    course.organization_id === organizationId && isDirectoryCourse(course)
+  ));
+  return {
+    upcoming: organizationCourses
+      .filter((course) => course.status !== "finished")
+      .slice()
+      .sort((a, b) => new Date(courseScheduleStart(a) || 0) - new Date(courseScheduleStart(b) || 0)),
+    completed: organizationCourses
+      .filter((course) => course.status === "finished")
+      .slice()
+      .sort((a, b) => new Date(courseScheduleStart(b) || 0) - new Date(courseScheduleStart(a) || 0)),
+  };
 }
 
 function coursesForInstructor(instructorId) {
   return state.composedCourses
-    .filter((course) => course.instructor_id === instructorId && course.status !== "finished")
+    .filter((course) => course.instructor_id === instructorId && isDirectoryCourse(course))
     .slice()
-    .sort((a, b) => new Date(a.starts_at || 0) - new Date(b.starts_at || 0));
+    .sort((a, b) => {
+      const aCompleted = a.status === "finished";
+      const bCompleted = b.status === "finished";
+      if (aCompleted !== bCompleted) return aCompleted ? 1 : -1;
+      const aStartsAt = new Date(courseScheduleStart(a) || 0).getTime();
+      const bStartsAt = new Date(courseScheduleStart(b) || 0).getTime();
+      return aCompleted ? bStartsAt - aStartsAt : aStartsAt - bStartsAt;
+    });
 }
 
 function courseById(courseId) {
@@ -1161,8 +1185,10 @@ function routeHash(page, slug = "") {
 function applyRouteFromHash() {
   const value = decodeURIComponent(window.location.hash.replace(/^#/, ""));
   if (value.startsWith("organization/")) {
+    const nextOrganizationSlug = value.replace("organization/", "");
+    if (state.activeOrganizationSlug !== nextOrganizationSlug) state.organizationCourseView = "upcoming";
     state.activePage = "organization";
-    state.activeOrganizationSlug = value.replace("organization/", "");
+    state.activeOrganizationSlug = nextOrganizationSlug;
     state.activeInstructorId = "";
     return;
   }
@@ -1705,7 +1731,9 @@ function filterSupplementaryContent(items, contentText = () => "") {
 function renderStats() {
   const courseCount = state.stats.courses ?? state.courses.length;
   const orgCount = state.stats.organizations ?? publicOrganizations().length;
-  const instructorCount = state.stats.instructors ?? publicInstructors().length;
+  const instructorCount = state.fullDataLoaded
+    ? publicInstructors().length
+    : (state.stats.instructors ?? publicInstructors().length);
   const reviewCount = state.stats.reviews ?? state.reviews.length;
   if (elements.courseCount) elements.courseCount.textContent = courseCount.toLocaleString("ko-KR");
   if (elements.orgCount) elements.orgCount.textContent = orgCount.toLocaleString("ko-KR");
@@ -1769,7 +1797,7 @@ function courseCardHtml(course) {
 }
 
 function organizationCardHtml(organization) {
-  const courses = coursesForOrganization(organization.id);
+  const courses = coursesForOrganizationByStatus(organization.id);
   const logoUrl = normalizeSafeUrl(organization.logo_url, URL_RULES.image);
   const websiteUrl = normalizeSafeUrl(organization.website_url, URL_RULES.external);
   return `
@@ -1781,7 +1809,7 @@ function organizationCardHtml(organization) {
           ${organization.contact_email ? `<p class="muted">연락처: ${escapeHtml(organization.contact_email)}</p>` : ""}
         </div>
         <div class="footer">
-          <span class="review-note">교육 ${courses.length}개</span>
+          <span class="review-note">진행 예정 교육 ${courses.upcoming.length.toLocaleString("ko-KR")}건 · 완료된 교육 ${courses.completed.length.toLocaleString("ko-KR")}건</span>
           <div class="actions">
             ${websiteUrl ? `<a class="btn small secondary" href="${escapeHtml(websiteUrl)}" target="_blank" rel="noreferrer">홈페이지</a>` : ""}
             <button class="btn small" type="button" data-open-organization="${escapeHtml(organization.slug)}">자세히 보기</button>
@@ -1804,7 +1832,7 @@ function instructorCardHtml(instructor) {
           ${instructor.bio ? `<p>${escapeHtml(instructor.bio)}</p>` : ""}
         </div>
         <div class="footer">
-          <span class="review-note">교육 ${courses.length}개</span>
+          <span class="review-note">전체 교육 ${courses.length.toLocaleString("ko-KR")}건</span>
           <div class="actions">
             <button class="btn small secondary" type="button" data-open-instructor="${escapeHtml(instructor.id)}">프로필</button>
             ${profileUrl ? `<a class="btn small secondary" href="${escapeHtml(profileUrl)}" target="_blank" rel="noreferrer">홈페이지/SNS</a>` : ""}
@@ -2120,13 +2148,15 @@ function renderOrganizationPage() {
     return;
   }
 
-  const courses = coursesForOrganization(organization.id);
+  const courses = coursesForOrganizationByStatus(organization.id);
+  const activeCourseView = state.organizationCourseView === "completed" ? "completed" : "upcoming";
+  const visibleCourses = courses[activeCourseView];
   const logoUrl = normalizeSafeUrl(organization.logo_url, URL_RULES.image);
   const websiteUrl = normalizeSafeUrl(organization.website_url, URL_RULES.external);
   setPageHeader({
     title: organization.name,
     description: "단체 소개와 이 단체가 운영하는 교육을 함께 볼 수 있습니다.",
-    summary: `${courses.length.toLocaleString("ko-KR")}개 교육이 있습니다.`,
+    summary: `진행 예정 교육 ${courses.upcoming.length.toLocaleString("ko-KR")}건 · 완료된 교육 ${courses.completed.length.toLocaleString("ko-KR")}건`,
   });
   elements.courseResults.className = "content-stack";
   elements.courseResults.innerHTML = `
@@ -2142,8 +2172,14 @@ function renderOrganizationPage() {
         </div>
       </div>
     </article>
+    <div class="actions" role="group" aria-label="단체 교육 구분">
+      <button class="btn small ${activeCourseView === "upcoming" ? "" : "secondary"}" type="button" data-organization-course-view="upcoming" aria-pressed="${activeCourseView === "upcoming"}">진행 예정 교육 ${courses.upcoming.length.toLocaleString("ko-KR")}건</button>
+      <button class="btn small ${activeCourseView === "completed" ? "" : "secondary"}" type="button" data-organization-course-view="completed" aria-pressed="${activeCourseView === "completed"}">완료된 교육 ${courses.completed.length.toLocaleString("ko-KR")}건</button>
+    </div>
     <div class="course-grid">
-      ${courses.length ? courses.map(courseCardHtml).join("") : `<div class="empty">이 단체의 등록된 교육이 없습니다.</div>`}
+      ${visibleCourses.length
+        ? visibleCourses.map(courseCardHtml).join("")
+        : `<div class="empty">이 단체의 ${activeCourseView === "completed" ? "완료된" : "진행 예정"} 교육이 없습니다.</div>`}
     </div>
   `;
 }
@@ -2178,7 +2214,7 @@ function renderInstructorPage() {
   setPageHeader({
     title: instructor.name,
     description: "강사 소개와 이 강사가 진행하는 교육을 함께 볼 수 있습니다.",
-    summary: `${courses.length.toLocaleString("ko-KR")}개 교육이 있습니다.`,
+    summary: `전체 교육 ${courses.length.toLocaleString("ko-KR")}건이 있습니다. 완료된 교육도 포함합니다.`,
   });
   elements.courseResults.className = "content-stack";
   elements.courseResults.innerHTML = `
@@ -5634,6 +5670,7 @@ function bindEvents() {
     const routeControl = event.target.closest("[data-route]");
     const openButton = event.target.closest("[data-open-course]");
     const organizationButton = event.target.closest("[data-open-organization]");
+    const organizationCourseViewButton = event.target.closest("[data-organization-course-view]");
     const instructorButton = event.target.closest("[data-open-instructor]");
     const instructorCoursesButton = event.target.closest("[data-open-instructor-courses]");
     const closeButton = event.target.closest("[data-close-modal]");
@@ -5705,6 +5742,11 @@ function bindEvents() {
     }
     if (clearResidenceButton) {
       clearResidenceSelection(clearResidenceButton);
+      return;
+    }
+    if (organizationCourseViewButton) {
+      state.organizationCourseView = organizationCourseViewButton.dataset.organizationCourseView === "completed" ? "completed" : "upcoming";
+      renderOrganizationPage();
       return;
     }
     if (routeControl) {
