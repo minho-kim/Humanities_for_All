@@ -569,6 +569,15 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 .qr-checkin-partner { padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: #f7faff; }
 .qr-checkin-partner p { margin: 0 0 12px; }
 .qr-checkin-partner .small-copy { margin: 12px 0 0; font-size: .86rem; }
+.qr-checkin-optional { padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface-soft); }
+.qr-checkin-optional h3, .qr-checkin-optional p { margin-top: 0; }
+.qr-checkin-optional .row-top { align-items: flex-start; margin-bottom: 12px; }
+.qr-checkin-optional-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+.qr-checkin-optional-fields label:last-child { grid-column: 1 / -1; }
+
+@media (max-width: 640px) {
+  .qr-checkin-optional-fields { grid-template-columns: 1fr; }
+}
 .check-row { display: flex; align-items: flex-start; gap: 9px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
 .check-row input { flex: 0 0 auto; width: 18px; min-height: 18px; margin-top: 2px; }
 .inline-message:empty { display: none; }

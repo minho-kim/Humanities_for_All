@@ -1626,21 +1626,35 @@ function compareRosterApplications(a, b) {
   return new Date(a.created_at || 0) - new Date(b.created_at || 0);
 }
 
-function printApplicationRoster(courseId) {
+function openPrintPreparationWindow(title = "출석부") {
+  const popup = window.open("", "humanities-course-checkin-print", "width=1120,height=860");
+  if (!popup) throw new Error("인쇄 창이 차단되었습니다. 팝업을 허용해 주세요.");
+  popup.document.write(`<!doctype html><html lang="ko"><meta charset="utf-8"><title>${escapeHtml(title)}</title><body style="font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;padding:32px"><p>출석 정보를 합치는 중입니다.</p></body></html>`);
+  popup.document.close();
+  return popup;
+}
+
+async function printApplicationRoster(courseId) {
   const course = courseById(courseId);
   if (!course) {
     showToast("출력할 교육을 찾지 못했습니다.");
     return;
   }
+  let popup = null;
   try {
+    popup = openPrintPreparationWindow(`${course.title || "교육"} 출석부`);
+    const result = await invokeCourseCheckinAdmin("admin_get", courseId);
     printCourseCheckinDocument(
       course,
       "",
       organizationById(course.organization_id)?.name || "모두의 인문학",
       false,
       true,
+      result.roster || null,
+      popup,
     );
   } catch (error) {
+    popup?.close();
     showToast(error.message || "출석부를 만들지 못했습니다.");
   }
 }
@@ -4487,7 +4501,7 @@ async function printElectronicAttendanceReport(course, records) {
     ledger_hash: await attendanceLedgerHash(course.id, record),
   })));
   popup.document.open();
-  popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${escapeHtml(course.title || "교육")} 전자 출석확인서</title><style>@page{size:A4 landscape;margin:12mm}*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;color:#172033;margin:0}h1{font-size:24px;margin:0 0 8px}.meta{display:grid;grid-template-columns:1fr 1fr;gap:4px 18px;margin:0 0 16px;font-size:13px}.notice{font-size:12px;color:#5d6775;margin:10px 0 14px}table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px}thead{display:table-header-group}tr{break-inside:avoid}th,td{border:1px solid #444;padding:7px 6px;text-align:left;vertical-align:top}th{background:#f1f3f5}th:first-child,td:first-child{width:42px;text-align:center}th:nth-child(2),td:nth-child(2){width:110px}th:nth-child(3),td:nth-child(3){width:85px}th:nth-child(4),td:nth-child(4){width:155px}th:nth-child(5),td:nth-child(5){width:135px}.footer{margin-top:14px;font-size:11px;color:#5d6775}@media print{body{margin:0}}</style></head><body><h1>전자 출석확인서</h1><div class="meta"><div><strong>교육</strong> ${escapeHtml(course.title || "교육")}</div><div><strong>운영 단체</strong> ${escapeHtml(organization?.name || "모두의 인문학")}</div><div><strong>일시</strong> ${escapeHtml(formatDateTime(course.starts_at))}</div><div><strong>장소</strong> ${escapeHtml([venue?.name, venue?.address, venue?.detail].filter(Boolean).join(" · ") || "장소 미정")}</div><div><strong>출력 시각(KST)</strong> ${escapeHtml(formatDateTime(generatedAt))}</div><div><strong>온라인 출석</strong> ${rows.length.toLocaleString("ko-KR")}명</div></div><p class="notice">이 문서는 로그인 또는 QR 본인확인으로 생성된 온라인 출석 원장을 출력한 ‘전자 출석확인서’입니다. 종이 서명 출석은 별도 스캔본에서 확인합니다.</p><table><thead><tr><th>번호</th><th>이름</th><th>전화 끝자리</th><th>확인 방법</th><th>체크인(KST)</th><th>원장 ID / 검증값</th><th>연동 상태</th></tr></thead><tbody>${rows.map((record) => `<tr><td>${record.index}</td><td>${escapeHtml(record.participant_name || "익명 참여자")}</td><td>${escapeHtml(record.phone_last4 || "삭제됨")}</td><td>${escapeHtml(courseCheckinMethodLabel(record.checkin_method))}</td><td>${escapeHtml(formatDateTime(record.checked_in_at))}</td><td>${escapeHtml(record.id)}<br>${escapeHtml(record.ledger_hash)}</td><td>${record.partner_code ? "협동조합 원장 연동" : "모두의 인문학 원장"}</td></tr>`).join("") || '<tr><td colspan="7">온라인 출석 기록이 없습니다.</td></tr>'}</tbody></table><p class="footer">원장 검증값은 교육·출석 ID·체크인 시각·확인 방법을 SHA-256으로 계산한 앞 16자리입니다. 원장 수정 여부를 대조하는 보조값이며 공인전자서명을 의미하지 않습니다.</p><script>window.onload=()=>window.print()<\/script></body></html>`);
+  popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${escapeHtml(course.title || "교육")} 전자 출석확인서</title><style>@page{size:A4 landscape;margin:12mm}*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;color:#172033;margin:0;font-size:11pt;word-break:keep-all;overflow-wrap:break-word}h1{font-size:20pt;margin:0 0 8px}.meta{display:grid;grid-template-columns:1fr 1fr;gap:4px 18px;margin:0 0 16px;font-size:11pt}.notice{font-size:11pt;color:#5d6775;margin:10px 0 14px}table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:11pt}thead{display:table-header-group}tr{break-inside:avoid}th,td{border:1px solid #444;padding:7px 6px;text-align:left;vertical-align:top}th{background:#f1f3f5}th:first-child,td:first-child{width:42px;text-align:center}th:nth-child(2),td:nth-child(2){width:110px}th:nth-child(3),td:nth-child(3){width:85px}th:nth-child(4),td:nth-child(4){width:155px}th:nth-child(5),td:nth-child(5){width:135px}.footer{margin-top:14px;font-size:11pt;color:#5d6775}@media print{body{margin:0}}</style></head><body><h1>전자 출석확인서</h1><div class="meta"><div><strong>교육</strong> ${escapeHtml(course.title || "교육")}</div><div><strong>운영 단체</strong> ${escapeHtml(organization?.name || "모두의 인문학")}</div><div><strong>일시</strong> ${escapeHtml(formatDateTime(course.starts_at))}</div><div><strong>장소</strong> ${escapeHtml([venue?.name, venue?.address, venue?.detail].filter(Boolean).join(" · ") || "장소 미정")}</div><div><strong>출력 시각(KST)</strong> ${escapeHtml(formatDateTime(generatedAt))}</div><div><strong>온라인 출석</strong> ${rows.length.toLocaleString("ko-KR")}명</div></div><p class="notice">이 문서는 로그인 또는 QR 본인확인으로 생성된 온라인 출석 원장을 출력한 ‘전자 출석확인서’입니다. 종이 서명 출석은 별도 스캔본에서 확인합니다.</p><table><thead><tr><th>번호</th><th>이름</th><th>전화 끝자리</th><th>확인 방법</th><th>체크인(KST)</th><th>원장 ID / 검증값</th><th>연동 상태</th></tr></thead><tbody>${rows.map((record) => `<tr><td>${record.index}</td><td>${escapeHtml(record.participant_name || "익명 참여자")}</td><td>${escapeHtml(record.phone_last4 || "삭제됨")}</td><td>${escapeHtml(courseCheckinMethodLabel(record.checkin_method))}</td><td>${escapeHtml(formatDateTime(record.checked_in_at))}</td><td>${escapeHtml(record.id)}<br>${escapeHtml(record.ledger_hash)}</td><td>${record.partner_code ? "협동조합 원장 연동" : "모두의 인문학 원장"}</td></tr>`).join("") || '<tr><td colspan="7">온라인 출석 기록이 없습니다.</td></tr>'}</tbody></table><p class="footer">원장 검증값은 교육·출석 ID·체크인 시각·확인 방법을 SHA-256으로 계산한 앞 16자리입니다. 원장 수정 여부를 대조하는 보조값이며 공인전자서명을 의미하지 않습니다.</p><script>window.onload=()=>window.print()<\/script></body></html>`);
   popup.document.close();
 }
 
@@ -4572,9 +4586,18 @@ function courseCheckinQrImage(qrUrl) {
   }
 }
 
-function courseCheckinRosterPrintHtml(course) {
-  const applications = activeApplications()
+function courseCheckinRosterPrintHtml(course, rosterData = null) {
+  const rosterRows = (Array.isArray(rosterData?.rows) ? rosterData.rows : activeApplications()
     .filter((application) => application.course_id === course.id)
+    .map((application) => ({
+      ...application,
+      phone_last4: phoneLastFour(application.phone),
+      attendance_confirmed_at: application.attendance_confirmed_at || null,
+      attendance_method: application.attendance_confirmed_at ? "ADMIN_CONFIRMED" : null,
+      gender_recorded: false,
+      birth_date_recorded: false,
+      participation_route_recorded: false,
+    })))
     .slice()
     .sort(compareRosterApplications);
   const venue = courseVenueForDisplay(course);
@@ -4582,21 +4605,54 @@ function courseCheckinRosterPrintHtml(course) {
   const location = [venue?.name, venue?.address, venue?.detail].filter(Boolean).join(" · ") || "장소 미정";
   const instructorName = instructor?.name || "강사 미정";
   const rowsPerPage = 15;
-  const totalRowCount = Math.max(30, Math.ceil(applications.length / rowsPerPage) * rowsPerPage);
+  const totalRowCount = Math.max(45, Math.ceil(rosterRows.length / rowsPerPage) * rowsPerPage);
+  const pageCount = Math.ceil(totalRowCount / rowsPerPage);
+  const attendanceSummary = rosterData?.attendance_summary || {
+    male: 0,
+    female: 0,
+    total: rosterRows.filter((row) => row.attendance_confirmed_at).length,
+    other_or_unrecorded: rosterRows.filter((row) => row.attendance_confirmed_at).length,
+  };
+  const registeredCell = (recorded, emptyHtml) => recorded
+    ? '<span class="roster-registered">기입 불필요</span>'
+    : emptyHtml;
+  const compactAttendanceTime = (value) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Seoul",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(date);
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${values.month}.${values.day} ${values.hour}:${values.minute}`;
+  };
+  const attendanceCell = (row) => {
+    if (!row?.attendance_confirmed_at) return "";
+    const method = String(row.attendance_method || "");
+    const label = method === "ADMIN_CONFIRMED" ? "관리" : "QR";
+    return `<span class="roster-attendance-mark">${label} ${escapeHtml(compactAttendanceTime(row.attendance_confirmed_at))}</span>`;
+  };
   const photoConsentNotice = `<p class="roster-photo-consent-notice"><strong>사진 촬영·이용 안내</strong> 교육 현장 사진은 교육 운영 증빙·홍보·아카이브 목적으로 촬영·이용될 수 있습니다. 동의하는 경우 아래 칸에 체크해 주세요. 동의하지 않아도 교육 참여에 불이익이 없으며, 식별 가능한 사진은 게시·업로드하지 않습니다. 불가피하게 촬영된 경우 식별되지 않도록 처리하거나 사용하지 않습니다.</p>`;
-  return Array.from({ length: Math.ceil(totalRowCount / rowsPerPage) }, (_, pageIndex) => {
+  return Array.from({ length: pageCount }, (_, pageIndex) => {
     const pageStart = pageIndex * rowsPerPage;
     const rows = Array.from({ length: rowsPerPage }, (__, rowIndex) => {
       const index = pageStart + rowIndex;
-      const application = applications[index];
-      return `<tr><td>${index + 1}</td><td>${escapeHtml(application?.applicant_name || "")}</td><td>${escapeHtml(phoneLastFour(application?.phone))}</td><td class="signature"></td><td class="photo-consent-cell"><span class="photo-consent-choice"><span class="photo-consent-box" aria-hidden="true"></span><span>동의</span></span></td><td></td></tr>`;
+      const application = rosterRows[index];
+      return `<tr><td>${index + 1}</td><td>${escapeHtml(application?.applicant_name || "")}</td><td>${escapeHtml(application?.phone_last4 || "")}</td><td>${registeredCell(application?.gender_recorded, '<span class="roster-choice">□남/□여/□기타</span>')}</td><td>${registeredCell(application?.birth_date_recorded, '<span class="roster-birth-blank">____ . __ . __</span>')}</td><td>${registeredCell(application?.participation_route_recorded, '<span class="roster-route-choice">□홈피/□SNS/□시설게시판/□지인/□기타(　)</span>')}</td><td class="signature">${attendanceCell(application)}</td><td class="photo-consent-cell"><span class="photo-consent-choice"><span class="photo-consent-box" aria-hidden="true"></span><span>동의</span></span></td><td></td></tr>`;
     }).join("");
-    return `<section class="roster-page"><h1>${escapeHtml(course.title || "교육")}</h1><div class="roster-gap"></div><div class="roster-heading">출석부</div><div class="roster-meta"><div><strong>교육일시</strong> ${escapeHtml(formatDateTime(course.starts_at))}</div><div><strong>장소</strong> ${escapeHtml(location)}</div><div><strong>강사</strong> ${escapeHtml(instructorName)}</div></div>${photoConsentNotice}<table><thead><tr><th>번호</th><th>성명(가나다순)</th><th>본인확인</th><th>서명</th><th>사진 촬영·이용<br>동의</th><th>비고</th></tr></thead><tbody>${rows}</tbody></table><p class="roster-page-number">${pageIndex + 1} / ${Math.ceil(totalRowCount / rowsPerPage)}</p></section>`;
+    const summary = pageIndex === pageCount - 1
+      ? `<div class="roster-attendance-summary"><div><strong>시스템 확인 인원</strong> 남 ${Number(attendanceSummary.male || 0).toLocaleString("ko-KR")}명　여 ${Number(attendanceSummary.female || 0).toLocaleString("ko-KR")}명　기타·미입력 ${Number(attendanceSummary.other_or_unrecorded || 0).toLocaleString("ko-KR")}명　총 ${Number(attendanceSummary.total || 0).toLocaleString("ko-KR")}명</div><div><strong>회차별 참여인원</strong> 남 ____명　여 ____명　총 ____명</div></div>`
+      : "";
+    return `<section class="roster-page"><h1>${escapeHtml(course.title || "교육")}</h1><div class="roster-gap"></div><div class="roster-heading">출석부</div><div class="roster-meta"><div><strong>교육일시</strong> ${escapeHtml(formatDateTime(course.starts_at))}</div><div><strong>장소</strong> ${escapeHtml(location)}</div><div><strong>강사</strong> ${escapeHtml(instructorName)}</div></div>${photoConsentNotice}<table><thead><tr><th>번호</th><th>성명</th><th>본인확인</th><th>성별<br><span>남/여/기타</span></th><th>생년월일</th><th>참여경로<br><span>홈피/SNS/시설게시판/지인/기타</span></th><th>서명·참석확인</th><th>사진 촬영·이용<br>동의</th><th>비고</th></tr></thead><tbody>${rows}</tbody></table>${summary}<p class="roster-page-number">${pageIndex + 1} / ${pageCount}</p></section>`;
   }).join("");
 }
 
-function printCourseCheckinDocument(course, imageUrl, organizationName, includeRoster = false, rosterOnly = false) {
-  const popup = window.open("", "humanities-course-checkin-print", "width=820,height=980");
+function printCourseCheckinDocument(course, imageUrl, organizationName, includeRoster = false, rosterOnly = false, rosterData = null, existingPopup = null) {
+  const popup = existingPopup || window.open("", "humanities-course-checkin-print", "width=1120,height=860");
   if (!popup) throw new Error("인쇄 창이 차단되었습니다. 팝업을 허용해 주세요.");
   const venue = courseVenueForDisplay(course);
   const instructor = instructorById(course.instructor_id);
@@ -4613,8 +4669,9 @@ function printCourseCheckinDocument(course, imageUrl, organizationName, includeR
       ? partnerOrganizationName
       : `모두의 인문학 / ${partnerOrganizationName}`;
   const qrPage = rosterOnly ? "" : `<section class="qr-page"><header><p>모두의 인문학 출석 확인</p><h1>${escapeHtml(course.title || "교육")}</h1></header><div class="qr-meta"><div><strong>교육일시</strong><span>${escapeHtml(formatDateTime(course.starts_at))}</span></div><div><strong>장소</strong><span>${escapeHtml(location)}</span></div><div><strong>강사</strong><span>${escapeHtml(instructorLabel)}</span></div></div><main><img src="${imageUrl}" alt="교육 체크인 QR"><div class="checkin-guide"><p class="guide">휴대전화 카메라로 QR 코드를 촬영해 주세요.</p><p>화면 안내에 따라 본인 확인을 마치면 출석이 완료됩니다.</p><p>접속이 어려우면 담당자에게 말씀해 주세요.</p></div><p class="note">교육 시작 1시간 전부터 종료 1시간 후까지 사용할 수 있습니다.</p></main><footer><div class="org">${escapeHtml(printOrganizationLabel)}</div></footer></section>`;
-  const rosterPages = includeRoster || rosterOnly ? courseCheckinRosterPrintHtml(course) : "";
-  popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${rosterOnly ? "교육 출석부" : `교육 QR 체크인${includeRoster ? "·출석부" : ""}`}</title><style>@page{size:A4 portrait;margin:0}*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;color:#172033;margin:0;font-size:11pt;word-break:keep-all;overflow-wrap:break-word;hyphens:none}.qr-page{width:210mm;min-height:297mm;padding:14mm 16mm 12mm;display:flex;flex-direction:column;text-align:center;break-after:${includeRoster ? "page" : "auto"}}.qr-page header{border-bottom:4px solid #15803d;padding-bottom:5mm}.qr-page header>p{margin:0 0 2mm;color:#15803d;font-size:11pt;font-weight:800;letter-spacing:.08em}.qr-page h1{font-size:25pt;line-height:1.25;margin:0;word-break:keep-all;overflow-wrap:break-word}.qr-meta{display:grid;grid-template-columns:1fr 1fr;gap:5mm;margin:8mm 0 3mm;text-align:left}.qr-meta>div{display:grid;grid-template-columns:24mm 1fr;gap:2mm;font-size:11pt;word-break:keep-all;overflow-wrap:break-word}.qr-meta strong{color:#475569}.qr-page main{display:flex;flex:1;min-height:0;flex-direction:column;align-items:center;justify-content:center}.qr-page img{width:112mm;height:112mm;padding:4mm;border:4px solid #172033}.checkin-guide{margin:5mm 0 1mm}.checkin-guide p{font-size:11pt;line-height:1.5;margin:1mm 0}.checkin-guide .guide{font-size:15pt;font-weight:800;margin:0 0 2mm}.org{font-weight:850;font-size:15pt;word-break:keep-all;overflow-wrap:break-word}.note{color:#5d6775;font-size:11pt;margin:2mm 0}.qr-page footer{border-top:1px solid #cbd5e1;padding-top:5mm}.roster-page{width:210mm;min-height:297mm;padding:12mm;text-align:left;break-before:${rosterOnly ? "auto" : "page"};break-after:page;position:relative}.roster-page:last-child{break-after:auto}.roster-page h1{font-size:22pt;line-height:1.25;margin:0;text-align:center;word-break:keep-all}.roster-gap{height:5mm}.roster-heading{font-size:16pt;font-weight:850;margin-bottom:2mm}.roster-meta{display:grid;grid-template-columns:1fr 1fr;gap:3mm 7mm;margin-bottom:3mm;font-size:11pt}.roster-meta strong{margin-right:3mm}.roster-photo-consent-notice{margin:0 0 3mm;padding:2.5mm 3mm;border:1.5px solid #172033;border-radius:2mm;background:#f8fafc;font-size:11pt;line-height:1.4;break-inside:avoid}.roster-photo-consent-notice strong{font-size:11pt}.roster-page table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:11pt}.roster-page thead{display:table-header-group}.roster-page tr{break-inside:avoid}.roster-page th,.roster-page td{border:1px solid #222;padding:5px 4px;text-align:center;height:12mm}.roster-page th{background:#f1f3f5;font-weight:800;height:12mm;line-height:1.25}.roster-page th:first-child,.roster-page td:first-child{width:12mm}.roster-page th:nth-child(2),.roster-page td:nth-child(2){width:41mm}.roster-page th:nth-child(3),.roster-page td:nth-child(3){width:24mm}.roster-page th:nth-child(4),.roster-page td:nth-child(4){width:39mm}.roster-page th:nth-child(5),.roster-page td:nth-child(5){width:40mm}.roster-page th:last-child,.roster-page td:last-child{width:30mm}.photo-consent-choice{display:inline-flex;align-items:center;justify-content:center;gap:2mm;font-size:11pt;white-space:nowrap}.photo-consent-box{display:inline-block;width:5mm;height:5mm;border:1.5px solid #172033;background:#fff}.roster-page-number{position:absolute;right:12mm;bottom:6mm;margin:0;color:#64748b;font-size:11pt}.signature{height:12mm}@media print{body{margin:0}}</style></head><body>${qrPage}${rosterPages}<script>window.onload=()=>window.print()<\/script></body></html>`);
+  const rosterPages = includeRoster || rosterOnly ? courseCheckinRosterPrintHtml(course, rosterData) : "";
+  popup.document.open();
+  popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${rosterOnly ? "교육 출석부" : `교육 QR 체크인${includeRoster ? "·출석부" : ""}`}</title><style>@page{size:A4 portrait;margin:0}@page roster-sheet{size:A4 landscape;margin:0}*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;color:#172033;margin:0;font-size:11pt;word-break:keep-all;overflow-wrap:break-word;hyphens:none}.qr-page{width:210mm;min-height:297mm;padding:14mm 16mm 12mm;display:flex;flex-direction:column;text-align:center;break-after:${includeRoster ? "page" : "auto"}}.qr-page header{border-bottom:4px solid #15803d;padding-bottom:5mm}.qr-page header>p{margin:0 0 2mm;color:#15803d;font-size:11pt;font-weight:800;letter-spacing:.08em}.qr-page h1{font-size:25pt;line-height:1.25;margin:0;word-break:keep-all;overflow-wrap:break-word}.qr-meta{display:grid;grid-template-columns:1fr 1fr;gap:5mm;margin:8mm 0 3mm;text-align:left}.qr-meta>div{display:grid;grid-template-columns:24mm 1fr;gap:2mm;font-size:11pt;word-break:keep-all;overflow-wrap:break-word}.qr-meta strong{color:#475569}.qr-page main{display:flex;flex:1;min-height:0;flex-direction:column;align-items:center;justify-content:center}.qr-page img{width:112mm;height:112mm;padding:4mm;border:4px solid #172033}.checkin-guide{margin:5mm 0 1mm}.checkin-guide p{font-size:11pt;line-height:1.5;margin:1mm 0}.checkin-guide .guide{font-size:15pt;font-weight:800;margin:0 0 2mm}.org{font-weight:850;font-size:15pt;word-break:keep-all;overflow-wrap:break-word}.note{color:#5d6775;font-size:11pt;margin:2mm 0}.qr-page footer{border-top:1px solid #cbd5e1;padding-top:5mm}.roster-page{page:roster-sheet;width:297mm;min-height:210mm;padding:6mm 10mm;text-align:left;break-before:${rosterOnly ? "auto" : "page"};break-after:page;position:relative}.roster-page:last-child{break-after:auto}.roster-page h1{font-size:20pt;line-height:1.15;margin:0;text-align:center;word-break:keep-all}.roster-gap{height:1mm}.roster-heading{font-size:15pt;font-weight:850;margin-bottom:.5mm}.roster-meta{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1mm 5mm;margin-bottom:1mm;font-size:11pt;line-height:1.15}.roster-meta strong{margin-right:2mm}.roster-photo-consent-notice{margin:0 0 1mm;padding:1mm 2mm;border:1.5px solid #172033;border-radius:2mm;background:#f8fafc;font-size:11pt;line-height:1.15;break-inside:avoid}.roster-photo-consent-notice strong{font-size:11pt}.roster-page table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:11pt}.roster-page thead{display:table-header-group}.roster-page tr{break-inside:avoid}.roster-page th,.roster-page td{border:1px solid #222;padding:1px 2px;text-align:center;height:8.2mm;line-height:1.05}.roster-page th{background:#f1f3f5;font-weight:800;height:9mm;line-height:1.1}.roster-page th span{font-size:11pt;font-weight:600}.roster-page th:first-child,.roster-page td:first-child{width:9mm}.roster-page th:nth-child(2),.roster-page td:nth-child(2){width:26mm}.roster-page th:nth-child(3),.roster-page td:nth-child(3){width:20mm}.roster-page th:nth-child(4),.roster-page td:nth-child(4){width:30mm}.roster-page th:nth-child(5),.roster-page td:nth-child(5){width:29mm}.roster-page th:nth-child(6),.roster-page td:nth-child(6){width:82mm}.roster-page th:nth-child(7),.roster-page td:nth-child(7){width:33mm}.roster-page th:nth-child(8),.roster-page td:nth-child(8){width:33mm}.roster-page th:last-child,.roster-page td:last-child{width:14mm}.photo-consent-choice{display:inline-flex;align-items:center;justify-content:center;gap:1.5mm;font-size:11pt;white-space:nowrap}.photo-consent-box{display:inline-block;width:4.5mm;height:4.5mm;border:1.5px solid #172033;background:#fff}.roster-registered,.roster-attendance-mark,.roster-choice,.roster-birth-blank,.roster-route-choice{font-size:11pt;white-space:nowrap}.roster-registered,.roster-attendance-mark{font-weight:750}.roster-choice,.roster-route-choice{letter-spacing:-.02em}.roster-attendance-summary{position:absolute;left:10mm;right:36mm;bottom:2.5mm;display:grid;gap:.5mm;margin:0;font-size:11pt;line-height:1.2}.roster-page-number{position:absolute;right:10mm;bottom:3mm;margin:0;color:#64748b;font-size:11pt}.signature{height:8.2mm}@media print{body{margin:0}}</style></head><body>${qrPage}${rosterPages}<script>window.onload=()=>window.print()<\/script></body></html>`);
   const rosterStyle = popup.document.createElement("style");
   rosterStyle.textContent = `
     @media screen {
@@ -4674,7 +4731,7 @@ function openCourseCheckinPrintChoice(courseId, source = "management") {
   openAdminNotice("QR·출석부 인쇄", `
     <div class="admin-search-selected"><strong>${escapeHtml(course.title || "교육")}</strong><span>${escapeHtml(formatDateTime(course.starts_at))}</span></div>
     <p style="margin-top:14px;">QR 안내문, 출석부, 또는 두 문서를 이어서 선택할 수 있습니다.</p>
-    <p class="muted">출석부는 가나다순 신청자를 먼저 배치하고 A4 한 장에 15명씩, 기본 30칸으로 출력합니다.</p>
+    <p class="muted">출석부는 가나다순 신청자와 온라인 현장 체크인을 합쳐 A4 가로 한 장에 15명씩, 기본 45칸(3장)으로 출력합니다.</p>
     <div class="actions" style="margin-top:16px;">
       <button class="btn secondary" type="button" data-confirm-course-print="qr">QR만 인쇄</button>
       <button class="btn secondary" type="button" data-confirm-course-print="roster">출석부만 인쇄</button>
@@ -4682,17 +4739,42 @@ function openCourseCheckinPrintChoice(courseId, source = "management") {
     </div>
   `);
   document.querySelectorAll("[data-confirm-course-print]").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
+      let popup = null;
       try {
         const mode = button.dataset.confirmCoursePrint;
         const includeRoster = mode === "bundle";
         const rosterOnly = mode === "roster";
-        if (source === "detail") {
-          printCourseCheckinDocument(course, rosterOnly ? "" : courseCheckinQrImage(detailQrUrl), detailOrganizationName, includeRoster, rosterOnly);
+        if (includeRoster || rosterOnly) {
+          popup = openPrintPreparationWindow(`${course.title || "교육"} 출석 문서`);
+          button.disabled = true;
+          button.textContent = "출석 정보 확인 중...";
+          const result = await invokeCourseCheckinAdmin("admin_get", courseId);
+          if (source === "detail") {
+            printCourseCheckinDocument(course, rosterOnly ? "" : courseCheckinQrImage(detailQrUrl), detailOrganizationName, includeRoster, rosterOnly, result.roster || null, popup);
+          } else {
+            const managementCourse = notificationManagementCourses().find((item) => String(item.id) === String(courseId));
+            const setting = managementCourse?.setting || {};
+            const qrUrl = setting.qr_token ? `${PUBLIC_SITE_URL}index.html?checkin=${encodeURIComponent(setting.qr_token)}` : "";
+            if (includeRoster && !qrUrl) throw new Error("먼저 이 교육의 QR 체크인을 설정해 주세요.");
+            printCourseCheckinDocument(
+              courseById(course.id) || course,
+              rosterOnly ? "" : courseCheckinQrImage(qrUrl),
+              String(setting.print_organization_name || "모두의 인문학").trim(),
+              includeRoster,
+              rosterOnly,
+              result.roster || null,
+              popup,
+            );
+          }
+          return;
         }
-        else if (rosterOnly) printCourseCheckinDocument(course, "", String(course.setting?.print_organization_name || "모두의 인문학").trim(), false, true);
-        else printNotificationManagementCourseQr(courseId, includeRoster);
+        if (source === "detail") {
+          printCourseCheckinDocument(course, courseCheckinQrImage(detailQrUrl), detailOrganizationName);
+        }
+        else printNotificationManagementCourseQr(courseId, false);
       } catch (error) {
+        popup?.close();
         showToast(error.message || "인쇄 문서를 만들지 못했습니다.");
       }
     });
@@ -7340,7 +7422,7 @@ function bindEvents() {
     }
     if (rosterButton) {
       event.preventDefault();
-      printApplicationRoster(rosterButton.dataset.printRoster);
+      await printApplicationRoster(rosterButton.dataset.printRoster);
       return;
     }
     if (addWalkInButton) {

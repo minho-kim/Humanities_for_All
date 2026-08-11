@@ -22,7 +22,7 @@
     })();
   </script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
-  <link rel="stylesheet" href="./assets/styles.css?v=202608051823">
+  <link rel="stylesheet" href="./assets/styles.css?v=202608111138">
 </head>
 <body>
   <main class="page">
@@ -214,6 +214,39 @@
         </div>
         <p class="muted small-copy">조합원이면 협동조합에서 본인 확인 후 같은 교육 출석이 모두의 인문학에 한 번 기록됩니다.</p>
       </div>
+      <section id="qrCheckinOptional" class="qr-checkin-optional hidden" aria-labelledby="qrCheckinOptionalTitle">
+        <div class="row-top">
+          <div>
+            <h3 id="qrCheckinOptionalTitle">선택 정보</h3>
+            <p id="qrCheckinOptionalSummary" class="muted small-copy">입력하지 않아도 출석할 수 있습니다.</p>
+          </div>
+          <span class="badge gray">선택</span>
+        </div>
+        <label class="check-row"><input id="qrCheckinOptionalConsent" type="checkbox"> <span>성별·생년월일과 이번 교육 참여 경로의 수집·이용에 동의합니다.</span></label>
+        <div id="qrCheckinOptionalFields" class="qr-checkin-optional-fields hidden">
+          <label id="qrCheckinGenderField">성별
+            <select id="qrCheckinGender" name="gender">
+              <option value="">선택해 주세요</option>
+              <option value="male">남</option>
+              <option value="female">여</option>
+              <option value="other">기타</option>
+            </select>
+          </label>
+          <label id="qrCheckinBirthDateField">생년월일<input id="qrCheckinBirthDate" name="birth_date" type="date" min="1900-01-01" autocomplete="bday"></label>
+          <label>참여 경로
+            <select id="qrCheckinParticipationRoute" name="participation_route">
+              <option value="">선택해 주세요</option>
+              <option value="website">홈페이지</option>
+              <option value="sns">SNS</option>
+              <option value="facility_board">시설 게시판</option>
+              <option value="acquaintance">지인</option>
+              <option value="other">기타</option>
+            </select>
+          </label>
+          <label id="qrCheckinParticipationRouteOtherField" class="hidden">기타 참여 경로<input id="qrCheckinParticipationRouteOther" name="participation_route_other" maxlength="80" placeholder="직접 입력"></label>
+        </div>
+        <p class="muted small-copy">동의한 정보는 회차별 참여 통계와 출석부 기입 생략에 사용합니다. 성별·생년월일 원문은 출석부에 인쇄하지 않습니다.</p>
+      </section>
       <div id="qrCheckinAccount" class="qr-checkin-form hidden">
         <p><strong id="qrCheckinAccountName">로그인 정보로 출석할 수 있습니다.</strong></p>
         <p class="muted small-copy">저장된 교육 신청자 정보를 사용하므로 이름과 휴대전화번호를 다시 입력하지 않습니다.</p>
@@ -229,6 +262,6 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <!-- public.js를 변경해 배포할 때 v 값도 함께 올려 기존 브라우저 캐시를 교체한다. -->
-  <script type="module" src="./assets/public.js?v=202608101223"></script>
+  <script type="module" src="./assets/public.js?v=202608111138"></script>
 </body>
 </html>

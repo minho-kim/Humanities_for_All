@@ -145,6 +145,17 @@ const elements = {
   qrCheckinPartnerChoices: document.getElementById("qrCheckinPartnerChoices"),
   qrCheckinPartnerYes: document.getElementById("qrCheckinPartnerYes"),
   qrCheckinPartnerNo: document.getElementById("qrCheckinPartnerNo"),
+  qrCheckinOptional: document.getElementById("qrCheckinOptional"),
+  qrCheckinOptionalSummary: document.getElementById("qrCheckinOptionalSummary"),
+  qrCheckinOptionalConsent: document.getElementById("qrCheckinOptionalConsent"),
+  qrCheckinOptionalFields: document.getElementById("qrCheckinOptionalFields"),
+  qrCheckinGenderField: document.getElementById("qrCheckinGenderField"),
+  qrCheckinGender: document.getElementById("qrCheckinGender"),
+  qrCheckinBirthDateField: document.getElementById("qrCheckinBirthDateField"),
+  qrCheckinBirthDate: document.getElementById("qrCheckinBirthDate"),
+  qrCheckinParticipationRoute: document.getElementById("qrCheckinParticipationRoute"),
+  qrCheckinParticipationRouteOtherField: document.getElementById("qrCheckinParticipationRouteOtherField"),
+  qrCheckinParticipationRouteOther: document.getElementById("qrCheckinParticipationRouteOther"),
   qrCheckinAccount: document.getElementById("qrCheckinAccount"),
   qrCheckinAccountName: document.getElementById("qrCheckinAccountName"),
   qrCheckinAccountSubmit: document.getElementById("qrCheckinAccountSubmit"),
@@ -163,11 +174,12 @@ const COURSE_STATUS_REFRESH_MS = 30000;
 const SESSION_TIMEOUT_MS = 2500;
 const COURSE_PAGE_SIZE = 6;
 const APPLICATION_TERMS_VERSION = "2026-07-24-v6";
-const DEMOGRAPHICS_TERMS_VERSION = "2026-07-24-v3";
+const DEMOGRAPHICS_TERMS_VERSION = "2026-08-11-v4";
 const INTEREST_NOTIFICATION_CONSENT_VERSION = "2026-07-24-v2";
 const COURSE_NOTIFICATION_TERMS_VERSION = "2026-07-24-v2";
 const ROUNDTABLE_NOTIFICATION_TERMS_VERSION = "2026-07-27-v2";
 const QR_CHECKIN_TERMS_VERSION = "course-checkin-v1-2026-08-04";
+const QR_OPTIONAL_INFO_TERMS_VERSION = DEMOGRAPHICS_TERMS_VERSION;
 const COURSE_CHECKIN_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/course-checkin`;
 const COOP_INTEGRATION_URL = "https://ifdqlwxgqgsvnawmhlfc.supabase.co/functions/v1/erp-humanities-integration";
 const COOP_PUBLISHABLE_KEY = "sb_publishable_lkVhLJDe8WmOPzsWOMkKdg_pjVwVS-h";
@@ -193,7 +205,7 @@ let residenceSearchForm = null;
 let courseLoadObserver = null;
 let courseStatusRefreshTimer = null;
 let applicationClientIdFallback = "";
-let qrCheckinState = { token: "", context: null, partner: null };
+let qrCheckinState = { token: "", context: null, partner: null, optionalHandoffToken: "" };
 
 function getSupabaseClient() {
   if (!supabaseClientPromise) {
@@ -1490,7 +1502,7 @@ async function loadApplicationState(supabase) {
       .maybeSingle(),
     supabase
       .from("user_demographics")
-      .select("user_id,residence_district,residence_neighborhood,birth_year,gender,marital_status,children_count,optional_consent_at,terms_version,updated_at")
+      .select("user_id,residence_district,residence_neighborhood,birth_year,birth_date,gender,marital_status,children_count,optional_consent_at,terms_version,updated_at")
       .eq("user_id", state.user.id)
       .maybeSingle(),
     supabase
@@ -2833,9 +2845,9 @@ function clearResidenceSelection(button) {
 
 function renderDemographicsForm({ showHeading = true } = {}) {
   const profile = state.demographics || {};
-  const currentYear = Number(new Intl.DateTimeFormat("en", { year: "numeric", timeZone: "Asia/Seoul" }).format(new Date()));
   const storedResidence = [profile.residence_district, profile.residence_neighborhood].filter(Boolean).join(" ");
   const consentRecordedAt = profile.optional_consent_at ? formatDateTime(profile.optional_consent_at) : "";
+  const legacyBirthYear = !profile.birth_date && profile.birth_year ? Number(profile.birth_year) : null;
   return `
     <form id="demographicsForm" class="demographics-form">
       ${showHeading ? `<div class="row-top">
@@ -2862,7 +2874,7 @@ function renderDemographicsForm({ showHeading = true } = {}) {
         </div>
       </div>
       <div class="admin-grid demographic-fields-grid">
-        <label>출생연도(선택)<input name="birth_year" type="number" min="1900" max="${currentYear}" value="${escapeHtml(profile.birth_year ?? "")}" inputmode="numeric" placeholder="예: 1985"></label>
+        <label>생년월일(선택)<input name="birth_date" type="date" min="1900-01-01" max="${latestEligibleBirthDate()}" value="${escapeHtml(profile.birth_date || "")}" autocomplete="bday">${legacyBirthYear ? `<small>기존 출생연도 ${escapeHtml(legacyBirthYear)}년은 유지됩니다. 정확한 생년월일을 입력하면 출석부에 다시 적지 않아도 됩니다.</small>` : ""}</label>
         <label>성별(선택)
           <select name="gender">
             ${demographicOption("", "선택하지 않음", profile.gender || "")}
@@ -2887,9 +2899,9 @@ function renderDemographicsForm({ showHeading = true } = {}) {
         <summary>선택 정보 수집·이용 안내</summary>
         <ul class="plain-list">
           <li><strong>목적</strong><br>참여자 구성에 대한 통계 작성과 교육 기획·서비스 개선</li>
-          <li><strong>항목</strong><br>거주지역(시·도, 시·군·구, 법정동 또는 읍·면까지만 저장), 출생연도, 성별, 결혼 여부, 자녀 수 중 이용자가 선택한 항목</li>
+          <li><strong>항목</strong><br>거주지역(시·도, 시·군·구, 법정동 또는 읍·면까지만 저장), 생년월일, 성별, 결혼 여부, 자녀 수 중 이용자가 선택한 항목과 QR 체크인 때 선택한 교육별 참여 경로</li>
           <li><strong>주소검색 처리</strong><br>검색어와 검색 화면은 카카오 우편번호 서비스에서 처리합니다. 우리 서비스는 선택 결과 중 전체 주소·건물번호·상세주소·우편번호를 저장하지 않습니다.</li>
-          <li><strong>열람 범위</strong><br>개별 응답 원문은 본인만 열람·수정할 수 있고, 전체 관리자는 5명 이상인 범주의 집계만 확인합니다.</li>
+          <li><strong>열람 범위</strong><br>생년월일·성별 원문은 본인만 열람·수정할 수 있습니다. 담당 관리자는 출석부의 등록 여부와 교육 회차별 성별 합계만 확인하며 원문은 볼 수 없습니다. 전체 통계는 같은 범주 응답이 5명 이상일 때만 표시합니다.</li>
           <li><strong>보유 기간</strong><br>동의 철회·계정 삭제 또는 교육 신청 개인정보의 마지막 참석·신청 기준 6개월 보유기간 도래 중 먼저 발생하는 시점까지입니다. 나의 정보에서 언제든 삭제할 수 있습니다.</li>
           <li><strong>거부권</strong><br>동의를 거부하거나 일부 항목만 입력할 수 있으며, 교육 신청과 서비스 이용에 불이익이 없습니다.</li>
         </ul>
@@ -2923,7 +2935,7 @@ function renderDemographicBanner() {
   elements.demographicBanner.innerHTML = `
     <div>
       <strong>선택 이용자 정보를 알려주세요</strong>
-      <p>거주 동, 출생연도, 성별, 결혼 여부, 자녀 수 중 원하는 항목만 입력하면 교육 기획에 통계로 활용합니다.</p>
+      <p>거주 동, 생년월일, 성별, 결혼 여부, 자녀 수 중 원하는 항목만 입력하면 교육 기획과 출석부 기입 간소화에 활용합니다.</p>
     </div>
     <div class="actions">
       <button class="btn small" type="button" data-open-demographics>입력하기</button>
@@ -4867,15 +4879,13 @@ async function handleDemographicsSubmit(event) {
   const formData = new FormData(form);
   const residenceDistrict = String(formData.get("residence_district") || "").trim();
   const residenceNeighborhood = String(formData.get("residence_neighborhood") || "").trim();
-  const birthYearRaw = String(formData.get("birth_year") || "").trim();
+  const birthDate = String(formData.get("birth_date") || "").trim();
   const gender = String(formData.get("gender") || "").trim();
   const maritalStatus = String(formData.get("marital_status") || "").trim();
   const childrenCountRaw = String(formData.get("children_count") || "").trim();
-  const currentYear = Number(new Intl.DateTimeFormat("en", { year: "numeric", timeZone: "Asia/Seoul" }).format(new Date()));
-  const birthYear = birthYearRaw ? Number(birthYearRaw) : null;
   const childrenCount = childrenCountRaw ? Number(childrenCountRaw) : null;
 
-  if (!residenceDistrict && !residenceNeighborhood && birthYear === null && !gender && !maritalStatus && childrenCount === null) {
+  if (!residenceDistrict && !residenceNeighborhood && !birthDate && !state.demographics?.birth_year && !gender && !maritalStatus && childrenCount === null) {
     showToast("저장할 선택 항목을 하나 이상 입력해 주세요.");
     return;
   }
@@ -4883,8 +4893,8 @@ async function handleDemographicsSubmit(event) {
     showToast("거주지역은 주소검색으로 읍·면·동까지 선택하거나 비워 주세요.");
     return;
   }
-  if (birthYear !== null && (!Number.isInteger(birthYear) || birthYear < 1900 || birthYear > currentYear)) {
-    showToast(`출생연도는 1900년부터 ${currentYear}년 사이로 입력해 주세요.`);
+  if (birthDate && !validOptionalBirthDate(birthDate)) {
+    showToast("생년월일은 1900년 이후의 실제 날짜로 입력해 주세요. 온라인 이용자는 만 14세 이상이어야 합니다.");
     return;
   }
   if (childrenCount !== null && (!Number.isInteger(childrenCount) || childrenCount < 0 || childrenCount > 20)) {
@@ -4909,7 +4919,8 @@ async function handleDemographicsSubmit(event) {
       user_id: state.user.id,
       residence_district: residenceDistrict || null,
       residence_neighborhood: residenceNeighborhood || null,
-      birth_year: birthYear,
+      birth_year: birthDate ? Number(birthDate.slice(0, 4)) : (state.demographics?.birth_year ?? null),
+      birth_date: birthDate || null,
       gender: gender || null,
       marital_status: maritalStatus || null,
       children_count: childrenCount,
@@ -5514,10 +5525,140 @@ function qrCheckinConsentReady() {
   return true;
 }
 
+function kstTodayDateString() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function validOptionalBirthDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value || value < "1900-01-01") return false;
+  const cutoff = new Date(`${kstTodayDateString()}T00:00:00Z`);
+  cutoff.setUTCFullYear(cutoff.getUTCFullYear() - 14);
+  return parsed.getTime() <= cutoff.getTime();
+}
+
+function latestEligibleBirthDate() {
+  const cutoff = new Date(`${kstTodayDateString()}T00:00:00Z`);
+  cutoff.setUTCFullYear(cutoff.getUTCFullYear() - 14);
+  return cutoff.toISOString().slice(0, 10);
+}
+
+function qrOptionalProfileState() {
+  return {
+    genderRecorded: Boolean(state.user && state.demographics?.gender),
+    birthDateRecorded: Boolean(state.user && state.demographics?.birth_date),
+  };
+}
+
+function prepareQrOptionalInfo() {
+  if (!elements.qrCheckinOptional) return;
+  const { genderRecorded, birthDateRecorded } = qrOptionalProfileState();
+  elements.qrCheckinOptional.classList.remove("hidden");
+  elements.qrCheckinOptionalConsent.checked = false;
+  elements.qrCheckinOptionalConsent.disabled = false;
+  elements.qrCheckinOptionalFields?.classList.add("hidden");
+  elements.qrCheckinGenderField?.classList.toggle("hidden", genderRecorded);
+  elements.qrCheckinBirthDateField?.classList.toggle("hidden", birthDateRecorded);
+  elements.qrCheckinGender.value = "";
+  elements.qrCheckinBirthDate.value = "";
+  elements.qrCheckinBirthDate.max = latestEligibleBirthDate();
+  elements.qrCheckinParticipationRoute.value = "";
+  elements.qrCheckinParticipationRouteOther.value = "";
+  elements.qrCheckinParticipationRouteOtherField?.classList.add("hidden");
+  if (elements.qrCheckinOptionalSummary) {
+    elements.qrCheckinOptionalSummary.textContent = genderRecorded && birthDateRecorded
+      ? "저장된 성별·생년월일은 다시 입력하지 않습니다. 이번 교육을 알게 된 경로만 선택할 수 있습니다."
+      : "동의하면 아직 저장되지 않은 성별·생년월일과 이번 교육을 알게 된 경로를 함께 저장합니다.";
+  }
+}
+
+function showQrOptionalHandoffReady() {
+  if (!elements.qrCheckinOptional || !qrCheckinState.optionalHandoffToken) return;
+  elements.qrCheckinOptional.classList.remove("hidden");
+  elements.qrCheckinOptionalConsent.checked = true;
+  elements.qrCheckinOptionalConsent.disabled = true;
+  elements.qrCheckinOptionalFields?.classList.add("hidden");
+  if (elements.qrCheckinOptionalSummary) {
+    elements.qrCheckinOptionalSummary.textContent = "앞서 동의한 선택정보를 일반 체크인 완료 시 안전하게 연결합니다. 다시 입력하지 않아도 됩니다.";
+  }
+}
+
+function qrOptionalPayload() {
+  if (qrCheckinState.optionalHandoffToken) {
+    return {
+      optional_info_consent: false,
+      optional_handoff_token: qrCheckinState.optionalHandoffToken,
+    };
+  }
+  if (elements.qrCheckinOptionalConsent?.checked !== true) {
+    return { optional_info_consent: false };
+  }
+  const { genderRecorded, birthDateRecorded } = qrOptionalProfileState();
+  const gender = genderRecorded ? "" : String(elements.qrCheckinGender?.value || "");
+  const birthDate = birthDateRecorded ? "" : String(elements.qrCheckinBirthDate?.value || "");
+  const participationRoute = String(elements.qrCheckinParticipationRoute?.value || "");
+  const participationRouteOther = participationRoute === "other"
+    ? String(elements.qrCheckinParticipationRouteOther?.value || "").trim()
+    : "";
+  if (!genderRecorded && !["male", "female", "other"].includes(gender)) {
+    setQrCheckinStatus("선택 정보에 동의한 경우 성별을 선택해 주세요.", "warning");
+    elements.qrCheckinGender?.focus();
+    return null;
+  }
+  if (!birthDateRecorded && !validOptionalBirthDate(birthDate)) {
+    setQrCheckinStatus("생년월일을 확인해 주세요. 온라인 이용자는 만 14세 이상이어야 합니다.", "warning");
+    elements.qrCheckinBirthDate?.focus();
+    return null;
+  }
+  if (!["website", "sns", "facility_board", "acquaintance", "other"].includes(participationRoute)) {
+    setQrCheckinStatus("이번 교육을 알게 된 경로를 선택해 주세요.", "warning");
+    elements.qrCheckinParticipationRoute?.focus();
+    return null;
+  }
+  if (participationRoute === "other" && !participationRouteOther) {
+    setQrCheckinStatus("기타 참여 경로를 입력해 주세요.", "warning");
+    elements.qrCheckinParticipationRouteOther?.focus();
+    return null;
+  }
+  return {
+    optional_info_consent: true,
+    optional_terms_version: QR_OPTIONAL_INFO_TERMS_VERSION,
+    gender: gender || null,
+    birth_date: birthDate || null,
+    participation_route: participationRoute,
+    participation_route_other: participationRouteOther || null,
+  };
+}
+
+async function createQrOptionalHandoff(optionalInfo) {
+  if (optionalInfo?.optional_info_consent !== true) return "";
+  const payload = {
+    action: "optional_handoff_create",
+    qr_token: qrCheckinState.token,
+    ...optionalInfo,
+  };
+  const result = state.user
+    ? await callAuthenticatedCourseFunction(payload)
+    : await callPublicFunction(COURSE_CHECKIN_FUNCTION_URL, SUPABASE_PUBLISHABLE_KEY, payload);
+  const token = String(result?.optional_handoff_token || "").trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(token)) throw new Error("선택정보 전달 확인값을 만들지 못했습니다.");
+  return token;
+}
+
 function showQrCheckinForm(forceManual = false) {
   elements.qrCheckinPartnerChoices?.classList.add("hidden");
   elements.qrCheckinAccount?.classList.add("hidden");
   elements.qrCheckinForm?.classList.add("hidden");
+  if (qrCheckinState.optionalHandoffToken) showQrOptionalHandoffReady();
+  else if (elements.qrCheckinOptional?.classList.contains("hidden")) prepareQrOptionalInfo();
   if (state.user && !forceManual) {
     if (elements.qrCheckinAccountName) elements.qrCheckinAccountName.textContent = `${getReviewAuthorName(state.user)}님 로그인 정보로 출석할 수 있습니다.`;
     elements.qrCheckinAccount?.classList.remove("hidden");
@@ -5528,8 +5669,20 @@ function showQrCheckinForm(forceManual = false) {
   window.setTimeout(() => elements.qrCheckinName?.focus(), 0);
 }
 
+function qrCheckinCompletionMessage(result) {
+  const title = result.title || qrCheckinState.context?.title || "교육";
+  const attendanceMessage = result.status === "ALREADY_RECORDED"
+    ? `“${title}”에 이미 체크인되어 있습니다.`
+    : `“${title}” 체크인이 완료되었습니다.`;
+  return result.optional_info_save_failed === true
+    ? `${attendanceMessage} 다만 선택 정보는 저장되지 않았으니 나의 정보 또는 종이 출석부에서 확인해 주세요.`
+    : attendanceMessage;
+}
+
 async function handleQrAuthenticatedCheckin() {
   if (!qrCheckinConsentReady() || elements.qrCheckinAccountSubmit?.disabled) return;
+  const optionalInfo = qrOptionalPayload();
+  if (!optionalInfo) return;
   elements.qrCheckinAccountSubmit.disabled = true;
   setQrCheckinStatus("로그인 정보로 출석을 기록하는 중입니다.");
   try {
@@ -5540,15 +5693,12 @@ async function handleQrAuthenticatedCheckin() {
       age_confirmed: true,
       privacy_consent: true,
       terms_version: QR_CHECKIN_TERMS_VERSION,
+      ...optionalInfo,
     });
     elements.qrCheckinConsent?.classList.add("hidden");
+    elements.qrCheckinOptional?.classList.add("hidden");
     elements.qrCheckinAccount?.classList.add("hidden");
-    setQrCheckinStatus(
-      result.status === "ALREADY_RECORDED"
-        ? `“${result.title || qrCheckinState.context?.title || "교육"}”에 이미 체크인되어 있습니다.`
-        : `“${result.title || qrCheckinState.context?.title || "교육"}” 체크인이 완료되었습니다.`,
-      "success",
-    );
+    setQrCheckinStatus(qrCheckinCompletionMessage(result), result.optional_info_save_failed ? "warning" : "success");
   } catch (error) {
     if (error?.code === "ACCOUNT_PROFILE_REQUIRED") {
       setQrCheckinStatus("저장된 신청자 정보가 없어 이름과 휴대전화번호를 한 번 확인해 주세요.", "warning");
@@ -5564,6 +5714,8 @@ async function handleQrAuthenticatedCheckin() {
 async function handleQrCheckinSubmit(event) {
   event.preventDefault();
   if (!qrCheckinConsentReady()) return;
+  const optionalInfo = qrOptionalPayload();
+  if (!optionalInfo) return;
   const name = elements.qrCheckinName?.value.trim() || "";
   const phone = elements.qrCheckinPhone?.value.replace(/\D/g, "") || "";
   if (!name) return setQrCheckinStatus("이름을 입력해 주세요.", "warning");
@@ -5581,15 +5733,12 @@ async function handleQrCheckinSubmit(event) {
       age_confirmed: true,
       privacy_consent: true,
       terms_version: QR_CHECKIN_TERMS_VERSION,
+      ...optionalInfo,
     });
     elements.qrCheckinConsent?.classList.add("hidden");
+    elements.qrCheckinOptional?.classList.add("hidden");
     elements.qrCheckinForm?.classList.add("hidden");
-    setQrCheckinStatus(
-      result.status === "ALREADY_RECORDED"
-        ? `“${result.title || qrCheckinState.context?.title || "교육"}”에 이미 체크인되어 있습니다.`
-        : `“${result.title || qrCheckinState.context?.title || "교육"}” 체크인이 완료되었습니다.`,
-      "success",
-    );
+    setQrCheckinStatus(qrCheckinCompletionMessage(result), result.optional_info_save_failed ? "warning" : "success");
   } catch (error) {
     setQrCheckinStatus(error?.message || "체크인을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.", "danger");
   } finally {
@@ -5601,12 +5750,19 @@ async function initializeQrCheckin() {
   const url = new URL(window.location.href);
   const token = String(url.searchParams.get("checkin") || "").trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(token) || !elements.qrCheckinModal) return;
-  qrCheckinState = { token, context: null, partner: null };
+  const optionalHandoffToken = String(url.searchParams.get("optional_handoff") || "").trim().toLowerCase();
+  qrCheckinState = {
+    token,
+    context: null,
+    partner: null,
+    optionalHandoffToken: /^[0-9a-f]{64}$/.test(optionalHandoffToken) ? optionalHandoffToken : "",
+  };
   openModal(elements.qrCheckinModal);
   elements.qrCheckinTitle.textContent = "교육 확인 중";
   elements.qrCheckinMeta.textContent = "";
   elements.qrCheckinConsent.classList.add("hidden");
   elements.qrCheckinPartnerChoices.classList.add("hidden");
+  elements.qrCheckinOptional?.classList.add("hidden");
   elements.qrCheckinAccount?.classList.add("hidden");
   elements.qrCheckinForm.classList.add("hidden");
   setQrCheckinStatus("QR 정보를 확인하고 있습니다.");
@@ -5622,7 +5778,13 @@ async function initializeQrCheckin() {
       context.organization_name,
     ].filter(Boolean).join("\n");
     if (url.searchParams.get("partner_status") === "success") {
-      setQrCheckinStatus("협동조합 조합원 확인과 모두의 인문학 체크인이 완료되었습니다.", "success");
+      const optionalWarning = url.searchParams.get("optional_warning") === "1";
+      setQrCheckinStatus(
+        optionalWarning
+          ? "협동조합 조합원 확인과 출석은 완료되었습니다. 다만 선택정보는 저장되지 않았으니 종이 출석부에서 확인해 주세요."
+          : "협동조합 조합원 확인과 모두의 인문학 체크인이 완료되었습니다.",
+        optionalWarning ? "warning" : "success",
+      );
       return;
     }
     if (context.status === "NOT_OPEN") {
@@ -5640,11 +5802,15 @@ async function initializeQrCheckin() {
     elements.qrCheckinConsent.classList.remove("hidden");
     if (url.searchParams.get("partner_fallback") === "1") {
       setQrCheckinStatus("조합원 정보를 찾을 수 없어 일반 체크인으로 전환됩니다.", "warning");
+      if (qrCheckinState.optionalHandoffToken) showQrOptionalHandoffReady();
       showQrCheckinForm();
       return;
     }
     setQrCheckinStatus("");
-    if (partner.linked) elements.qrCheckinPartnerChoices.classList.remove("hidden");
+    if (partner.linked) {
+      prepareQrOptionalInfo();
+      elements.qrCheckinPartnerChoices.classList.remove("hidden");
+    }
     else showQrCheckinForm();
   } catch (error) {
     setQrCheckinStatus(error?.message || "사용할 수 없는 체크인 QR입니다.", "danger");
@@ -5992,19 +6158,46 @@ function bindEvents() {
   elements.googleLoginButton.addEventListener("click", handleGoogleLogin);
   elements.loginForm.addEventListener("submit", handleLogin);
   elements.logoutButton.addEventListener("click", handleLogout);
-  elements.qrCheckinPartnerYes?.addEventListener("click", () => {
+  elements.qrCheckinPartnerYes?.addEventListener("click", async () => {
     if (!qrCheckinConsentReady()) return;
     const memberUrl = qrCheckinState.partner?.member_url;
     if (!memberUrl) return showQrCheckinForm();
-    const url = new URL(memberUrl);
-    url.searchParams.set("humanities_qr", qrCheckinState.token);
-    window.location.href = url.toString();
+    const optionalInfo = qrOptionalPayload();
+    if (!optionalInfo || elements.qrCheckinPartnerYes.disabled) return;
+    elements.qrCheckinPartnerYes.disabled = true;
+    setQrCheckinStatus("협동조합 확인 화면으로 안전하게 연결하는 중입니다.");
+    try {
+      const optionalToken = await createQrOptionalHandoff(optionalInfo);
+      const url = new URL(memberUrl);
+      url.searchParams.set("humanities_qr", qrCheckinState.token);
+      if (optionalToken) url.searchParams.set("humanities_optional", optionalToken);
+      window.location.href = url.toString();
+    } catch (error) {
+      setQrCheckinStatus(error?.message || "선택정보를 안전하게 연결하지 못했습니다. 동의를 끄고 출석하거나 다시 시도해 주세요.", "warning");
+      elements.qrCheckinPartnerYes.disabled = false;
+    }
   });
   elements.qrCheckinPartnerNo?.addEventListener("click", () => {
     if (!qrCheckinConsentReady()) return;
     showQrCheckinForm();
   });
   elements.qrCheckinAccountSubmit?.addEventListener("click", handleQrAuthenticatedCheckin);
+  elements.qrCheckinOptionalConsent?.addEventListener("change", () => {
+    elements.qrCheckinOptionalFields?.classList.toggle("hidden", elements.qrCheckinOptionalConsent.checked !== true);
+    if (elements.qrCheckinOptionalConsent.checked) {
+      const firstField = elements.qrCheckinGenderField?.classList.contains("hidden")
+        ? elements.qrCheckinBirthDateField?.classList.contains("hidden")
+          ? elements.qrCheckinParticipationRoute
+          : elements.qrCheckinBirthDate
+        : elements.qrCheckinGender;
+      window.setTimeout(() => firstField?.focus(), 0);
+    }
+  });
+  elements.qrCheckinParticipationRoute?.addEventListener("change", () => {
+    const isOther = elements.qrCheckinParticipationRoute.value === "other";
+    elements.qrCheckinParticipationRouteOtherField?.classList.toggle("hidden", !isOther);
+    if (!isOther && elements.qrCheckinParticipationRouteOther) elements.qrCheckinParticipationRouteOther.value = "";
+  });
   elements.qrCheckinPhone?.addEventListener("input", (event) => {
     const value = event.target.value.replace(/\D/g, "").slice(0, 11);
     event.target.value = value.length <= 3 ? value : value.length <= 7
