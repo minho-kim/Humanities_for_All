@@ -4535,7 +4535,7 @@ function courseCheckinAdminHtml(course, result) {
             <small>개인 수신 방식은 왼쪽 ‘알림 관리’ 메뉴에서 설정합니다.</small>
           </label>
         </div>
-        <p class="muted" style="margin-top: 8px;">연결 교육의 담당자가 같은지는 협동조합 서버가 Telegram 사용자 ID로 확인합니다. 확인되지 않으면 두 서비스가 각각 알림을 보냅니다.</p>
+        <p class="muted" style="margin-top: 8px;">연결 교육의 담당자가 같은지는 협동조합 서버가 Telegram 사용자 ID로 확인합니다. 확인되지 않으면 두 서비스가 각각 알림을 보냅니다. 사진 촬영·이용을 거부한 QR 출석은 담당자가 바로 확인할 수 있도록 Telegram 알림에 거부 사실을 표시하며, 같은 담당자 중복 알림 생략 대상에서도 제외합니다.</p>
       </section>
       <div class="actions" style="margin-top: 14px;">
         <button class="btn" type="submit">설정 저장</button>
@@ -4556,7 +4556,7 @@ function courseCheckinAdminHtml(course, result) {
       ${records.length ? `<div class="admin-list">${records.map((record) => `
         <div class="admin-row">
           <div><strong>${escapeHtml(record.participant_name)}</strong><p>${escapeHtml(record.phone || "번호 삭제됨")} · ${escapeHtml(formatDateTime(record.checked_in_at))}</p></div>
-          <div class="badge-row"><span class="badge">${escapeHtml(courseCheckinMethodLabel(record.checkin_method))}</span>${record.record_status === "REVIEW" ? '<span class="badge cancelled">이름 확인 필요</span>' : ""}</div>
+          <div class="badge-row"><span class="badge">${escapeHtml(courseCheckinMethodLabel(record.checkin_method))}</span>${record.photo_consent_status === "GRANTED" ? '<span class="badge green">사진 동의</span>' : record.photo_consent_status === "DENIED" ? '<span class="badge red">사진 거부</span>' : '<span class="badge gray">사진 미확인</span>'}${record.record_status === "REVIEW" ? '<span class="badge red">이름 확인 필요</span>' : ""}</div>
         </div>`).join("")}</div>` : '<p class="muted">아직 온라인 체크인 기록이 없습니다.</p>'}
     </section>
   `;
@@ -4597,6 +4597,7 @@ function courseCheckinRosterPrintHtml(course, rosterData = null) {
       gender_recorded: false,
       birth_date_recorded: false,
       participation_route_recorded: false,
+      photo_consent_status: null,
     })))
     .slice()
     .sort(compareRosterApplications);
@@ -4636,13 +4637,18 @@ function courseCheckinRosterPrintHtml(course, rosterData = null) {
     const label = method === "ADMIN_CONFIRMED" ? "관리" : "QR";
     return `<span class="roster-attendance-mark">${label} ${escapeHtml(compactAttendanceTime(row.attendance_confirmed_at))}</span>`;
   };
+  const photoConsentCell = (row) => {
+    if (row?.photo_consent_status === "GRANTED") return '<span class="roster-attendance-mark">QR 동의</span>';
+    if (row?.photo_consent_status === "DENIED") return '<span class="roster-attendance-mark">QR 거부</span>';
+    return '<span class="photo-consent-choice"><span class="photo-consent-box" aria-hidden="true"></span><span>동의</span></span>';
+  };
   const photoConsentNotice = `<p class="roster-photo-consent-notice"><strong>사진 촬영·이용 안내</strong> 교육 현장 사진은 교육 운영 증빙·홍보·아카이브 목적으로 촬영·이용될 수 있습니다. 동의하는 경우 아래 칸에 체크해 주세요. 동의하지 않아도 교육 참여에 불이익이 없으며, 식별 가능한 사진은 게시·업로드하지 않습니다. 불가피하게 촬영된 경우 식별되지 않도록 처리하거나 사용하지 않습니다.</p>`;
   return Array.from({ length: pageCount }, (_, pageIndex) => {
     const pageStart = pageIndex * rowsPerPage;
     const rows = Array.from({ length: rowsPerPage }, (__, rowIndex) => {
       const index = pageStart + rowIndex;
       const application = rosterRows[index];
-      return `<tr><td>${index + 1}</td><td>${escapeHtml(application?.applicant_name || "")}</td><td>${escapeHtml(application?.phone_last4 || "")}</td><td>${registeredCell(application?.gender_recorded, '<span class="roster-choice">□남/□여/□기타</span>')}</td><td>${registeredCell(application?.birth_date_recorded, '<span class="roster-birth-blank">____ . __ . __</span>')}</td><td>${registeredCell(application?.participation_route_recorded, '<span class="roster-route-choice">□홈피/□SNS/□시설게시판/□지인/□기타(　)</span>')}</td><td class="signature">${attendanceCell(application)}</td><td class="photo-consent-cell"><span class="photo-consent-choice"><span class="photo-consent-box" aria-hidden="true"></span><span>동의</span></span></td><td></td></tr>`;
+      return `<tr><td>${index + 1}</td><td>${escapeHtml(application?.applicant_name || "")}</td><td>${escapeHtml(application?.phone_last4 || "")}</td><td>${registeredCell(application?.gender_recorded, '<span class="roster-choice">□남/□여/□기타</span>')}</td><td>${registeredCell(application?.birth_date_recorded, '<span class="roster-birth-blank">____ . __ . __</span>')}</td><td>${registeredCell(application?.participation_route_recorded, '<span class="roster-route-choice">□홈피/□SNS/□시설게시판/□지인/□기타(　)</span>')}</td><td class="signature">${attendanceCell(application)}</td><td class="photo-consent-cell">${photoConsentCell(application)}</td><td></td></tr>`;
     }).join("");
     const summary = pageIndex === pageCount - 1
       ? `<div class="roster-attendance-summary"><div><strong>시스템 확인 인원</strong> 남 ${Number(attendanceSummary.male || 0).toLocaleString("ko-KR")}명　여 ${Number(attendanceSummary.female || 0).toLocaleString("ko-KR")}명　기타·미입력 ${Number(attendanceSummary.other_or_unrecorded || 0).toLocaleString("ko-KR")}명　총 ${Number(attendanceSummary.total || 0).toLocaleString("ko-KR")}명</div><div><strong>회차별 참여인원</strong> 남 ____명　여 ____명　총 ____명</div></div>`

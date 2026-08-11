@@ -156,6 +156,8 @@ const elements = {
   qrCheckinParticipationRoute: document.getElementById("qrCheckinParticipationRoute"),
   qrCheckinParticipationRouteOtherField: document.getElementById("qrCheckinParticipationRouteOtherField"),
   qrCheckinParticipationRouteOther: document.getElementById("qrCheckinParticipationRouteOther"),
+  qrCheckinPhotoConsentGranted: document.getElementById("qrCheckinPhotoConsentGranted"),
+  qrCheckinPhotoConsentDenied: document.getElementById("qrCheckinPhotoConsentDenied"),
   qrCheckinAccount: document.getElementById("qrCheckinAccount"),
   qrCheckinAccountName: document.getElementById("qrCheckinAccountName"),
   qrCheckinAccountSubmit: document.getElementById("qrCheckinAccountSubmit"),
@@ -174,12 +176,13 @@ const COURSE_STATUS_REFRESH_MS = 30000;
 const SESSION_TIMEOUT_MS = 2500;
 const COURSE_PAGE_SIZE = 6;
 const APPLICATION_TERMS_VERSION = "2026-07-24-v6";
-const DEMOGRAPHICS_TERMS_VERSION = "2026-08-11-v4";
+const DEMOGRAPHICS_TERMS_VERSION = "2026-08-11-v5";
 const INTEREST_NOTIFICATION_CONSENT_VERSION = "2026-07-24-v2";
 const COURSE_NOTIFICATION_TERMS_VERSION = "2026-07-24-v2";
 const ROUNDTABLE_NOTIFICATION_TERMS_VERSION = "2026-07-27-v2";
 const QR_CHECKIN_TERMS_VERSION = "course-checkin-v1-2026-08-04";
 const QR_OPTIONAL_INFO_TERMS_VERSION = DEMOGRAPHICS_TERMS_VERSION;
+const QR_PHOTO_CONSENT_VERSION = "course-photo-v1-2026-08-11";
 const COURSE_CHECKIN_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/course-checkin`;
 const COOP_INTEGRATION_URL = "https://ifdqlwxgqgsvnawmhlfc.supabase.co/functions/v1/erp-humanities-integration";
 const COOP_PUBLISHABLE_KEY = "sb_publishable_lkVhLJDe8WmOPzsWOMkKdg_pjVwVS-h";
@@ -5573,10 +5576,12 @@ function prepareQrOptionalInfo() {
   elements.qrCheckinParticipationRoute.value = "";
   elements.qrCheckinParticipationRouteOther.value = "";
   elements.qrCheckinParticipationRouteOtherField?.classList.add("hidden");
+  if (elements.qrCheckinPhotoConsentGranted) elements.qrCheckinPhotoConsentGranted.checked = false;
+  if (elements.qrCheckinPhotoConsentDenied) elements.qrCheckinPhotoConsentDenied.checked = false;
   if (elements.qrCheckinOptionalSummary) {
     elements.qrCheckinOptionalSummary.textContent = genderRecorded && birthDateRecorded
-      ? "저장된 성별·생년월일은 다시 입력하지 않습니다. 이번 교육을 알게 된 경로만 선택할 수 있습니다."
-      : "동의하면 아직 저장되지 않은 성별·생년월일과 이번 교육을 알게 된 경로를 함께 저장합니다.";
+      ? "저장된 성별·생년월일은 다시 입력하지 않습니다. 참여 경로와 사진 촬영·이용 여부를 확인해 주세요."
+      : "성별·생년월일·참여 경로와 사진 촬영·이용 여부를 모두 확인해 주세요.";
   }
 }
 
@@ -5587,7 +5592,7 @@ function showQrOptionalHandoffReady() {
   elements.qrCheckinOptionalConsent.disabled = true;
   elements.qrCheckinOptionalFields?.classList.add("hidden");
   if (elements.qrCheckinOptionalSummary) {
-    elements.qrCheckinOptionalSummary.textContent = "앞서 동의한 선택정보를 일반 체크인 완료 시 안전하게 연결합니다. 다시 입력하지 않아도 됩니다.";
+    elements.qrCheckinOptionalSummary.textContent = "앞서 확인한 출석 정보와 사진 촬영·이용 여부를 일반 체크인 완료 시 안전하게 연결합니다. 다시 입력하지 않아도 됩니다.";
   }
 }
 
@@ -5599,7 +5604,9 @@ function qrOptionalPayload() {
     };
   }
   if (elements.qrCheckinOptionalConsent?.checked !== true) {
-    return { optional_info_consent: false };
+    setQrCheckinStatus("출석 정보 수집·이용 동의를 확인해 주세요. 동의하지 않으면 종이 출석부로 출석할 수 있습니다.", "warning");
+    elements.qrCheckinOptionalConsent?.focus();
+    return null;
   }
   const { genderRecorded, birthDateRecorded } = qrOptionalProfileState();
   const gender = genderRecorded ? "" : String(elements.qrCheckinGender?.value || "");
@@ -5609,7 +5616,7 @@ function qrOptionalPayload() {
     ? String(elements.qrCheckinParticipationRouteOther?.value || "").trim()
     : "";
   if (!genderRecorded && !["male", "female", "other"].includes(gender)) {
-    setQrCheckinStatus("선택 정보에 동의한 경우 성별을 선택해 주세요.", "warning");
+    setQrCheckinStatus("성별을 선택해 주세요.", "warning");
     elements.qrCheckinGender?.focus();
     return null;
   }
@@ -5628,6 +5635,14 @@ function qrOptionalPayload() {
     elements.qrCheckinParticipationRouteOther?.focus();
     return null;
   }
+  const photoConsentStatus = elements.qrCheckinPhotoConsentGranted?.checked
+    ? "GRANTED"
+    : elements.qrCheckinPhotoConsentDenied?.checked ? "DENIED" : "";
+  if (!photoConsentStatus) {
+    setQrCheckinStatus("사진 촬영·이용에 동의하는지 또는 거부하는지 선택해 주세요.", "warning");
+    elements.qrCheckinPhotoConsentGranted?.focus();
+    return null;
+  }
   return {
     optional_info_consent: true,
     optional_terms_version: QR_OPTIONAL_INFO_TERMS_VERSION,
@@ -5635,11 +5650,13 @@ function qrOptionalPayload() {
     birth_date: birthDate || null,
     participation_route: participationRoute,
     participation_route_other: participationRouteOther || null,
+    photo_consent_status: photoConsentStatus,
+    photo_consent_version: QR_PHOTO_CONSENT_VERSION,
   };
 }
 
 async function createQrOptionalHandoff(optionalInfo) {
-  if (optionalInfo?.optional_info_consent !== true) return "";
+  if (optionalInfo?.optional_info_consent !== true) throw new Error("QR 출석 정보를 확인해 주세요.");
   const payload = {
     action: "optional_handoff_create",
     qr_token: qrCheckinState.token,
@@ -5649,7 +5666,7 @@ async function createQrOptionalHandoff(optionalInfo) {
     ? await callAuthenticatedCourseFunction(payload)
     : await callPublicFunction(COURSE_CHECKIN_FUNCTION_URL, SUPABASE_PUBLISHABLE_KEY, payload);
   const token = String(result?.optional_handoff_token || "").trim().toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(token)) throw new Error("선택정보 전달 확인값을 만들지 못했습니다.");
+  if (!/^[0-9a-f]{64}$/.test(token)) throw new Error("출석 정보 전달 확인값을 만들지 못했습니다.");
   return token;
 }
 
@@ -5675,7 +5692,7 @@ function qrCheckinCompletionMessage(result) {
     ? `“${title}”에 이미 체크인되어 있습니다.`
     : `“${title}” 체크인이 완료되었습니다.`;
   return result.optional_info_save_failed === true
-    ? `${attendanceMessage} 다만 선택 정보는 저장되지 않았으니 나의 정보 또는 종이 출석부에서 확인해 주세요.`
+    ? `${attendanceMessage} 다만 출석 부가정보는 저장되지 않았으니 담당자에게 확인해 주세요.`
     : attendanceMessage;
 }
 
@@ -5773,6 +5790,7 @@ async function initializeQrCheckin() {
     qrCheckinState.context = context;
     elements.qrCheckinTitle.textContent = context.title || "교육 QR 체크인";
     elements.qrCheckinMeta.textContent = [
+      context.test_mode ? "기능 점검용 QR입니다. 입력한 내용은 실제 테스트 출석 기록으로 저장됩니다." : "",
       formatDateTime(context.starts_at),
       context.venue,
       context.organization_name,
@@ -5781,7 +5799,7 @@ async function initializeQrCheckin() {
       const optionalWarning = url.searchParams.get("optional_warning") === "1";
       setQrCheckinStatus(
         optionalWarning
-          ? "협동조합 조합원 확인과 출석은 완료되었습니다. 다만 선택정보는 저장되지 않았으니 종이 출석부에서 확인해 주세요."
+          ? "협동조합 조합원 확인과 출석은 완료되었습니다. 다만 출석 부가정보는 저장되지 않았으니 담당자에게 확인해 주세요."
           : "협동조합 조합원 확인과 모두의 인문학 체크인이 완료되었습니다.",
         optionalWarning ? "warning" : "success",
       );
@@ -6173,7 +6191,7 @@ function bindEvents() {
       if (optionalToken) url.searchParams.set("humanities_optional", optionalToken);
       window.location.href = url.toString();
     } catch (error) {
-      setQrCheckinStatus(error?.message || "선택정보를 안전하게 연결하지 못했습니다. 동의를 끄고 출석하거나 다시 시도해 주세요.", "warning");
+      setQrCheckinStatus(error?.message || "출석 정보를 안전하게 연결하지 못했습니다. 다시 시도하거나 종이 출석부를 이용해 주세요.", "warning");
       elements.qrCheckinPartnerYes.disabled = false;
     }
   });
