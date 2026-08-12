@@ -4659,13 +4659,19 @@ function actualAttendanceRecords(records = []) {
 async function printElectronicAttendanceReport(course, records) {
   const popup = window.open("", "humanities-electronic-attendance-report", "width=980,height=980");
   if (!popup) throw new Error("인쇄 창이 차단되었습니다. 팝업을 허용해 주세요.");
-  popup.document.write("<!doctype html><html lang='ko'><meta charset='utf-8'><body>실제 출석자 명단을 준비하고 있습니다.</body></html>");
+  popup.document.write("<!doctype html><html lang='ko'><meta charset='utf-8'><body>교육 출석부를 준비하고 있습니다.</body></html>");
   const venue = courseVenueForDisplay(course);
   const organization = organizationById(course.organization_id);
+  const instructor = instructorById(course.instructor_id);
   const generatedAt = new Date().toISOString();
   const rows = actualAttendanceRecords(records).map((record, index) => ({ index: index + 1, ...record }));
+  const attendanceSummary = rows.reduce((summary, record) => {
+    if (record.gender === "male") summary.male += 1;
+    if (record.gender === "female") summary.female += 1;
+    return summary;
+  }, { male: 0, female: 0 });
   popup.document.open();
-  popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${escapeHtml(course.title || "교육")} 실제 출석자 명단</title><style>@page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;color:#172033;margin:0;font-size:9.5pt;word-break:keep-all;overflow-wrap:break-word}h1{font-size:19pt;margin:0 0 8px}.meta{display:grid;grid-template-columns:1fr 1fr;gap:4px 18px;margin:0 0 10px;font-size:10pt}table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:9pt}thead{display:table-header-group}tr{break-inside:avoid}th,td{border:1px solid #444;padding:5px 4px;text-align:left;vertical-align:middle}th{background:#f1f3f5;text-align:center}th:first-child,td:first-child{width:34px;text-align:center}th:nth-child(2),td:nth-child(2){width:78px}th:nth-child(3),td:nth-child(3){width:112px}th:nth-child(4),td:nth-child(4){width:88px}th:nth-child(5),td:nth-child(5){width:52px}th:nth-child(6),td:nth-child(6){width:105px}th:nth-child(7),td:nth-child(7){width:62px}th:nth-child(8),td:nth-child(8){width:130px}.photo-denied{font-weight:900;color:#b42318}.footer{margin-top:10px;font-size:9pt;color:#5d6775}@media print{body{margin:0}}</style></head><body><h1>실제 출석자 명단</h1><div class="meta"><div><strong>교육</strong> ${escapeHtml(course.title || "교육")}</div><div><strong>운영 단체</strong> ${escapeHtml(organization?.name || "모두의 인문학")}</div><div><strong>일시</strong> ${escapeHtml(formatDateTime(course.starts_at))}</div><div><strong>장소</strong> ${escapeHtml([venue?.name, venue?.address, venue?.detail].filter(Boolean).join(" · ") || "장소 미정")}</div><div><strong>출력 시각(KST)</strong> ${escapeHtml(formatDateTime(generatedAt))}</div><div><strong>실제 출석</strong> ${rows.length.toLocaleString("ko-KR")}명</div></div><table><thead><tr><th>번호</th><th>이름</th><th>휴대전화번호</th><th>생년월일</th><th>성별</th><th>참여 경로</th><th>사진 촬영·이용</th><th>체크인 시각·방법</th></tr></thead><tbody>${rows.map((record) => `<tr><td>${record.index}</td><td>${escapeHtml(record.participant_name || "미입력")}</td><td>${escapeHtml(record.phone ? formatMobilePhone(record.phone) : "삭제됨")}</td><td>${escapeHtml(record.birth_date || "미입력")}</td><td>${escapeHtml(checkinGenderLabel(record.gender))}</td><td>${escapeHtml(checkinParticipationRouteLabel(record))}</td><td class="${record.photo_consent_status === "DENIED" ? "photo-denied" : ""}">${escapeHtml(checkinPhotoConsentLabel(record.photo_consent_status))}</td><td>${escapeHtml(formatDateTime(record.checked_in_at))}<br>${escapeHtml(courseCheckinMethodLabel(record.checkin_method))}</td></tr>`).join("") || '<tr><td colspan="8">실제 출석 기록이 없습니다.</td></tr>'}</tbody></table><p class="footer">신청자 명단이나 빈 서명 칸은 포함하지 않습니다. 이 명단은 시스템에 실제 출석 시각이 기록된 사람만 가나다순으로 표시합니다.</p><script>window.onload=()=>window.print()<\/script></body></html>`);
+  popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${escapeHtml(course.title || "교육")} 교육 출석부</title><style>@page{size:A4 portrait;margin:10mm}*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;color:#172033;margin:0;font-size:11pt;line-height:1.35;word-break:keep-all;overflow-wrap:break-word;hyphens:none}h1{font-size:20pt;line-height:1.2;margin:0 0 5mm;text-align:center}.meta{display:grid;grid-template-columns:1fr 1fr;gap:1.5mm 8mm;margin:0 0 4mm;font-size:11pt}.meta>div{min-width:0}.meta strong{display:inline-block;margin-right:1.5mm;color:#475569}table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:11pt}col.number{width:5%}col.name{width:11%}col.phone{width:16%}col.birth{width:13%}col.gender{width:7%}col.route{width:15%}col.photo{width:12%}col.checkin{width:21%}thead{display:table-header-group}tr{break-inside:avoid}th,td{border:1px solid #444;padding:2mm 1mm;text-align:center;vertical-align:middle;line-height:1.25;word-break:keep-all;overflow-wrap:break-word}th{background:#f1f3f5;font-weight:800}td:nth-child(2){text-align:left}td:nth-child(3){white-space:nowrap;letter-spacing:-.03em}.photo-denied{font-weight:900;color:#b42318}.attendance-summary{margin:5mm 0 0;text-align:right;font-size:11pt;font-weight:750;break-inside:avoid}@media print{body{margin:0}}</style></head><body><h1>교육 출석부</h1><div class="meta"><div><strong>교육</strong> ${escapeHtml(course.title || "교육")}</div><div><strong>운영 단체</strong> ${escapeHtml(organization?.name || "모두의 인문학")}</div><div><strong>일시</strong> ${escapeHtml(formatDateTime(course.starts_at))}</div><div><strong>장소</strong> ${escapeHtml([venue?.name, venue?.address, venue?.detail].filter(Boolean).join(" · ") || "장소 미정")}</div><div><strong>강사</strong> ${escapeHtml(instructor?.name || "강사 미정")}</div><div><strong>출력 시각(KST)</strong> ${escapeHtml(formatDateTime(generatedAt))}</div></div><table><colgroup><col class="number"><col class="name"><col class="phone"><col class="birth"><col class="gender"><col class="route"><col class="photo"><col class="checkin"></colgroup><thead><tr><th>번호</th><th>이름</th><th>휴대전화번호</th><th>생년월일</th><th>성별</th><th>참여 경로</th><th>사진 촬영·이용</th><th>체크인 시각·방법</th></tr></thead><tbody>${rows.map((record) => `<tr><td>${record.index}</td><td>${escapeHtml(record.participant_name || "미입력")}</td><td>${escapeHtml(record.phone ? formatMobilePhone(record.phone) : "삭제됨")}</td><td>${escapeHtml(record.birth_date || "미입력")}</td><td>${escapeHtml(checkinGenderLabel(record.gender))}</td><td>${escapeHtml(checkinParticipationRouteLabel(record))}</td><td class="${record.photo_consent_status === "DENIED" ? "photo-denied" : ""}">${escapeHtml(checkinPhotoConsentLabel(record.photo_consent_status))}</td><td>${escapeHtml(formatDateTime(record.checked_in_at))}<br>${escapeHtml(courseCheckinMethodLabel(record.checkin_method))}</td></tr>`).join("") || '<tr><td colspan="8">실제 출석 기록이 없습니다.</td></tr>'}</tbody></table><p class="attendance-summary">남 ${attendanceSummary.male.toLocaleString("ko-KR")}명　여 ${attendanceSummary.female.toLocaleString("ko-KR")}명　총 ${rows.length.toLocaleString("ko-KR")}명</p><script>window.onload=()=>window.print()<\/script></body></html>`);
   popup.document.close();
 }
 
@@ -4733,7 +4739,7 @@ function courseCheckinAdminHtml(course, result) {
       ` : '<p class="muted">설정을 한 번 저장하면 익명 피드백용 256비트 난수 QR 주소가 생성됩니다.</p>'}
     </section>
     <section class="section" style="margin-top: 16px;">
-      <div class="section-heading"><div><h3>실제 출석 ${records.length.toLocaleString()}명</h3><p class="muted">QR 체크인과 관리자 누락 등록을 합친 실제 출석자 명단을 출력할 수 있습니다.</p></div><button class="btn small secondary" type="button" data-print-electronic-attendance ${records.length ? "" : "disabled"}>실제 출석자 명단 출력</button></div>
+      <div class="section-heading"><div><h3>실제 출석 ${records.length.toLocaleString()}명</h3><p class="muted">QR 체크인과 관리자 누락 등록을 합친 보고용 교육 출석부를 출력할 수 있습니다.</p></div><button class="btn small secondary" type="button" data-print-electronic-attendance ${records.length ? "" : "disabled"}>교육 출석부 출력</button></div>
       ${records.length ? `<div class="admin-list">${records.map((record) => `
         <div class="admin-row">
           <div><strong>${escapeHtml(record.participant_name)}</strong><p>${escapeHtml(record.phone || "번호 삭제됨")} · ${escapeHtml(formatDateTime(record.checked_in_at))}</p></div>
@@ -5397,7 +5403,7 @@ function renderAttendanceManagement() {
           <div class="actions">
             <span class="badge green">실제 출석 ${records.length.toLocaleString("ko-KR")}명</span>
             ${deniedCount ? `<span class="badge red">사진 거부 ${deniedCount.toLocaleString("ko-KR")}명</span>` : ""}
-            <button class="btn small" type="button" data-print-actual-attendance ${records.length ? "" : "disabled"}>실제 출석자 명단 출력</button>
+            <button class="btn small" type="button" data-print-actual-attendance ${records.length ? "" : "disabled"}>교육 출석부 출력</button>
           </div>
         </div>
         <details class="privacy-details" style="margin: 14px 0;">
@@ -7958,7 +7964,7 @@ function bindEvents() {
         printActualAttendanceButton.disabled = true;
         await printElectronicAttendanceReport(course, state.attendanceManagement.records);
       } catch (error) {
-        showToast(error.message || "실제 출석자 명단을 만들지 못했습니다.");
+        showToast(error.message || "교육 출석부를 만들지 못했습니다.");
       } finally {
         if (printActualAttendanceButton.isConnected) printActualAttendanceButton.disabled = false;
       }
