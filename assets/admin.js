@@ -4511,6 +4511,7 @@ function courseCheckinAdminHtml(course, result) {
   const notificationRecipients = Array.isArray(result.notification_recipients) ? result.notification_recipients : [];
   const notificationChannel = setting.notification_channel || (setting.notification_enabled ? "SMS" : "OFF");
   const qrUrl = setting.qr_token ? `${PUBLIC_SITE_URL}index.html?checkin=${encodeURIComponent(setting.qr_token)}` : "";
+  const feedbackQrUrl = setting.feedback_qr_token ? `${PUBLIC_SITE_URL}index.html?feedback=${encodeURIComponent(setting.feedback_qr_token)}` : "";
   return `
     <form id="courseCheckinAdminForm" class="course-checkin-admin-form">
       <input type="hidden" name="course_id" value="${escapeHtml(course.id)}">
@@ -4521,6 +4522,8 @@ function courseCheckinAdminHtml(course, result) {
       <div class="admin-grid" style="margin-top: 14px;">
         <label><span><input name="enabled" type="checkbox" ${setting.enabled ? "checked" : ""} style="width:auto;min-height:auto;"> QR 체크인 사용</span></label>
         <label>체크인 운영 시간<input value="교육 시작 1시간 전 ~ 종료 1시간 후" readonly></label>
+        <label><span><input name="feedback_enabled" type="checkbox" ${setting.feedback_enabled ? "checked" : ""} style="width:auto;min-height:auto;"> 익명 피드백 QR 사용</span></label>
+        <label>피드백 운영 시간<input value="교육 종료 후부터 · 종료 미입력 시 다음날 0시" readonly></label>
         <label>인쇄물 아래 단체명<input name="print_organization_name" maxlength="120" value="${escapeHtml(setting.print_organization_name || "모두의 인문학")}" placeholder="예: 모두의 인문학"></label>
       </div>
       <section class="section" style="margin-top: 14px;">
@@ -4543,13 +4546,27 @@ function courseCheckinAdminHtml(course, result) {
       </div>
     </form>
     <section class="section" style="margin-top: 16px;">
-      <h3>QR 안내</h3>
+      <h3>출석 QR 안내</h3>
       ${qrUrl ? `
         <div class="course-checkin-qr-layout">
           <div id="courseCheckinQrCode" class="course-checkin-qr-code" data-qr-url="${escapeHtml(qrUrl)}"></div>
           <div><p class="muted">이 QR은 해당 교육의 체크인에만 사용됩니다.</p><p class="text-break"><a href="${escapeHtml(qrUrl)}" target="_blank" rel="noopener">${escapeHtml(qrUrl)}</a></p></div>
         </div>
       ` : '<p class="muted">설정을 한 번 저장하면 암호학적 난수 QR 주소가 생성됩니다.</p>'}
+    </section>
+    <section class="section" style="margin-top: 16px;">
+      <div class="section-heading">
+        <div><h3>익명 피드백 QR</h3><p class="muted">교육 종료 후 이름·전화번호·로그인 없이 제출하며, 제출한 응답은 수정할 수 없습니다. 반복 제출은 차단하지 않고 관리자가 개별 응답을 확인·삭제합니다.</p></div>
+        <div class="actions">
+          ${feedbackQrUrl ? '<button class="btn small secondary" type="button" data-rotate-course-feedback>새 QR 만들기</button><button class="btn small secondary" type="button" data-print-course-feedback>피드백 QR 인쇄</button>' : ""}
+        </div>
+      </div>
+      ${feedbackQrUrl ? `
+        <div class="course-checkin-qr-layout">
+          <div id="courseFeedbackQrCode" class="course-checkin-qr-code" data-qr-url="${escapeHtml(feedbackQrUrl)}"></div>
+          <div><p class="muted">이 QR은 해당 교육이 종료된 뒤 익명 피드백 작성에만 사용됩니다.</p><p class="text-break"><a href="${escapeHtml(feedbackQrUrl)}" target="_blank" rel="noopener">${escapeHtml(feedbackQrUrl)}</a></p></div>
+        </div>
+      ` : '<p class="muted">설정을 한 번 저장하면 익명 피드백용 256비트 난수 QR 주소가 생성됩니다.</p>'}
     </section>
     <section class="section" style="margin-top: 16px;">
       <div class="section-heading"><div><h3>온라인 체크인 ${records.length.toLocaleString()}명</h3><p class="muted">로그인·QR 체크인 원장을 전자 출석확인서로 출력할 수 있습니다.</p></div><button class="btn small secondary" type="button" data-print-electronic-attendance ${records.length ? "" : "disabled"}>전자 출석확인서 출력</button></div>
@@ -4563,10 +4580,12 @@ function courseCheckinAdminHtml(course, result) {
 }
 
 function renderCourseCheckinQr() {
-  const target = document.getElementById("courseCheckinQrCode");
-  if (!target?.dataset.qrUrl || typeof window.QRCode !== "function") return;
-  target.innerHTML = "";
-  new window.QRCode(target, { text: target.dataset.qrUrl, width: 190, height: 190, correctLevel: window.QRCode.CorrectLevel.H });
+  ["courseCheckinQrCode", "courseFeedbackQrCode"].forEach((id) => {
+    const target = document.getElementById(id);
+    if (!target?.dataset.qrUrl || typeof window.QRCode !== "function") return;
+    target.innerHTML = "";
+    new window.QRCode(target, { text: target.dataset.qrUrl, width: 190, height: 190, correctLevel: window.QRCode.CorrectLevel.H });
+  });
 }
 
 function courseCheckinQrImage(qrUrl) {
@@ -4584,6 +4603,16 @@ function courseCheckinQrImage(qrUrl) {
   } finally {
     target.remove();
   }
+}
+
+function printCourseFeedbackQr(course, qrUrl, organizationName) {
+  const popup = window.open("", "humanities-course-feedback-print", "width=900,height=980");
+  if (!popup) throw new Error("인쇄 창이 차단되었습니다. 팝업을 허용해 주세요.");
+  const imageUrl = courseCheckinQrImage(qrUrl);
+  const organizationLabel = ["모두의 인문학", organizationName].filter(Boolean).join(" / ");
+  popup.document.open();
+  popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${escapeHtml(course.title || "교육")} 익명 피드백 QR</title><style>@page{size:A4 portrait;margin:0}*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;color:#172033;margin:0;font-size:11pt;word-break:keep-all;overflow-wrap:break-word}.page{width:210mm;min-height:297mm;padding:16mm;display:flex;flex-direction:column;text-align:center}.page header{border-bottom:4px solid #15803d;padding-bottom:6mm}.eyebrow{margin:0 0 2mm;color:#15803d;font-size:12pt;font-weight:850;letter-spacing:.06em}h1{font-size:25pt;line-height:1.25;margin:0}.meta{margin:6mm 0 2mm;font-size:11pt}.page main{display:flex;flex:1;min-height:0;flex-direction:column;align-items:center;justify-content:center}.page img{width:112mm;height:112mm;padding:4mm;border:4px solid #172033}.guide{font-size:16pt;font-weight:850;margin:5mm 0 2mm}.notice{max-width:160mm;margin:0 auto;font-size:11pt;line-height:1.6}.privacy{margin-top:4mm;padding:3mm 4mm;border:1.5px solid #15803d;border-radius:3mm;background:#effaf3;font-size:11pt;line-height:1.55}.note{color:#5d6775;font-size:11pt}.page footer{border-top:1px solid #cbd5e1;padding-top:5mm;font-size:15pt;font-weight:850}@media print{body{margin:0}}</style></head><body><section class="page"><header><p class="eyebrow">모두의 인문학 익명 교육 피드백</p><h1>${escapeHtml(course.title || "교육")}</h1><p class="meta">${escapeHtml(formatDateTime(course.starts_at))}</p></header><main><img src="${imageUrl}" alt="익명 교육 피드백 QR"><p class="guide">교육이 끝난 뒤 QR을 촬영해 주세요.</p><p class="notice">더 나은 프로그램을 위해 의견을 들려주세요.<br>제출한 응답은 수정할 수 없습니다.</p><p class="privacy"><strong>익명으로 피드백을 받습니다.</strong><br>이름·이메일·휴대전화번호·계정·신청 및 출석정보를 받거나 응답과 연결하지 않습니다.</p><p class="note">종료 일시가 입력되지 않은 교육은 교육일 다음날 0시부터 작성할 수 있습니다.</p></main><footer>${escapeHtml(organizationLabel)}</footer></section><script>window.onload=()=>window.print()<\/script></body></html>`);
+  popup.document.close();
 }
 
 function courseCheckinRosterPrintHtml(course, rosterData = null) {
@@ -4830,10 +4859,11 @@ async function openCourseCheckinAdmin(courseId) {
       try {
         await invokeCourseCheckinAdmin("admin_save", courseId, {
           enabled: formData.get("enabled") === "on",
+          feedback_enabled: formData.get("feedback_enabled") === "on",
           print_organization_name: String(formData.get("print_organization_name") || ""),
           notification_admin_user_id: String(formData.get("notification_admin_user_id") || ""),
         });
-        showToast("QR 출석 설정을 저장했습니다.");
+        showToast("QR 출석·익명 피드백 설정을 저장했습니다.");
         if (state.tab === "notifications") await loadNotificationManagement();
         await openCourseCheckinAdmin(courseId);
       } catch (error) { showToast(error.message); }
@@ -4848,6 +4878,21 @@ async function openCourseCheckinAdmin(courseId) {
     });
     document.querySelector("[data-print-course-checkin]")?.addEventListener("click", () => {
       try { openCourseCheckinPrintChoice(courseId, "detail"); } catch (error) { showToast(error.message); }
+    });
+    document.querySelector("[data-rotate-course-feedback]")?.addEventListener("click", async () => {
+      try {
+        await invokeCourseCheckinAdmin("admin_rotate_feedback", courseId);
+        showToast("새 익명 피드백 QR을 만들었습니다. 기존 QR은 즉시 사용할 수 없습니다.");
+        await openCourseCheckinAdmin(courseId);
+      } catch (error) { showToast(error.message); }
+    });
+    document.querySelector("[data-print-course-feedback]")?.addEventListener("click", () => {
+      try {
+        const qrUrl = String(document.getElementById("courseFeedbackQrCode")?.dataset.qrUrl || "");
+        if (!qrUrl) throw new Error("인쇄할 익명 피드백 QR을 찾지 못했습니다.");
+        const organizationName = String(new FormData(checkinForm).get("print_organization_name") || "모두의 인문학").trim();
+        printCourseFeedbackQr(course, qrUrl, organizationName);
+      } catch (error) { showToast(error.message); }
     });
   } catch (error) {
     elements.adminNoticeBody.innerHTML = `<p class="muted">${escapeHtml(error.message)}</p>`;
@@ -5131,16 +5176,18 @@ function feedbackResponseTagsHtml(values, labels) {
 }
 
 function renderFeedbackResponse(feedback) {
+  const isAnonymousQr = feedback.submission_mode === "anonymous_qr";
   return `
     <div class="table-row">
       <div class="row-top">
         <strong>${escapeHtml(courseName(feedback.course_id))}</strong>
-        <span class="badge green">${escapeHtml(feedbackRatingLabel(feedback.rating))}</span>
+        <span class="badge-row"><span class="badge ${isAnonymousQr ? "gray" : "green"}">${isAnonymousQr ? "익명 QR" : "이전 참석 연계 방식"}</span><span class="badge green">${escapeHtml(feedbackRatingLabel(feedback.rating))}</span></span>
       </div>
-      <p class="muted">작성 ${escapeHtml(shortDate(feedback.created_at))}${feedback.updated_at && feedback.updated_at !== feedback.created_at ? ` · 수정 ${escapeHtml(shortDate(feedback.updated_at))}` : ""} · 신청자 식별정보 비표시</p>
+      <p class="muted">제출 ${escapeHtml(formatDateTime(feedback.created_at))}${isAnonymousQr ? " · 수정 불가 · 식별정보 미수집" : " · 신청자 식별정보 비표시"}</p>
       <p><strong>좋았던 점</strong><br>${feedbackResponseTagsHtml(feedback.strengths, FEEDBACK_STRENGTH_LABELS)}</p>
       <p><strong>개선되었으면 하는 점</strong><br>${feedbackResponseTagsHtml(feedback.improvements, FEEDBACK_IMPROVEMENT_LABELS)}</p>
       ${feedback.comment ? `<p><strong>운영진에게 전한 의견</strong><br>${escapeHtml(feedback.comment)}</p>` : `<p class="muted">자유 의견 없음</p>`}
+      ${isAnonymousQr ? `<div class="actions"><button class="btn small danger" type="button" data-delete-anonymous-feedback="${escapeHtml(feedback.id)}" data-course-id="${escapeHtml(feedback.course_id)}">응답 삭제</button></div>` : ""}
     </div>
   `;
 }
@@ -5159,7 +5206,7 @@ function renderFeedbacks() {
 
   elements.adminContent.innerHTML = `
     <h2>교육 피드백 관리</h2>
-    <p class="muted">프로그램 개선을 위한 비공개 응답입니다. 전체 관리자와 해당 교육의 단체 관리자만 볼 수 있으며 신청자 이름·이메일·휴대전화번호는 제공하지 않습니다.</p>
+    <p class="muted">프로그램 개선을 위한 비공개 익명 응답입니다. 이름·이메일·휴대전화번호·계정·신청·출석정보를 받거나 응답과 연결하지 않습니다. 제출자는 수정할 수 없고 중복 제출은 허용되므로, 명백한 중복·시험 응답은 관리자가 확인한 뒤 삭제할 수 있습니다.</p>
     <div class="section" style="margin: 12px 0 14px;">
       <h3>교육별 보기</h3>
       ${renderCourseFilterControl("feedback", state.feedbackFilters.courseId, { emptyLabel: "전체 교육" })}
@@ -6878,6 +6925,7 @@ function bindEvents() {
     const loadCourseTemplateButton = event.target.closest("[data-load-course-template]");
     const reviewButton = event.target.closest("[data-review-action]");
     const deleteReviewButton = event.target.closest("[data-delete-review-admin]");
+    const deleteAnonymousFeedbackButton = event.target.closest("[data-delete-anonymous-feedback]");
     const clearApplicationNoteButton = event.target.closest("[data-clear-application-note-admin]");
     const clearApplicantSearchButton = event.target.closest("[data-clear-applicant-search]");
     const applicationCourseViewButton = event.target.closest("[data-application-course-view]");
@@ -7382,6 +7430,38 @@ function bindEvents() {
         deleteReviewButton.disabled = false;
         deleteReviewButton.dataset.confirmDelete = "false";
         deleteReviewButton.textContent = defaultDeleteLabel;
+      }
+      return;
+    }
+    if (deleteAnonymousFeedbackButton) {
+      const defaultLabel = "응답 삭제";
+      if (deleteAnonymousFeedbackButton.dataset.confirmDelete !== "true") {
+        deleteAnonymousFeedbackButton.dataset.confirmDelete = "true";
+        deleteAnonymousFeedbackButton.textContent = "한 번 더 누르면 영구 삭제";
+        window.setTimeout(() => {
+          if (deleteAnonymousFeedbackButton.dataset.confirmDelete === "true") {
+            deleteAnonymousFeedbackButton.dataset.confirmDelete = "false";
+            deleteAnonymousFeedbackButton.textContent = defaultLabel;
+          }
+        }, 4000);
+        return;
+      }
+      try {
+        deleteAnonymousFeedbackButton.disabled = true;
+        deleteAnonymousFeedbackButton.textContent = "삭제 중...";
+        await invokeCourseCheckinAdmin(
+          "admin_feedback_delete",
+          deleteAnonymousFeedbackButton.dataset.courseId,
+          { feedback_id: deleteAnonymousFeedbackButton.dataset.deleteAnonymousFeedback },
+        );
+        await loadAdminData();
+        renderFeedbacks();
+        showToast("익명 피드백 응답을 삭제했습니다.");
+      } catch (error) {
+        showToast(error.message || "익명 피드백 응답을 삭제하지 못했습니다.");
+        deleteAnonymousFeedbackButton.disabled = false;
+        deleteAnonymousFeedbackButton.dataset.confirmDelete = "false";
+        deleteAnonymousFeedbackButton.textContent = defaultLabel;
       }
       return;
     }

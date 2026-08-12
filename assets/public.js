@@ -174,6 +174,11 @@ const elements = {
   qrCheckinName: document.getElementById("qrCheckinName"),
   qrCheckinPhone: document.getElementById("qrCheckinPhone"),
   qrCheckinSubmit: document.getElementById("qrCheckinSubmit"),
+  anonymousFeedbackModal: document.getElementById("anonymousFeedbackModal"),
+  anonymousFeedbackTitle: document.getElementById("anonymousFeedbackTitle"),
+  anonymousFeedbackMeta: document.getElementById("anonymousFeedbackMeta"),
+  anonymousFeedbackStatus: document.getElementById("anonymousFeedbackStatus"),
+  anonymousFeedbackFormArea: document.getElementById("anonymousFeedbackFormArea"),
   toast: document.getElementById("toast"),
 };
 
@@ -192,6 +197,7 @@ const ROUNDTABLE_NOTIFICATION_TERMS_VERSION = "2026-07-27-v2";
 const QR_CHECKIN_TERMS_VERSION = "course-checkin-v2-2026-08-12";
 const QR_OPTIONAL_INFO_TERMS_VERSION = DEMOGRAPHICS_TERMS_VERSION;
 const QR_PHOTO_CONSENT_VERSION = "course-photo-v1-2026-08-11";
+const ANONYMOUS_FEEDBACK_NOTICE_VERSION = "2026-08-12-v2";
 const COURSE_CHECKIN_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/course-checkin`;
 const COOP_INTEGRATION_URL = "https://ifdqlwxgqgsvnawmhlfc.supabase.co/functions/v1/erp-humanities-integration";
 const COOP_PUBLISHABLE_KEY = "sb_publishable_lkVhLJDe8WmOPzsWOMkKdg_pjVwVS-h";
@@ -205,7 +211,6 @@ const COOP_LINK_START_SESSION_KEY = "humanities-coop-link-start";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PUBLIC_DRAFT_FORM_SELECTOR = [
   "#applicationForm",
-  "#courseFeedbackForm",
   "#reviewForm",
   "#demographicsForm",
   "[data-application-note-form]",
@@ -218,6 +223,7 @@ let courseLoadObserver = null;
 let courseStatusRefreshTimer = null;
 let applicationClientIdFallback = "";
 let qrCheckinState = { token: "", context: null, partner: null, optionalHandoffToken: "" };
+let anonymousFeedbackState = { token: "", context: null, submitted: false };
 let authDialogMode = "login";
 
 function getSupabaseClient() {
@@ -1505,7 +1511,6 @@ async function loadApplicationState(supabase) {
     demographicsResult,
     applicationsResult,
     myReviewsResult,
-    myFeedbackResult,
     interestSubscriptionsResult,
     interestOptionsResult,
   ] = await Promise.allSettled([
@@ -1525,7 +1530,6 @@ async function loadApplicationState(supabase) {
       .eq("user_id", state.user.id)
       .order("created_at", { ascending: false }),
     supabase.rpc("get_my_reviews"),
-    supabase.rpc("get_my_course_feedback"),
     supabase.rpc("get_my_interest_subscriptions"),
     supabase.rpc("get_interest_subscription_options"),
   ]);
@@ -1558,12 +1562,7 @@ async function loadApplicationState(supabase) {
     state.myReviews = [];
   }
 
-  if (myFeedbackResult.status === "fulfilled" && !myFeedbackResult.value.error) {
-    state.myFeedback = myFeedbackResult.value.data || [];
-  } else {
-    console.warn("[모두의 인문학] 내 교육 피드백 확인 지연", myFeedbackResult.reason || myFeedbackResult.value?.error);
-    state.myFeedback = [];
-  }
+  state.myFeedback = [];
 
   if (interestSubscriptionsResult.status === "fulfilled" && !interestSubscriptionsResult.value.error) {
     state.interestSubscriptions = (interestSubscriptionsResult.value.data || []).map((subscription) => ({
@@ -3164,14 +3163,6 @@ function pendingApplicationNotes() {
   ));
 }
 
-function pendingFeedbackApplications() {
-  return activeApplications().filter((application) => (
-    isAttendanceConfirmed(application)
-    && courseById(application.course_id)
-    && !myFeedbackForCourse(application.course_id)
-  ));
-}
-
 function pendingReviewApplications() {
   return activeApplications().filter((application) => (
     isAttendanceConfirmed(application)
@@ -3217,7 +3208,6 @@ function openMyInfo() {
   }
 
   const noteTodos = pendingApplicationNotes();
-  const feedbackTodos = pendingFeedbackApplications();
   const reviewTodos = pendingReviewApplications();
   const writtenNotes = activeApplications().filter((application) => String(application.note || "").trim()).length;
   const demographicsOpen = readDemographicsAccordionOpen();
@@ -3262,15 +3252,6 @@ function openMyInfo() {
       badgeClass: noteTodos.length ? "green" : "gray",
       open: noteTodos.length > 0,
       content: renderApplicationNoteHistory(),
-    })}
-    ${renderMyInfoAccordion({
-      id: "myFeedbackSection",
-      title: "교육 피드백",
-      description: feedbackTodos.length ? `참석 확인 후 작성할 교육 ${feedbackTodos.length}개` : state.myFeedback.length ? `작성 완료 ${state.myFeedback.length}개` : "현재 작성할 피드백이 없습니다",
-      badge: feedbackTodos.length ? `작성 필요 ${feedbackTodos.length}` : state.myFeedback.length ? `작성 ${state.myFeedback.length}` : "없음",
-      badgeClass: feedbackTodos.length ? "green" : "gray",
-      open: feedbackTodos.length > 0,
-      content: renderMyFeedbackHistory(),
     })}
     ${renderMyInfoAccordion({
       id: "myReviewsSection",
@@ -3500,6 +3481,55 @@ function renderCourseFeedbackForm(course) {
   `;
 }
 
+function renderAnonymousFeedbackQrForm() {
+  return `
+    <form id="anonymousFeedbackForm" class="course-feedback-form">
+      <fieldset class="feedback-question">
+        <legend>이번 교육은 어땠나요?</legend>
+        <div class="feedback-choice-grid feedback-rating-grid">
+          ${Object.entries(FEEDBACK_RATING_LABELS).map(([value, label]) => (
+            feedbackChoiceHtml("rating", value, label, false, "radio")
+          )).join("")}
+        </div>
+      </fieldset>
+      <fieldset class="feedback-question">
+        <legend>좋았던 점을 골라주세요 <span class="muted">(여러 개 선택 가능)</span></legend>
+        <div class="feedback-choice-grid">
+          ${Object.entries(FEEDBACK_STRENGTH_LABELS).map(([value, label]) => (
+            feedbackChoiceHtml("strengths", value, label, false)
+          )).join("")}
+        </div>
+      </fieldset>
+      <fieldset class="feedback-question">
+        <legend>개선되었으면 하는 점이 있나요? <span class="muted">(선택)</span></legend>
+        <div class="feedback-choice-grid">
+          ${Object.entries(FEEDBACK_IMPROVEMENT_LABELS).map(([value, label]) => (
+            feedbackChoiceHtml("improvements", value, label, false)
+          )).join("")}
+        </div>
+      </fieldset>
+      <label>운영진에게 전하고 싶은 의견 (선택)
+        <textarea name="comment" maxlength="2000" placeholder="프로그램을 더 좋게 만드는 데 도움이 될 의견을 자유롭게 적어주세요."></textarea>
+      </label>
+      <div class="anonymous-feedback-notice">
+        <strong>익명으로 피드백을 받습니다.</strong>
+      </div>
+      <details class="privacy-details feedback-privacy-details">
+        <summary>익명 피드백 처리 안내</summary>
+        <ul class="plain-list">
+          <li>이름·이메일·휴대전화번호·계정·신청·출석정보를 받거나 응답과 연결하지 않습니다.</li>
+          <li>제출한 응답은 수정할 수 없으며, 같은 사람이 다시 제출하는 것은 차단하지 않습니다.</li>
+          <li>자유 의견에는 본인이나 다른 사람을 알아볼 수 있는 정보를 적지 마세요.</li>
+        </ul>
+      </details>
+      <div class="actions" style="margin-top: 12px;">
+        <button class="btn" type="submit">익명 피드백 제출</button>
+        <span class="badge gray">운영진만 확인</span>
+      </div>
+    </form>
+  `;
+}
+
 function renderReviewForm(course) {
   const reviewIdentity = courseResponseIdentity(course);
   if (!reviewIdentity) return "";
@@ -3539,14 +3569,14 @@ function renderPostCourseResponseEditor(course) {
   if (!responseIdentity) {
     if (!canShowPostCourseContent(course)) return "";
     const accessGuide = state.user
-      ? "교육 신청과 참석 확인이 완료된 참여자만 교육 피드백과 공개 후기를 작성할 수 있습니다."
-      : "비회원 참여자는 신청 확인 문자에 포함된 안전한 확인 링크로 접속하면 참석 확인 후 교육 피드백과 공개 후기를 작성할 수 있습니다.";
+      ? "교육 신청과 참석 확인이 완료된 참여자만 공개 후기를 작성할 수 있습니다. 익명 교육 피드백은 교육 종료 후 현장의 피드백 QR로 받습니다."
+      : "비회원 참여자는 신청 확인 문자에 포함된 안전한 확인 링크로 접속하면 참석 확인 후 공개 후기를 작성할 수 있습니다. 익명 교육 피드백은 교육 종료 후 현장의 피드백 QR로 받습니다.";
     const accessBadge = state.user
       ? "참석 확인이 작성 권한 기준입니다"
       : "이름과 전화번호만으로는 작성 권한을 확인하지 않습니다";
     return `
       <div class="section" style="grid-column: 1 / -1;">
-        <h3>교육 피드백과 후기</h3>
+        <h3>교육 후기</h3>
         <div class="table-row">
           <p>${escapeHtml(accessGuide)}</p>
           <span class="badge gray">${escapeHtml(accessBadge)}</span>
@@ -3557,17 +3587,7 @@ function renderPostCourseResponseEditor(course) {
 
   return `
     <div class="section post-course-response-section" style="grid-column: 1 / -1;">
-      <div class="post-course-response-grid">
-        <section class="post-course-response-card" id="courseFeedbackSection">
-          <div class="response-card-heading">
-            <div>
-              <h3>교육 피드백 남기기</h3>
-              <p>더 나은 프로그램을 위해 의견을 들려주세요.</p>
-            </div>
-            <div class="actions"><span class="badge gray">약 10초</span><span class="badge gray">운영진만 확인</span></div>
-          </div>
-          ${renderCourseFeedbackForm(course)}
-        </section>
+      <div class="post-course-response-grid single-response-card">
         <section class="post-course-response-card" id="publicReviewSection">
           <div class="response-card-heading">
             <div>
@@ -3706,7 +3726,7 @@ function renderGuestApplicationForm(course) {
         ` : ""}
         ${renderGuestCourseNotificationPreferences(course, activeGuestAccess)}
         ${renderGuestRoundtableConsent(course, activeGuestAccess)}
-        ${attendanceConfirmed ? `<p class="muted">참석 인증이 완료되어 교육 피드백과 공개 후기를 작성할 수 있습니다.</p>` : ""}
+        ${attendanceConfirmed ? `<p class="muted">참석 인증이 완료되어 공개 후기를 작성할 수 있습니다. 익명 교육 피드백은 교육 종료 후 현장의 피드백 QR로 받습니다.</p>` : ""}
         ${canCancelApplication ? `<button class="btn small secondary" type="button" data-cancel-guest-application>신청 취소</button>` : ""}
       </div>
     `;
@@ -3759,7 +3779,7 @@ function renderApplicationForm(course) {
         <section class="application-path-card">
           <span class="badge green">다음 신청이 편리해요</span>
           <h4>로그인하고 신청</h4>
-          <p>Google 또는 이메일로 로그인하면 이름과 전화번호를 저장하고 나의 신청·기대평·교육 피드백·후기 현황을 모아볼 수 있습니다.</p>
+          <p>Google 또는 이메일로 로그인하면 이름과 전화번호를 저장하고 나의 신청·기대평·후기 현황을 모아볼 수 있습니다.</p>
           <button class="btn small" type="button" data-login-for-application>로그인 후 신청하기</button>
         </section>
         <section class="application-path-card">
@@ -3785,7 +3805,7 @@ function renderApplicationForm(course) {
         ${renderRoundtableConsent(existingApplication)}
         ${renderApplicationNoteForm(existingApplication, course)}
         ${attendanceConfirmed
-          ? `<p class="muted">참석 인증이 완료되어 교육 피드백과 공개 후기를 작성할 수 있습니다.</p>`
+          ? `<p class="muted">참석 인증이 완료되어 공개 후기를 작성할 수 있습니다. 익명 교육 피드백은 교육 종료 후 현장의 피드백 QR로 받습니다.</p>`
           : canCancelApplication
             ? `<p class="muted">신청 취소는 아래 버튼으로 처리할 수 있습니다. 신청 내용 수정이 필요하면 운영자에게 문의해 주세요.</p>
                <button class="btn small secondary" type="button" data-cancel-application="${escapeHtml(existingApplication.id)}">신청 취소</button>`
@@ -3958,7 +3978,6 @@ function openCourseDetail(courseId, returnFocusElement = null) {
         </ul>
         <div class="actions" style="margin-top: 14px;">
           ${canApply ? `<button class="btn small" type="button" data-apply-course="${course.id}">신청하기</button>` : `<button class="btn small secondary" type="button" disabled>신청 마감</button>`}
-          ${canReview ? `<button class="btn small secondary" type="button" data-login-for-feedback>${currentFeedbackForCourse(course.id) ? "교육 피드백 수정" : "교육 피드백"}</button>` : ""}
           ${canReview ? `<button class="btn small secondary" type="button" data-login-for-review>${currentReviewForCourse(course.id) ? "공개 후기 수정" : "공개 후기"}</button>` : ""}
         </div>
       </div>
@@ -4626,7 +4645,7 @@ async function handleGuestReviewAccessSubmit(event) {
       showToast("신청은 확인했지만 아직 관리자의 참석 확인이 완료되지 않았습니다.");
       return;
     }
-    showToast("참석 정보를 확인했습니다. 교육 피드백과 공개 후기를 남길 수 있습니다.");
+    showToast("참석 정보를 확인했습니다. 공개 후기를 남길 수 있습니다.");
     openCourseDetail(course.id);
   } finally {
     if (button && document.body.contains(button)) {
@@ -5371,8 +5390,10 @@ function startAuthMonitor() {
     }
     if (user) {
       const handledLinkReturn = await processCoopAccountLinkReturn();
-      const hasCheckin = /^[0-9a-f]{64}$/.test(String(new URL(window.location.href).searchParams.get("checkin") || ""));
-      if (!handledLinkReturn && !hasCheckin && state.coopLink?.prompt_required === true) {
+      const currentUrl = new URL(window.location.href);
+      const hasCheckin = /^[0-9a-f]{64}$/.test(String(currentUrl.searchParams.get("checkin") || ""));
+      const hasFeedback = /^[0-9a-f]{64}$/.test(String(currentUrl.searchParams.get("feedback") || ""));
+      if (!handledLinkReturn && !hasCheckin && !hasFeedback && state.coopLink?.prompt_required === true) {
         window.setTimeout(openCoopLinkPrompt, 0);
       }
     }
@@ -5412,6 +5433,12 @@ function setQrCheckinStatus(message = "", type = "") {
   elements.qrCheckinStatus.className = `inline-message${type ? ` ${type}` : ""}`;
 }
 
+function setAnonymousFeedbackStatus(message = "", type = "") {
+  if (!elements.anonymousFeedbackStatus) return;
+  elements.anonymousFeedbackStatus.textContent = message;
+  elements.anonymousFeedbackStatus.className = `inline-message${type ? ` ${type}` : ""}`;
+}
+
 async function callPublicFunction(url, apiKey, payload) {
   const response = await fetch(url, {
     method: "POST",
@@ -5423,11 +5450,97 @@ async function callPublicFunction(url, apiKey, payload) {
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok || result?.ok === false) {
-    const error = new Error(result?.error || "체크인 서버에 연결하지 못했습니다.");
+    const error = new Error(result?.error || "서버에 연결하지 못했습니다.");
     error.code = result?.code || "CHECKIN_FAILED";
     throw error;
   }
   return result;
+}
+
+async function handleAnonymousFeedbackSubmit(event) {
+  event.preventDefault();
+  const form = getSubmitForm(event);
+  if (!form || anonymousFeedbackState.submitted) return;
+  const formData = new FormData(form);
+  const rating = Number(formData.get("rating"));
+  if (!Number.isInteger(rating) || !Object.prototype.hasOwnProperty.call(FEEDBACK_RATING_LABELS, rating)) {
+    setAnonymousFeedbackStatus("이번 교육이 어땠는지 선택해 주세요.", "warning");
+    form.querySelector("input[name='rating']")?.focus();
+    return;
+  }
+  const comment = String(formData.get("comment") || "").trim();
+  if (comment.length > 2000) {
+    setAnonymousFeedbackStatus("자유 의견은 2000자 이하로 입력해 주세요.", "warning");
+    form.elements.comment?.focus();
+    return;
+  }
+  const submitButton = form.querySelector("button[type='submit']");
+  if (submitButton?.disabled) return;
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "제출 중...";
+  }
+  setAnonymousFeedbackStatus("익명 피드백을 제출하고 있습니다.");
+  try {
+    await callPublicFunction(COURSE_CHECKIN_FUNCTION_URL, SUPABASE_PUBLISHABLE_KEY, {
+      action: "feedback_submit",
+      feedback_qr_token: anonymousFeedbackState.token,
+      notice_version: ANONYMOUS_FEEDBACK_NOTICE_VERSION,
+      rating,
+      strengths: formData.getAll("strengths").map(String),
+      improvements: formData.getAll("improvements").map(String),
+      comment: comment || null,
+    });
+    anonymousFeedbackState.submitted = true;
+    elements.anonymousFeedbackFormArea?.classList.add("hidden");
+    setAnonymousFeedbackStatus("익명 피드백을 제출했습니다. 응답은 수정할 수 없습니다.", "success");
+    const url = new URL(window.location.href);
+    url.searchParams.delete("feedback");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  } catch (error) {
+    setAnonymousFeedbackStatus(error?.message || "익명 피드백을 제출하지 못했습니다. 잠시 후 다시 시도해 주세요.", "danger");
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.textContent = "익명 피드백 제출";
+    }
+  }
+}
+
+async function initializeAnonymousFeedback() {
+  const url = new URL(window.location.href);
+  if (url.searchParams.has("checkin")) return;
+  const token = String(url.searchParams.get("feedback") || "").trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(token) || !elements.anonymousFeedbackModal) return;
+  anonymousFeedbackState = { token, context: null, submitted: false };
+  openModal(elements.anonymousFeedbackModal);
+  elements.anonymousFeedbackTitle.textContent = "교육 확인 중";
+  elements.anonymousFeedbackMeta.textContent = "";
+  elements.anonymousFeedbackFormArea.innerHTML = "";
+  elements.anonymousFeedbackFormArea.classList.add("hidden");
+  setAnonymousFeedbackStatus("피드백 QR을 확인하고 있습니다.");
+  try {
+    const context = await callPublicFunction(COURSE_CHECKIN_FUNCTION_URL, SUPABASE_PUBLISHABLE_KEY, {
+      action: "feedback_context",
+      feedback_qr_token: token,
+    });
+    anonymousFeedbackState.context = context;
+    elements.anonymousFeedbackTitle.textContent = context.title || "익명 교육 피드백";
+    elements.anonymousFeedbackMeta.textContent = [
+      context.test_mode ? "기능 점검용 익명 피드백 QR입니다." : "",
+      formatDateTime(context.starts_at),
+      context.organization_name,
+    ].filter(Boolean).join("\n");
+    if (context.status === "NOT_OPEN") {
+      setAnonymousFeedbackStatus(`교육이 끝난 뒤 작성할 수 있습니다. ${formatDateTime(context.opens_at)}부터 열립니다.`, "warning");
+      return;
+    }
+    elements.anonymousFeedbackFormArea.innerHTML = renderAnonymousFeedbackQrForm();
+    elements.anonymousFeedbackFormArea.classList.remove("hidden");
+    setAnonymousFeedbackStatus("익명으로 피드백을 받습니다.", "success");
+    window.setTimeout(() => elements.anonymousFeedbackFormArea.querySelector("input[name='rating']")?.focus(), 0);
+  } catch (error) {
+    setAnonymousFeedbackStatus(error?.message || "사용할 수 없는 피드백 QR입니다.", "danger");
+  }
 }
 
 async function callAuthenticatedCourseFunction(payload) {
@@ -6175,6 +6288,7 @@ function bindEvents() {
 
   document.body.addEventListener("submit", (event) => {
     if (event.target.id === "qrCheckinForm") return handleQrCheckinSubmit(event);
+    if (event.target.id === "anonymousFeedbackForm") return handleAnonymousFeedbackSubmit(event);
     if (event.target.id === "applicationForm") return handleApplicationSubmit(event);
     if (event.target.id === "guestReviewAccessForm") return handleGuestReviewAccessSubmit(event);
     if (event.target.id === "demographicsForm") return handleDemographicsSubmit(event);
@@ -6321,6 +6435,7 @@ async function initialize() {
   if (sessionUser) await Promise.all([loadApplicationState(supabase), loadCoopLinkState()]);
   startCourseStatusMonitor();
   await openRequestedCourseFromUrl();
+  await initializeAnonymousFeedback();
   await initializeQrCheckin();
   startAuthMonitor();
 }
