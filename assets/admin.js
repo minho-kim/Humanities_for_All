@@ -4732,7 +4732,7 @@ function courseCheckinRosterPrintHtml(course, rosterData = null) {
     other_or_unrecorded: rosterRows.filter((row) => row.attendance_confirmed_at).length,
   };
   const registeredCell = (recorded, emptyHtml) => recorded
-    ? '<span class="roster-registered">기입 불필요</span>'
+    ? '<span class="roster-registered">사전등록완료</span>'
     : emptyHtml;
   const phoneCell = (row) => registeredCell(
     Boolean(String(row?.phone_last4 || "").trim()),
