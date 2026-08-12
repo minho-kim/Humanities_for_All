@@ -1514,12 +1514,35 @@ function clearApplicationState() {
   state.coopLink = null;
 }
 
+function prefillQrCheckinContact(profile = null) {
+  if (!elements.qrCheckinForm || !profile) return;
+  const applicantName = String(profile.applicant_name || "").trim();
+  const phone = phoneDigits(profile.phone);
+  if (applicantName && !elements.qrCheckinName?.value.trim()) {
+    elements.qrCheckinName.value = applicantName;
+  }
+  if (/^010\d{8}$/.test(phone) && !elements.qrCheckinPhone?.value.replace(/\D/g, "")) {
+    const tail = phone.slice(3);
+    elements.qrCheckinPhone.value = `${tail.slice(0, 4)}-${tail.slice(4)}`;
+  }
+}
+
 async function loadApplicationState(supabase) {
   if (!state.user) {
     clearApplicationState();
     return;
   }
 
+  const profileRequest = Promise.resolve(
+    supabase
+      .from("applicant_profiles")
+      .select("user_id,applicant_name,phone,privacy_agreed_at,sms_notice_agreed_at,terms_version,updated_at")
+      .eq("user_id", state.user.id)
+      .maybeSingle(),
+  ).then((result) => {
+    if (!result.error) prefillQrCheckinContact(result.data);
+    return result;
+  });
   const [
     profileResult,
     demographicsResult,
@@ -1528,11 +1551,7 @@ async function loadApplicationState(supabase) {
     interestSubscriptionsResult,
     interestOptionsResult,
   ] = await Promise.allSettled([
-    supabase
-      .from("applicant_profiles")
-      .select("user_id,applicant_name,phone,privacy_agreed_at,sms_notice_agreed_at,terms_version,updated_at")
-      .eq("user_id", state.user.id)
-      .maybeSingle(),
+    profileRequest,
     supabase
       .from("user_demographics")
       .select("user_id,residence_district,residence_neighborhood,birth_year,birth_date,gender,marital_status,children_count,optional_consent_at,terms_version,updated_at")
@@ -1550,6 +1569,7 @@ async function loadApplicationState(supabase) {
 
   if (profileResult.status === "fulfilled" && !profileResult.value.error) {
     state.applicantProfile = profileResult.value.data || null;
+    prefillQrCheckinContact(state.applicantProfile);
   } else {
     console.warn("[모두의 인문학] 신청자 정보 확인 지연", profileResult.reason || profileResult.value?.error);
     state.applicantProfile = null;
@@ -5843,6 +5863,7 @@ function showQrCheckinForm() {
   elements.qrCheckinForm?.classList.add("hidden");
   if (qrCheckinState.optionalHandoffToken) showQrOptionalHandoffReady();
   else if (elements.qrCheckinOptional?.classList.contains("hidden")) prepareQrOptionalInfo();
+  prefillQrCheckinContact(state.applicantProfile);
   elements.qrCheckinForm?.classList.remove("hidden");
   window.setTimeout(() => elements.qrCheckinName?.focus(), 0);
 }
@@ -6451,6 +6472,14 @@ async function initialize() {
     const sessionUser = await refreshSession(supabase);
     return { supabase, sessionUser };
   })();
+  const authenticatedStateReady = authenticationReady.then(async ({ supabase, sessionUser }) => {
+    if (sessionUser) {
+      await Promise.all([
+        loadApplicationState(supabase),
+        loadCoopLinkState(),
+      ]);
+    }
+  });
   const pageDataReady = (async () => {
     await processInterestUnsubscribe(interestUnsubscribeToken);
     await loadLandingData();
@@ -6459,12 +6488,12 @@ async function initialize() {
     }
   })();
   const qrCheckinReady = initializeQrCheckin();
-  const [{ supabase, sessionUser }] = await Promise.all([
+  await Promise.all([
     authenticationReady,
+    authenticatedStateReady,
     pageDataReady,
     qrCheckinReady,
   ]);
-  if (sessionUser) await Promise.all([loadApplicationState(supabase), loadCoopLinkState()]);
   startCourseStatusMonitor();
   await openRequestedCourseFromUrl();
   await initializeAnonymousFeedback();
