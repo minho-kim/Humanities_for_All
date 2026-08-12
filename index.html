@@ -22,7 +22,7 @@
     })();
   </script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
-  <link rel="stylesheet" href="./assets/styles.css?v=202608121930">
+  <link rel="stylesheet" href="./assets/styles.css?v=202608122015">
 </head>
 <body>
   <main class="page">
@@ -206,58 +206,6 @@
         <label class="check-row"><input id="qrCheckinAge" type="checkbox"> <span>만 14세 이상입니다.</span></label>
         <label class="check-row"><input id="qrCheckinPrivacy" type="checkbox"> <span>이름·휴대전화번호·출석 기록 수집과 교육 종료일부터 5년간 출석 증빙 보관에 동의합니다. 연동 교육이면 공동운영 단체의 출석 확인 명단에도 같은 정보를 제공합니다.</span></label>
       </div>
-      <div id="qrCheckinPartnerChoices" class="qr-checkin-partner hidden" aria-busy="false">
-        <p><strong>체크인 방법을 선택해 주세요.</strong></p>
-        <div class="actions">
-          <button class="btn secondary" type="button" id="qrCheckinPartnerYes">조합원 본인 확인으로 이동</button>
-          <button class="btn secondary" type="button" id="qrCheckinPartnerNo">일반 체크인 계속하기</button>
-        </div>
-        <p class="muted small-copy">용인모두의햇빛협동조합 조합원은 첫 번째 버튼을 누르면 협동조합 로그인 화면으로 이동합니다. 해당하지 않거나 잘 모르겠으면 일반 체크인을 선택하세요.</p>
-      </div>
-      <section id="qrCheckinOptional" class="qr-checkin-optional hidden" aria-labelledby="qrCheckinOptionalTitle">
-        <div class="row-top">
-          <div>
-            <h3 id="qrCheckinOptionalTitle">출석 정보</h3>
-            <p id="qrCheckinOptionalSummary" class="muted small-copy">QR 출석에 필요한 정보를 확인해 주세요.</p>
-          </div>
-          <span class="badge">필수</span>
-        </div>
-        <label class="check-row"><input id="qrCheckinOptionalConsent" type="checkbox"> <span>성별·생년월일과 이번 교육 참여 경로의 수집·이용에 동의합니다. QR과 종이 출석부에서 같은 출석 정보를 확인합니다.</span></label>
-        <div id="qrCheckinOptionalFields" class="qr-checkin-optional-fields hidden">
-          <label id="qrCheckinGenderField">성별
-            <select id="qrCheckinGender" name="gender">
-              <option value="">선택해 주세요</option>
-              <option value="male">남</option>
-              <option value="female">여</option>
-              <option value="other">기타</option>
-            </select>
-          </label>
-          <label id="qrCheckinBirthDateField">생년월일
-            <input id="qrCheckinBirthDate" name="birth_date" type="text" inputmode="numeric" maxlength="10" autocomplete="bday" placeholder="예: 1980-05-12" aria-describedby="qrCheckinBirthDateHelp">
-            <span id="qrCheckinBirthDateHelp" class="muted">숫자 8자리를 입력하면 하이픈이 자동으로 들어갑니다.</span>
-          </label>
-          <label>참여 경로
-            <select id="qrCheckinParticipationRoute" name="participation_route">
-              <option value="">선택해 주세요</option>
-              <option value="website">홈페이지</option>
-              <option value="sns">SNS</option>
-              <option value="facility_board">시설 게시판</option>
-              <option value="acquaintance">지인</option>
-              <option value="other">기타</option>
-            </select>
-          </label>
-          <label id="qrCheckinParticipationRouteOtherField" class="qr-checkin-route-other hidden">기타 참여 경로<input id="qrCheckinParticipationRouteOther" name="participation_route_other" maxlength="80" placeholder="직접 입력"></label>
-          <fieldset class="qr-photo-consent">
-            <legend>사진 촬영·이용 확인</legend>
-            <p class="muted small-copy">교육 운영 증빙·홍보·아카이브 목적으로 현장 사진을 촬영·이용할 수 있습니다. 거부해도 출석과 교육 참여에는 불이익이 없으며, 식별 가능한 사진은 게시·업로드하거나 이용하지 않습니다.</p>
-            <div class="qr-photo-consent-choices">
-              <label class="check-row"><input id="qrCheckinPhotoConsentGranted" type="radio" name="qr_photo_consent" value="GRANTED"> <span>동의</span></label>
-              <label class="check-row"><input id="qrCheckinPhotoConsentDenied" type="radio" name="qr_photo_consent" value="DENIED"> <span>거부</span></label>
-            </div>
-          </fieldset>
-        </div>
-        <p class="muted small-copy">성별·생년월일·참여 경로는 회차별 참여 통계와 출석부 기입 생략에 사용하며, 체크인할 때 직접 확인합니다.</p>
-      </section>
       <form id="qrCheckinForm" class="qr-checkin-form hidden">
         <label>이름<input id="qrCheckinName" name="participant_name" maxlength="80" autocomplete="name" required></label>
         <label>휴대전화번호
@@ -266,6 +214,50 @@
             <input id="qrCheckinPhone" name="phone" type="tel" maxlength="9" inputmode="numeric" autocomplete="tel-national" placeholder="하이픈(-)은 자동 입력됩니다." aria-label="휴대전화번호 뒤 8자리" required>
           </span>
         </label>
+        <section id="qrCheckinOptional" class="qr-checkin-optional hidden" aria-labelledby="qrCheckinOptionalTitle">
+          <div class="row-top">
+            <div>
+              <h3 id="qrCheckinOptionalTitle">출석 정보</h3>
+              <p id="qrCheckinOptionalSummary" class="muted small-copy">QR 출석에 필요한 정보를 확인해 주세요.</p>
+            </div>
+            <span class="badge">필수</span>
+          </div>
+          <label class="check-row"><input id="qrCheckinOptionalConsent" type="checkbox"> <span>성별·생년월일과 이번 교육 참여 경로의 수집·이용에 동의합니다. QR과 종이 출석부에서 같은 출석 정보를 확인합니다.</span></label>
+          <div id="qrCheckinOptionalFields" class="qr-checkin-optional-fields hidden">
+            <label id="qrCheckinGenderField">성별
+              <select id="qrCheckinGender" name="gender">
+                <option value="">선택해 주세요</option>
+                <option value="male">남</option>
+                <option value="female">여</option>
+                <option value="other">기타</option>
+              </select>
+            </label>
+            <label id="qrCheckinBirthDateField">생년월일
+              <input id="qrCheckinBirthDate" name="birth_date" type="text" inputmode="numeric" maxlength="10" autocomplete="bday" placeholder="예: 1980-05-12" aria-describedby="qrCheckinBirthDateHelp">
+              <span id="qrCheckinBirthDateHelp" class="muted">숫자 8자리를 입력하면 하이픈이 자동으로 들어갑니다.</span>
+            </label>
+            <label>참여 경로
+              <select id="qrCheckinParticipationRoute" name="participation_route">
+                <option value="">선택해 주세요</option>
+                <option value="website">홈페이지</option>
+                <option value="sns">SNS</option>
+                <option value="facility_board">시설 게시판</option>
+                <option value="acquaintance">지인</option>
+                <option value="other">기타</option>
+              </select>
+            </label>
+            <label id="qrCheckinParticipationRouteOtherField" class="qr-checkin-route-other hidden">기타 참여 경로<input id="qrCheckinParticipationRouteOther" name="participation_route_other" maxlength="80" placeholder="직접 입력"></label>
+            <fieldset class="qr-photo-consent">
+              <legend>사진 촬영·이용 확인</legend>
+              <p class="muted small-copy">교육 운영 증빙·홍보·아카이브 목적으로 현장 사진을 촬영·이용할 수 있습니다. 거부해도 출석과 교육 참여에는 불이익이 없으며, 식별 가능한 사진은 게시·업로드하거나 이용하지 않습니다.</p>
+              <div class="qr-photo-consent-choices">
+                <label class="check-row"><input id="qrCheckinPhotoConsentGranted" type="radio" name="qr_photo_consent" value="GRANTED"> <span>동의</span></label>
+                <label class="check-row"><input id="qrCheckinPhotoConsentDenied" type="radio" name="qr_photo_consent" value="DENIED"> <span>거부</span></label>
+              </div>
+            </fieldset>
+          </div>
+          <p class="muted small-copy">성별·생년월일·참여 경로는 회차별 참여 통계와 출석부 기입 생략에 사용하며, 체크인할 때 직접 확인합니다.</p>
+        </section>
         <button class="btn" id="qrCheckinSubmit" type="submit">출석 체크인</button>
       </form>
     </article>
@@ -285,6 +277,6 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <!-- public.js를 변경해 배포할 때 v 값도 함께 올려 기존 브라우저 캐시를 교체한다. -->
-  <script type="module" src="./assets/public.js?v=202608121955"></script>
+  <script type="module" src="./assets/public.js?v=202608122015"></script>
 </body>
 </html>
