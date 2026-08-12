@@ -588,24 +588,9 @@ function courseStartAt(course) {
   return course?.sessions?.[0]?.starts_at || course?.starts_at || "";
 }
 
-function seoulDateKey(value) {
-  if (!value) return "";
-  const parts = new Intl.DateTimeFormat("en", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date(value));
-  const year = parts.find((part) => part.type === "year")?.value;
-  const month = parts.find((part) => part.type === "month")?.value;
-  const day = parts.find((part) => part.type === "day")?.value;
-  return year && month && day ? `${year}-${month}-${day}` : "";
-}
-
 function hasNoExplicitCourseEndElapsed(startsAt) {
-  const courseDate = seoulDateKey(startsAt);
-  const today = seoulDateKey(new Date());
-  return Boolean(courseDate && today && today > courseDate);
+  const startsAtMs = new Date(startsAt).getTime();
+  return Number.isFinite(startsAtMs) && startsAtMs + 2 * 60 * 60_000 <= Date.now();
 }
 
 function hasCourseStarted(course) {

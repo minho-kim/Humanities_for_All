@@ -773,9 +773,8 @@ function seoulDateKey(value) {
 }
 
 function hasNoExplicitCourseEndElapsed(startsAt) {
-  const courseDate = seoulDateKey(startsAt);
-  const today = seoulDateKey(new Date());
-  return Boolean(courseDate && today && today > courseDate);
+  const startsAtMs = new Date(startsAt).getTime();
+  return Number.isFinite(startsAtMs) && startsAtMs + 2 * 60 * 60_000 <= Date.now();
 }
 
 function hasCourseTimeEnded(startsAt, endsAt) {
@@ -4523,7 +4522,7 @@ function courseCheckinAdminHtml(course, result) {
         <label><span><input name="enabled" type="checkbox" ${setting.enabled ? "checked" : ""} style="width:auto;min-height:auto;"> QR 체크인 사용</span></label>
         <label>체크인 운영 시간<input value="교육 시작 1시간 전 ~ 종료 1시간 후" readonly></label>
         <label><span><input name="feedback_enabled" type="checkbox" ${setting.feedback_enabled ? "checked" : ""} style="width:auto;min-height:auto;"> 익명 피드백 QR 사용</span></label>
-        <label>피드백 운영 시간<input value="교육 종료 후부터 · 종료 미입력 시 다음날 0시" readonly></label>
+        <label>피드백 운영 시간<input value="교육 종료 후부터 · 종료 미입력 시 시작 2시간 후" readonly></label>
         <label>인쇄물 아래 단체명<input name="print_organization_name" maxlength="120" value="${escapeHtml(setting.print_organization_name || "모두의 인문학")}" placeholder="예: 모두의 인문학"></label>
       </div>
       <section class="section" style="margin-top: 14px;">
@@ -4606,11 +4605,11 @@ function courseCheckinQrImage(qrUrl) {
 }
 
 function courseFeedbackPrintPageHtml(course, imageUrl, organizationLabel, hasFollowingPage = false) {
-  return `<section class="feedback-qr-page${hasFollowingPage ? " has-following-page" : ""}"><header><p class="feedback-eyebrow">모두의 인문학 익명 교육 피드백</p><h1>${escapeHtml(course.title || "교육")}</h1><p class="feedback-meta">${escapeHtml(formatDateTime(course.starts_at))}</p></header><main><img src="${imageUrl}" alt="익명 교육 피드백 QR"><p class="feedback-guide">교육이 끝난 뒤 QR을 촬영해 주세요.</p><p class="feedback-notice">더 나은 프로그램을 위해 의견을 들려주세요.<br>제출한 응답은 수정할 수 없습니다.</p><p class="feedback-privacy"><strong>익명으로 피드백을 받습니다.</strong><br>이름·이메일·휴대전화번호·계정·신청 및 출석정보를 받거나 응답과 연결하지 않습니다.</p><p class="feedback-note">종료 일시가 입력되지 않은 교육은 교육일 다음날 0시부터 작성할 수 있습니다.</p></main><footer>${escapeHtml(organizationLabel)}</footer></section>`;
+  return `<section class="feedback-qr-page${hasFollowingPage ? " has-following-page" : ""}"><header><p class="feedback-eyebrow">모두의 인문학 익명 교육 피드백</p><h1>${escapeHtml(course.title || "교육")}</h1><p class="feedback-meta">${escapeHtml(formatDateTime(course.starts_at))}</p></header><main><img src="${imageUrl}" alt="익명 교육 피드백 QR"><p class="feedback-guide">교육이 끝난 뒤 QR을 촬영해 주세요.</p><p class="feedback-notice">더 나은 프로그램을 위해 의견을 들려주세요.<br>제출한 응답은 수정할 수 없습니다.</p><p class="feedback-privacy"><strong>익명으로 피드백을 받습니다.</strong><br>이름·이메일·휴대전화번호·계정·신청 및 출석정보를 받거나 응답과 연결하지 않습니다.</p></main><footer>${escapeHtml(organizationLabel)}</footer></section>`;
 }
 
 function courseFeedbackPrintCss() {
-  return `.feedback-qr-page{width:210mm;min-height:297mm;padding:16mm;display:flex;flex-direction:column;text-align:center}.feedback-qr-page.has-following-page{break-after:page}.feedback-qr-page header{border-bottom:4px solid #15803d;padding-bottom:6mm}.feedback-eyebrow{margin:0 0 2mm;color:#15803d;font-size:12pt;font-weight:850;letter-spacing:.06em}.feedback-qr-page h1{font-size:25pt;line-height:1.25;margin:0}.feedback-meta{margin:6mm 0 2mm;font-size:11pt}.feedback-qr-page main{display:flex;flex:1;min-height:0;flex-direction:column;align-items:center;justify-content:center}.feedback-qr-page img{width:112mm;height:112mm;padding:4mm;border:4px solid #172033}.feedback-guide{font-size:16pt;font-weight:850;margin:5mm 0 2mm}.feedback-notice{max-width:160mm;margin:0 auto;font-size:11pt;line-height:1.6}.feedback-privacy{margin-top:4mm;padding:3mm 4mm;border:1.5px solid #15803d;border-radius:3mm;background:#effaf3;font-size:11pt;line-height:1.55}.feedback-note{color:#5d6775;font-size:11pt}.feedback-qr-page footer{border-top:1px solid #cbd5e1;padding-top:5mm;font-size:15pt;font-weight:850}`;
+  return `.feedback-qr-page{width:210mm;min-height:297mm;padding:16mm;display:flex;flex-direction:column;text-align:center}.feedback-qr-page.has-following-page{break-after:page}.feedback-qr-page header{border-bottom:4px solid #15803d;padding-bottom:6mm}.feedback-eyebrow{margin:0 0 2mm;color:#15803d;font-size:12pt;font-weight:850;letter-spacing:.06em}.feedback-qr-page h1{font-size:25pt;line-height:1.25;margin:0}.feedback-meta{margin:6mm 0 2mm;font-size:11pt}.feedback-qr-page main{display:flex;flex:1;min-height:0;flex-direction:column;align-items:center;justify-content:center}.feedback-qr-page img{width:112mm;height:112mm;padding:4mm;border:4px solid #172033}.feedback-guide{font-size:16pt;font-weight:850;margin:5mm 0 2mm}.feedback-notice{max-width:160mm;margin:0 auto;font-size:11pt;line-height:1.6}.feedback-privacy{margin-top:4mm;padding:3mm 4mm;border:1.5px solid #15803d;border-radius:3mm;background:#effaf3;font-size:11pt;line-height:1.55}.feedback-qr-page footer{border-top:1px solid #cbd5e1;padding-top:5mm;font-size:15pt;font-weight:850}`;
 }
 
 function printCourseFeedbackQr(course, qrUrl, organizationName) {
