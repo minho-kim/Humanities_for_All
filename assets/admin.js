@@ -813,6 +813,10 @@ function effectiveCourseStatus(course) {
   return "open";
 }
 
+function canManageCourseAttendance(course) {
+  return ["in_progress", "finished"].includes(effectiveCourseStatus(course));
+}
+
 function archiveTypeLabel(type) {
   if (type === "photo") return "사진";
   if (type === "video") return "영상";
@@ -2109,18 +2113,23 @@ function renderCourseFilterControl(target, selectedId = "", { emptyLabel = "전�
 
 function courseFilterResultsHtml(target) {
   const query = state.courseFilterPicker.target === target ? state.courseFilterPicker.query : "";
-  if (!normalizeSearchText(query)) {
+  const hasQuery = Boolean(normalizeSearchText(query));
+  if (!hasQuery && target !== "attendance") {
     return `<p class="muted">교육명, 부제, 알림 키워드, 단체, 강사, 장소, 상태 중 하나를 입력하면 검색 결과가 표시됩니다.</p>`;
   }
   const selectedId = currentCourseFilterSelectedId(target);
   const candidates = target === "attendance"
-    ? state.courses.filter((course) => effectiveCourseStatus(course) === "finished")
+    ? state.courses.filter(canManageCourseAttendance)
     : state.courses;
   const results = searchItems(candidates, query, courseSearchText, COURSE_PICKER_LIMIT);
+  const emptyText = target === "attendance" && !hasQuery
+    ? "아직 시작한 교육이 없습니다."
+    : "검색어에 맞는 교육이 없습니다.";
   return `
     <div class="admin-search-results">
-      ${results.map((course) => courseFilterResultHtml(target, course, selectedId)).join("") || `<div class="empty">검색어에 맞는 교육이 없습니다.</div>`}
+      ${results.map((course) => courseFilterResultHtml(target, course, selectedId)).join("") || `<div class="empty">${escapeHtml(emptyText)}</div>`}
     </div>
+    ${target === "attendance" && !hasQuery && candidates.length > results.length ? `<p class="muted">시작한 교육 ${candidates.length.toLocaleString("ko-KR")}개 중 ${results.length.toLocaleString("ko-KR")}개를 먼저 표시합니다. 나머지는 검색해서 찾을 수 있습니다.</p>` : ""}
   `;
 }
 
@@ -2473,15 +2482,21 @@ function currentCoursePickerSelectedId(kind) {
 
 function coursePickerResultsHtml(kind) {
   const query = state.coursePicker.kind === kind ? state.coursePicker.query : "";
-  if (!normalizeSearchText(query)) {
-    return `<p class="muted">${escapeHtml(coursePickerSearchPlaceholder(kind))}해 주세요. 검색어를 입력하면 결과가 표시됩니다.</p>`;
-  }
+  const hasQuery = Boolean(normalizeSearchText(query));
   const selectedId = currentCoursePickerSelectedId(kind);
-  const results = searchItems(coursePickerItems(kind), query, coursePickerTextBuilder(kind), COURSE_PICKER_LIMIT);
+  const items = coursePickerItems(kind);
+  const prioritizedItems = !hasQuery && selectedId
+    ? [...items.filter((item) => item.id === selectedId), ...items.filter((item) => item.id !== selectedId)]
+    : items;
+  const results = searchItems(prioritizedItems, query, coursePickerTextBuilder(kind), COURSE_PICKER_LIMIT);
+  const emptyText = hasQuery
+    ? `검색어에 맞는 ${coursePickerLabel(kind)}가 없습니다.`
+    : `등록된 ${coursePickerLabel(kind)}가 없습니다.`;
   return `
     <div class="admin-search-results">
-      ${results.map((item) => coursePickerResultHtml(kind, item, selectedId)).join("") || `<div class="empty">검색어에 맞는 ${escapeHtml(coursePickerLabel(kind))}가 없습니다.</div>`}
+      ${results.map((item) => coursePickerResultHtml(kind, item, selectedId)).join("") || `<div class="empty">${escapeHtml(emptyText)}</div>`}
     </div>
+    ${!hasQuery && items.length > results.length ? `<p class="muted">전체 ${items.length.toLocaleString("ko-KR")}개 중 ${results.length.toLocaleString("ko-KR")}개를 먼저 표시합니다. 나머지는 검색해서 찾을 수 있습니다.</p>` : ""}
   `;
 }
 
@@ -5305,10 +5320,10 @@ function filteredFeedbacks() {
 
 async function loadAttendanceManagement(courseId) {
   const course = courseById(courseId);
-  if (!course || effectiveCourseStatus(course) !== "finished") {
+  if (!course || !canManageCourseAttendance(course)) {
     state.attendanceManagement.records = [];
     state.attendanceManagement.loading = false;
-    state.attendanceManagement.error = "교육이 종료된 뒤 실제 출석자 명단을 확인할 수 있습니다.";
+    state.attendanceManagement.error = "교육 시작 시각부터 실제 출석자 명단을 확인할 수 있습니다.";
     renderAttendanceManagement();
     return;
   }
@@ -5338,10 +5353,10 @@ function renderAttendanceManagement() {
   const deniedCount = records.filter((record) => record.photo_consent_status === "DENIED").length;
   elements.adminContent.innerHTML = `
     <h2>출석 관리</h2>
-    <p class="muted">종료된 교육의 실제 QR 체크인 완료자만 확인하고 제출용 명단을 출력합니다. 신청만 하고 참석하지 않은 사람, 취소 신청자와 빈칸은 포함하지 않습니다.</p>
+    <p class="muted">교육 시작 시각부터 실제 QR 체크인 완료자를 확인하고 제출용 명단을 출력할 수 있습니다. 신청만 하고 참석하지 않은 사람, 취소 신청자와 빈칸은 포함하지 않습니다.</p>
     <div class="section" style="margin: 12px 0 14px;">
-      <h3>종료 교육 찾기</h3>
-      ${renderCourseFilterControl("attendance", management.courseId, { emptyLabel: "출석을 확인할 종료 교육을 선택해 주세요." })}
+      <h3>시작한 교육 찾기</h3>
+      ${renderCourseFilterControl("attendance", management.courseId, { emptyLabel: "출석을 확인할 교육을 선택해 주세요." })}
     </div>
     ${!course ? '<div class="empty">교육을 검색해 선택하면 실제 출석자 정보와 출력 버튼이 표시됩니다.</div>' : management.loading ? '<div class="empty">실제 출석 정보를 불러오는 중입니다.</div>' : management.error ? `<div class="empty">${escapeHtml(management.error)}</div>` : `
       <section class="section">
@@ -7815,8 +7830,8 @@ function bindEvents() {
     }
     if (printActualAttendanceButton) {
       const course = courseById(state.attendanceManagement.courseId);
-      if (!course || effectiveCourseStatus(course) !== "finished") {
-        showToast("종료된 교육을 다시 선택해 주세요.");
+      if (!course || !canManageCourseAttendance(course)) {
+        showToast("시작한 교육을 다시 선택해 주세요.");
         return;
       }
       try {
