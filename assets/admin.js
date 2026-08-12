@@ -4594,6 +4594,7 @@ function courseCheckinMethodLabel(method) {
     COOP_LINKED_ACCOUNT_QR: "협동조합 로그인·계정연동",
     COOP_MEMBER_QR: "협동조합 조합원 확인",
     HUMANITIES_QR: "이름·전화번호 QR",
+    ADMIN_CONFIRMED: "관리자 누락 등록",
   }[String(method || "")] || "온라인 체크인";
 }
 
@@ -4619,6 +4620,34 @@ function checkinPhotoConsentLabel(value) {
   return "미확인";
 }
 
+function formatAttendanceBirthDate(value) {
+  const digits = String(value || "").replace(/\D/g, "").slice(0, 8);
+  if (digits.length <= 4) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+  return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
+}
+
+function kstTodayForAttendance() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function validAttendanceBirthDate(value) {
+  const normalized = String(value || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return false;
+  const parsed = new Date(`${normalized}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== normalized || normalized < "1900-01-01") return false;
+  const cutoff = new Date(`${kstTodayForAttendance()}T00:00:00Z`);
+  cutoff.setUTCFullYear(cutoff.getUTCFullYear() - 14);
+  return parsed.getTime() <= cutoff.getTime();
+}
+
 function actualAttendanceRecords(records = []) {
   return records
     .filter((record) => record?.record_status !== "ANONYMIZED" && record?.checked_in_at)
@@ -4636,7 +4665,7 @@ async function printElectronicAttendanceReport(course, records) {
   const generatedAt = new Date().toISOString();
   const rows = actualAttendanceRecords(records).map((record, index) => ({ index: index + 1, ...record }));
   popup.document.open();
-  popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${escapeHtml(course.title || "교육")} 실제 출석자 명단</title><style>@page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;color:#172033;margin:0;font-size:9.5pt;word-break:keep-all;overflow-wrap:break-word}h1{font-size:19pt;margin:0 0 8px}.meta{display:grid;grid-template-columns:1fr 1fr;gap:4px 18px;margin:0 0 10px;font-size:10pt}.notice{padding:7px 9px;border:1px solid #9ca3af;background:#f8fafc;font-size:9pt;color:#4b5563;margin:8px 0 10px}table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:9pt}thead{display:table-header-group}tr{break-inside:avoid}th,td{border:1px solid #444;padding:5px 4px;text-align:left;vertical-align:middle}th{background:#f1f3f5;text-align:center}th:first-child,td:first-child{width:34px;text-align:center}th:nth-child(2),td:nth-child(2){width:78px}th:nth-child(3),td:nth-child(3){width:112px}th:nth-child(4),td:nth-child(4){width:88px}th:nth-child(5),td:nth-child(5){width:52px}th:nth-child(6),td:nth-child(6){width:105px}th:nth-child(7),td:nth-child(7){width:62px}th:nth-child(8),td:nth-child(8){width:130px}.photo-denied{font-weight:900;color:#b42318}.footer{margin-top:10px;font-size:9pt;color:#5d6775}@media print{body{margin:0}}</style></head><body><h1>실제 출석자 명단</h1><div class="meta"><div><strong>교육</strong> ${escapeHtml(course.title || "교육")}</div><div><strong>운영 단체</strong> ${escapeHtml(organization?.name || "모두의 인문학")}</div><div><strong>일시</strong> ${escapeHtml(formatDateTime(course.starts_at))}</div><div><strong>장소</strong> ${escapeHtml([venue?.name, venue?.address, venue?.detail].filter(Boolean).join(" · ") || "장소 미정")}</div><div><strong>출력 시각(KST)</strong> ${escapeHtml(formatDateTime(generatedAt))}</div><div><strong>실제 체크인</strong> ${rows.length.toLocaleString("ko-KR")}명</div></div><p class="notice"><strong>관리자 전용 개인정보 문서</strong>입니다. QR 체크인이 완료된 실제 출석자만 표시하며, 사업 보고·출석 증빙 목적 범위에서 안전하게 보관하고 불필요한 복사·공유를 피해주세요.</p><table><thead><tr><th>번호</th><th>이름</th><th>휴대전화번호</th><th>생년월일</th><th>성별</th><th>참여 경로</th><th>사진 촬영·이용</th><th>체크인 시각·방법</th></tr></thead><tbody>${rows.map((record) => `<tr><td>${record.index}</td><td>${escapeHtml(record.participant_name || "미입력")}</td><td>${escapeHtml(record.phone ? formatMobilePhone(record.phone) : "삭제됨")}</td><td>${escapeHtml(record.birth_date || "미입력")}</td><td>${escapeHtml(checkinGenderLabel(record.gender))}</td><td>${escapeHtml(checkinParticipationRouteLabel(record))}</td><td class="${record.photo_consent_status === "DENIED" ? "photo-denied" : ""}">${escapeHtml(checkinPhotoConsentLabel(record.photo_consent_status))}</td><td>${escapeHtml(formatDateTime(record.checked_in_at))}<br>${escapeHtml(courseCheckinMethodLabel(record.checkin_method))}</td></tr>`).join("") || '<tr><td colspan="8">실제 체크인 기록이 없습니다.</td></tr>'}</tbody></table><p class="footer">신청자 명단이나 빈 서명 칸은 포함하지 않습니다. 이 명단은 시스템에 실제 체크인 시각이 기록된 사람만 가나다순으로 표시합니다.</p><script>window.onload=()=>window.print()<\/script></body></html>`);
+  popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${escapeHtml(course.title || "교육")} 실제 출석자 명단</title><style>@page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;color:#172033;margin:0;font-size:9.5pt;word-break:keep-all;overflow-wrap:break-word}h1{font-size:19pt;margin:0 0 8px}.meta{display:grid;grid-template-columns:1fr 1fr;gap:4px 18px;margin:0 0 10px;font-size:10pt}table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:9pt}thead{display:table-header-group}tr{break-inside:avoid}th,td{border:1px solid #444;padding:5px 4px;text-align:left;vertical-align:middle}th{background:#f1f3f5;text-align:center}th:first-child,td:first-child{width:34px;text-align:center}th:nth-child(2),td:nth-child(2){width:78px}th:nth-child(3),td:nth-child(3){width:112px}th:nth-child(4),td:nth-child(4){width:88px}th:nth-child(5),td:nth-child(5){width:52px}th:nth-child(6),td:nth-child(6){width:105px}th:nth-child(7),td:nth-child(7){width:62px}th:nth-child(8),td:nth-child(8){width:130px}.photo-denied{font-weight:900;color:#b42318}.footer{margin-top:10px;font-size:9pt;color:#5d6775}@media print{body{margin:0}}</style></head><body><h1>실제 출석자 명단</h1><div class="meta"><div><strong>교육</strong> ${escapeHtml(course.title || "교육")}</div><div><strong>운영 단체</strong> ${escapeHtml(organization?.name || "모두의 인문학")}</div><div><strong>일시</strong> ${escapeHtml(formatDateTime(course.starts_at))}</div><div><strong>장소</strong> ${escapeHtml([venue?.name, venue?.address, venue?.detail].filter(Boolean).join(" · ") || "장소 미정")}</div><div><strong>출력 시각(KST)</strong> ${escapeHtml(formatDateTime(generatedAt))}</div><div><strong>실제 출석</strong> ${rows.length.toLocaleString("ko-KR")}명</div></div><table><thead><tr><th>번호</th><th>이름</th><th>휴대전화번호</th><th>생년월일</th><th>성별</th><th>참여 경로</th><th>사진 촬영·이용</th><th>체크인 시각·방법</th></tr></thead><tbody>${rows.map((record) => `<tr><td>${record.index}</td><td>${escapeHtml(record.participant_name || "미입력")}</td><td>${escapeHtml(record.phone ? formatMobilePhone(record.phone) : "삭제됨")}</td><td>${escapeHtml(record.birth_date || "미입력")}</td><td>${escapeHtml(checkinGenderLabel(record.gender))}</td><td>${escapeHtml(checkinParticipationRouteLabel(record))}</td><td class="${record.photo_consent_status === "DENIED" ? "photo-denied" : ""}">${escapeHtml(checkinPhotoConsentLabel(record.photo_consent_status))}</td><td>${escapeHtml(formatDateTime(record.checked_in_at))}<br>${escapeHtml(courseCheckinMethodLabel(record.checkin_method))}</td></tr>`).join("") || '<tr><td colspan="8">실제 출석 기록이 없습니다.</td></tr>'}</tbody></table><p class="footer">신청자 명단이나 빈 서명 칸은 포함하지 않습니다. 이 명단은 시스템에 실제 출석 시각이 기록된 사람만 가나다순으로 표시합니다.</p><script>window.onload=()=>window.print()<\/script></body></html>`);
   popup.document.close();
 }
 
@@ -4704,12 +4733,12 @@ function courseCheckinAdminHtml(course, result) {
       ` : '<p class="muted">설정을 한 번 저장하면 익명 피드백용 256비트 난수 QR 주소가 생성됩니다.</p>'}
     </section>
     <section class="section" style="margin-top: 16px;">
-      <div class="section-heading"><div><h3>온라인 체크인 ${records.length.toLocaleString()}명</h3><p class="muted">실제 체크인한 사람의 출석자 명단을 출력할 수 있습니다.</p></div><button class="btn small secondary" type="button" data-print-electronic-attendance ${records.length ? "" : "disabled"}>실제 출석자 명단 출력</button></div>
+      <div class="section-heading"><div><h3>실제 출석 ${records.length.toLocaleString()}명</h3><p class="muted">QR 체크인과 관리자 누락 등록을 합친 실제 출석자 명단을 출력할 수 있습니다.</p></div><button class="btn small secondary" type="button" data-print-electronic-attendance ${records.length ? "" : "disabled"}>실제 출석자 명단 출력</button></div>
       ${records.length ? `<div class="admin-list">${records.map((record) => `
         <div class="admin-row">
           <div><strong>${escapeHtml(record.participant_name)}</strong><p>${escapeHtml(record.phone || "번호 삭제됨")} · ${escapeHtml(formatDateTime(record.checked_in_at))}</p></div>
           <div class="badge-row"><span class="badge">${escapeHtml(courseCheckinMethodLabel(record.checkin_method))}</span>${record.photo_consent_status === "GRANTED" ? '<span class="badge green">사진 동의</span>' : record.photo_consent_status === "DENIED" ? '<span class="badge red">사진 거부</span>' : '<span class="badge gray">사진 미확인</span>'}${record.record_status === "REVIEW" ? '<span class="badge red">이름 확인 필요</span>' : ""}</div>
-        </div>`).join("")}</div>` : '<p class="muted">아직 온라인 체크인 기록이 없습니다.</p>'}
+        </div>`).join("")}</div>` : '<p class="muted">아직 실제 출석 기록이 없습니다.</p>'}
     </section>
   `;
 }
@@ -5353,7 +5382,7 @@ function renderAttendanceManagement() {
   const deniedCount = records.filter((record) => record.photo_consent_status === "DENIED").length;
   elements.adminContent.innerHTML = `
     <h2>출석 관리</h2>
-    <p class="muted">교육 시작 시각부터 실제 QR 체크인 완료자를 확인하고 제출용 명단을 출력할 수 있습니다. 신청만 하고 참석하지 않은 사람, 취소 신청자와 빈칸은 포함하지 않습니다.</p>
+    <p class="muted">교육 시작 시각부터 QR 체크인 완료자와 관리자가 추가한 누락 참석자를 확인하고 제출용 명단을 출력할 수 있습니다. 신청만 하고 참석하지 않은 사람, 취소 신청자와 빈칸은 포함하지 않습니다.</p>
     <div class="section" style="margin: 12px 0 14px;">
       <h3>시작한 교육 찾기</h3>
       ${renderCourseFilterControl("attendance", management.courseId, { emptyLabel: "출석을 확인할 교육을 선택해 주세요." })}
@@ -5371,7 +5400,52 @@ function renderAttendanceManagement() {
             <button class="btn small" type="button" data-print-actual-attendance ${records.length ? "" : "disabled"}>실제 출석자 명단 출력</button>
           </div>
         </div>
-        <p class="muted">명단에는 성명, 전체 휴대전화번호, 생년월일, 성별, 참여 경로, 사진 촬영·이용 동의 상태, 체크인 시각과 방법이 표시됩니다. UUID·내부 상태값은 출력하지 않습니다.</p>
+        <details class="privacy-details" style="margin: 14px 0;">
+          <summary>누락 참석자 추가</summary>
+          <p class="muted">현장에서 실제 참석했지만 QR 기록에서 빠진 사람만 등록합니다. 같은 교육의 같은 이름·전화번호는 중복 저장하지 않습니다.</p>
+          <form data-admin-attendance-form>
+            <input type="hidden" name="course_id" value="${escapeHtml(course.id)}">
+            <div class="admin-grid">
+              <label>이름<input name="participant_name" maxlength="80" autocomplete="off" required></label>
+              <label>휴대전화번호<input name="phone" type="tel" maxlength="13" inputmode="numeric" placeholder="010-0000-0000" autocomplete="off" required></label>
+              <label>성별
+                <select name="gender" required>
+                  <option value="">선택해 주세요</option>
+                  <option value="male">남</option>
+                  <option value="female">여</option>
+                  <option value="other">기타</option>
+                </select>
+              </label>
+              <label>생년월일
+                <input name="birth_date" type="text" maxlength="10" inputmode="numeric" placeholder="예: 1980-05-12" autocomplete="off" required>
+                <small>숫자 8자리를 입력하면 하이픈이 자동으로 들어갑니다.</small>
+              </label>
+              <label>참여 경로
+                <select name="participation_route" required>
+                  <option value="">선택해 주세요</option>
+                  <option value="website">홈페이지</option>
+                  <option value="sns">SNS</option>
+                  <option value="facility_board">시설 게시판</option>
+                  <option value="acquaintance">지인</option>
+                  <option value="other">기타</option>
+                </select>
+              </label>
+              <label class="hidden" data-admin-attendance-route-other>기타 참여 경로<input name="participation_route_other" maxlength="80" autocomplete="off"></label>
+            </div>
+            <fieldset class="qr-photo-consent" style="margin-top: 12px;">
+              <legend>사진 촬영·이용 확인</legend>
+              <div class="actions">
+                <label class="check-row"><input name="photo_consent_status" type="radio" value="GRANTED" required><span>동의</span></label>
+                <label class="check-row"><input name="photo_consent_status" type="radio" value="DENIED" required><span>거부</span></label>
+              </div>
+            </fieldset>
+            <label class="check-row"><input name="age_confirmed" type="checkbox" required><span>참여자가 만 14세 이상임을 확인했습니다.</span></label>
+            <label class="check-row"><input name="privacy_confirmed" type="checkbox" required><span>참여자에게 이름·휴대전화번호·실제 출석 기록의 수집과 교육 종료일부터 5년간 출석 증빙 보관 동의를 확인했습니다.</span></label>
+            <label class="check-row"><input name="attendance_info_confirmed" type="checkbox" required><span>성별·생년월일·참여 경로와 사진 촬영·이용 동의 또는 거부 상태를 참여자에게 직접 확인했습니다.</span></label>
+            <div class="actions" style="margin-top: 12px;"><button class="btn small" type="submit">누락 참석자 등록</button></div>
+          </form>
+        </details>
+        <p class="muted">명단에는 성명, 전체 휴대전화번호, 생년월일, 성별, 참여 경로, 사진 촬영·이용 동의 상태, 출석 시각과 방법이 표시됩니다. UUID·내부 상태값은 출력하지 않습니다.</p>
         ${records.length ? `<div class="admin-list">${records.map((record) => `
           <div class="admin-row">
             <div>
@@ -5383,9 +5457,55 @@ function renderAttendanceManagement() {
               <span class="badge">${escapeHtml(courseCheckinMethodLabel(record.checkin_method))}</span>
               <span class="badge ${record.photo_consent_status === "DENIED" ? "red" : record.photo_consent_status === "GRANTED" ? "green" : "gray"}">사진 ${escapeHtml(checkinPhotoConsentLabel(record.photo_consent_status))}</span>
             </div>
-          </div>`).join("")}</div>` : '<div class="empty">이 교육의 실제 QR 체크인 기록이 없습니다.</div>'}
+          </div>`).join("")}</div>` : '<div class="empty">이 교육의 실제 출석 기록이 없습니다.</div>'}
       </section>`}
   `;
+}
+
+async function recordAdminAttendance(event) {
+  event.preventDefault();
+  const form = getSubmitForm(event);
+  if (!form) return;
+  const formData = new FormData(form);
+  const courseId = String(formData.get("course_id") || "");
+  const course = courseById(courseId);
+  const participantName = String(formData.get("participant_name") || "").trim();
+  const phone = formatMobilePhone(formData.get("phone"));
+  const birthDate = String(formData.get("birth_date") || "").trim();
+  const participationRoute = String(formData.get("participation_route") || "");
+  const participationRouteOther = participationRoute === "other"
+    ? String(formData.get("participation_route_other") || "").trim()
+    : "";
+
+  if (!course || !canManageCourseAttendance(course)) throw new Error("교육 시작 시각부터 누락 참석자를 추가할 수 있습니다.");
+  if (!participantName) throw new Error("참석자 이름을 입력해 주세요.");
+  if (!isValidMobilePhone(phone)) throw new Error("010으로 시작하는 휴대전화번호 11자리를 입력해 주세요.");
+  if (!validAttendanceBirthDate(birthDate)) throw new Error("생년월일은 1900년 이후의 실제 날짜로 입력해 주세요. 참여자는 만 14세 이상이어야 합니다.");
+  if (!participationRoute) throw new Error("참여 경로를 선택해 주세요.");
+  if (participationRoute === "other" && !participationRouteOther) throw new Error("기타 참여 경로를 입력해 주세요.");
+  if (!formData.get("photo_consent_status")) throw new Error("사진 촬영·이용 동의 또는 거부를 확인해 주세요.");
+  if (formData.get("age_confirmed") !== "on" || formData.get("privacy_confirmed") !== "on" || formData.get("attendance_info_confirmed") !== "on") {
+    throw new Error("참여자에게 확인한 출석·개인정보 항목을 모두 체크해 주세요.");
+  }
+
+  const result = await invokeCourseCheckinAdmin("admin_record_attendance", courseId, {
+    participant_name: participantName,
+    phone,
+    gender: String(formData.get("gender") || ""),
+    birth_date: birthDate,
+    participation_route: participationRoute,
+    participation_route_other: participationRouteOther,
+    photo_consent_status: String(formData.get("photo_consent_status") || ""),
+    age_confirmed: true,
+    privacy_confirmed: true,
+    attendance_info_confirmed: true,
+  });
+  const duplicated = result.status === "ALREADY_RECORDED";
+  if (!duplicated) form.reset();
+  await loadAttendanceManagement(courseId);
+  showToast(duplicated
+    ? "이미 등록된 실제 출석자라 중복 추가하지 않았습니다."
+    : "누락 참석자를 실제 출석 명단에 등록했습니다.");
 }
 
 function feedbackOptionCounts(feedbacks, property, labels) {
@@ -8128,6 +8248,16 @@ function bindEvents() {
       guestWalkInPhone.value = formatMobilePhone(guestWalkInPhone.value);
       return;
     }
+    const adminAttendancePhone = event.target.closest("[data-admin-attendance-form] input[name='phone']");
+    if (adminAttendancePhone) {
+      adminAttendancePhone.value = formatMobilePhone(adminAttendancePhone.value);
+      return;
+    }
+    const adminAttendanceBirthDate = event.target.closest("[data-admin-attendance-form] input[name='birth_date']");
+    if (adminAttendanceBirthDate) {
+      adminAttendanceBirthDate.value = formatAttendanceBirthDate(adminAttendanceBirthDate.value);
+      return;
+    }
     if (event.target.matches("[data-dashboard-stat-search]")) {
       const kind = event.target.dataset.dashboardStatSearch;
       state.dashboardStatsSearch[kind] = event.target.value;
@@ -8199,6 +8329,18 @@ function bindEvents() {
     }
   });
   document.body.addEventListener("change", (event) => {
+    if (event.target.matches("[data-admin-attendance-form] select[name='participation_route']")) {
+      const form = event.target.closest("[data-admin-attendance-form]");
+      const otherField = form?.querySelector("[data-admin-attendance-route-other]");
+      const otherInput = otherField?.querySelector("input[name='participation_route_other']");
+      const isOther = event.target.value === "other";
+      otherField?.classList.toggle("hidden", !isOther);
+      if (otherInput) {
+        otherInput.required = isOther;
+        if (!isOther) otherInput.value = "";
+      }
+      return;
+    }
     if (event.target instanceof Element && event.target.closest("#organizationForm, #instructorForm, #venueForm, #courseForm, #archiveForm")) {
       captureVisibleAdminFormDraft();
     }
@@ -8239,6 +8381,7 @@ function bindEvents() {
     else if (event.target.matches("[data-admin-roundtable-consent-form]")) handler = saveAdminRoundtableConsent;
     else if (event.target.matches("[data-roundtable-sms-form]")) handler = queueRoundtableSms;
     else if (event.target.matches("[data-attendance-document-form]")) handler = saveAttendanceDocument;
+    else if (event.target.matches("[data-admin-attendance-form]")) handler = recordAdminAttendance;
     else if (event.target.matches("[data-walk-in-search-form]")) handler = searchWalkInCandidates;
     else if (event.target.matches("[data-guest-walk-in-form]")) handler = addGuestWalkInAttendee;
     else if (event.target.matches("[data-sms-test-form]")) handler = handleSmsTestSubmit;
