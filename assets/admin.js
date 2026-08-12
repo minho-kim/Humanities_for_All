@@ -35,6 +35,12 @@ const state = {
     courseId: "",
     applicantQuery: "",
   },
+  attendanceManagement: {
+    courseId: "",
+    records: [],
+    loading: false,
+    error: "",
+  },
   activeApplicationId: "",
   expectationFilters: {
     courseId: "",
@@ -422,7 +428,7 @@ function managedOrganizationIds() {
 
 function canAccessAdminTab(tab) {
   if (isOwner()) return true;
-  return ["dashboard", "organizations", "venues", "courses", "notifications", "applications", "expectations", "archive", "feedback", "reviews", "reports"].includes(tab);
+  return ["dashboard", "organizations", "venues", "courses", "notifications", "applications", "attendance", "expectations", "archive", "feedback", "reviews", "reports"].includes(tab);
 }
 
 function updateAdminNavigationVisibility() {
@@ -2059,6 +2065,7 @@ function courseResultHtml(course, selectedId = "") {
 function courseFilterTargetLabel(target) {
   return {
     application: "신청 관리 교육",
+    attendance: "출석 관리 교육",
     expectation: "기대평·문의 교육",
     feedback: "교육 피드백",
     archive: "아카이브 교육",
@@ -2068,6 +2075,7 @@ function courseFilterTargetLabel(target) {
 
 function currentCourseFilterSelectedId(target) {
   if (target === "application") return state.applicationFilters.courseId || "";
+  if (target === "attendance") return state.attendanceManagement.courseId || "";
   if (target === "expectation") return state.expectationFilters.courseId || "";
   if (target === "feedback") return state.feedbackFilters.courseId || "";
   if (target === "archive") return document.querySelector("#archiveForm input[name='course_id']")?.value || "";
@@ -2105,7 +2113,10 @@ function courseFilterResultsHtml(target) {
     return `<p class="muted">교육명, 부제, 알림 키워드, 단체, 강사, 장소, 상태 중 하나를 입력하면 검색 결과가 표시됩니다.</p>`;
   }
   const selectedId = currentCourseFilterSelectedId(target);
-  const results = searchItems(state.courses, query, courseSearchText, COURSE_PICKER_LIMIT);
+  const candidates = target === "attendance"
+    ? state.courses.filter((course) => effectiveCourseStatus(course) === "finished")
+    : state.courses;
+  const results = searchItems(candidates, query, courseSearchText, COURSE_PICKER_LIMIT);
   return `
     <div class="admin-search-results">
       ${results.map((course) => courseFilterResultHtml(target, course, selectedId)).join("") || `<div class="empty">검색어에 맞는 교육이 없습니다.</div>`}
@@ -2182,6 +2193,15 @@ function setCourseFilterSelection(target, courseId = "") {
     state.feedbackFilters.courseId = courseId;
     closeModal(elements.adminNoticeModal);
     renderFeedbacks();
+    return;
+  }
+  if (target === "attendance") {
+    state.attendanceManagement.courseId = courseId;
+    state.attendanceManagement.records = [];
+    state.attendanceManagement.error = "";
+    closeModal(elements.adminNoticeModal);
+    renderAttendanceManagement();
+    if (courseId) loadAttendanceManagement(courseId);
     return;
   }
   if (target === "archive") {
@@ -4562,26 +4582,46 @@ function courseCheckinMethodLabel(method) {
   }[String(method || "")] || "온라인 체크인";
 }
 
-async function attendanceLedgerHash(courseId, record) {
-  const source = `${courseId}|${record.id}|${record.checked_in_at}|${record.checkin_method}`;
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(source));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 16);
+function checkinGenderLabel(value) {
+  return { male: "남", female: "여", other: "기타" }[String(value || "")] || "미입력";
+}
+
+function checkinParticipationRouteLabel(record) {
+  const route = {
+    website: "홈페이지",
+    sns: "SNS",
+    facility_board: "시설 게시판",
+    acquaintance: "지인",
+    other: "기타",
+  }[String(record?.participation_route || "")] || "미입력";
+  const other = String(record?.participation_route_other || "").trim();
+  return route === "기타" && other ? `기타 · ${other}` : route;
+}
+
+function checkinPhotoConsentLabel(value) {
+  if (value === "GRANTED") return "동의";
+  if (value === "DENIED") return "거부";
+  return "미확인";
+}
+
+function actualAttendanceRecords(records = []) {
+  return records
+    .filter((record) => record?.record_status !== "ANONYMIZED" && record?.checked_in_at)
+    .slice()
+    .sort((a, b) => rosterNameSorter.compare(String(a.participant_name || ""), String(b.participant_name || ""))
+      || new Date(a.checked_in_at || 0).getTime() - new Date(b.checked_in_at || 0).getTime());
 }
 
 async function printElectronicAttendanceReport(course, records) {
   const popup = window.open("", "humanities-electronic-attendance-report", "width=980,height=980");
   if (!popup) throw new Error("인쇄 창이 차단되었습니다. 팝업을 허용해 주세요.");
-  popup.document.write("<!doctype html><html lang='ko'><meta charset='utf-8'><body>전자 출석확인서를 준비하고 있습니다.</body></html>");
+  popup.document.write("<!doctype html><html lang='ko'><meta charset='utf-8'><body>실제 출석자 명단을 준비하고 있습니다.</body></html>");
   const venue = courseVenueForDisplay(course);
   const organization = organizationById(course.organization_id);
   const generatedAt = new Date().toISOString();
-  const rows = await Promise.all(records.map(async (record, index) => ({
-    index: index + 1,
-    ...record,
-    ledger_hash: await attendanceLedgerHash(course.id, record),
-  })));
+  const rows = actualAttendanceRecords(records).map((record, index) => ({ index: index + 1, ...record }));
   popup.document.open();
-  popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${escapeHtml(course.title || "교육")} 전자 출석확인서</title><style>@page{size:A4 landscape;margin:12mm}*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;color:#172033;margin:0;font-size:11pt;word-break:keep-all;overflow-wrap:break-word}h1{font-size:20pt;margin:0 0 8px}.meta{display:grid;grid-template-columns:1fr 1fr;gap:4px 18px;margin:0 0 16px;font-size:11pt}.notice{font-size:11pt;color:#5d6775;margin:10px 0 14px}table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:11pt}thead{display:table-header-group}tr{break-inside:avoid}th,td{border:1px solid #444;padding:7px 6px;text-align:left;vertical-align:top}th{background:#f1f3f5}th:first-child,td:first-child{width:42px;text-align:center}th:nth-child(2),td:nth-child(2){width:110px}th:nth-child(3),td:nth-child(3){width:85px}th:nth-child(4),td:nth-child(4){width:155px}th:nth-child(5),td:nth-child(5){width:135px}.footer{margin-top:14px;font-size:11pt;color:#5d6775}@media print{body{margin:0}}</style></head><body><h1>전자 출석확인서</h1><div class="meta"><div><strong>교육</strong> ${escapeHtml(course.title || "교육")}</div><div><strong>운영 단체</strong> ${escapeHtml(organization?.name || "모두의 인문학")}</div><div><strong>일시</strong> ${escapeHtml(formatDateTime(course.starts_at))}</div><div><strong>장소</strong> ${escapeHtml([venue?.name, venue?.address, venue?.detail].filter(Boolean).join(" · ") || "장소 미정")}</div><div><strong>출력 시각(KST)</strong> ${escapeHtml(formatDateTime(generatedAt))}</div><div><strong>온라인 출석</strong> ${rows.length.toLocaleString("ko-KR")}명</div></div><p class="notice">이 문서는 로그인 또는 QR 본인확인으로 생성된 온라인 출석 원장을 출력한 ‘전자 출석확인서’입니다. 종이 서명 출석은 별도 스캔본에서 확인합니다.</p><table><thead><tr><th>번호</th><th>이름</th><th>전화 끝자리</th><th>확인 방법</th><th>체크인(KST)</th><th>원장 ID / 검증값</th><th>연동 상태</th></tr></thead><tbody>${rows.map((record) => `<tr><td>${record.index}</td><td>${escapeHtml(record.participant_name || "익명 참여자")}</td><td>${escapeHtml(record.phone_last4 || "삭제됨")}</td><td>${escapeHtml(courseCheckinMethodLabel(record.checkin_method))}</td><td>${escapeHtml(formatDateTime(record.checked_in_at))}</td><td>${escapeHtml(record.id)}<br>${escapeHtml(record.ledger_hash)}</td><td>${record.partner_code ? "협동조합 원장 연동" : "모두의 인문학 원장"}</td></tr>`).join("") || '<tr><td colspan="7">온라인 출석 기록이 없습니다.</td></tr>'}</tbody></table><p class="footer">원장 검증값은 교육·출석 ID·체크인 시각·확인 방법을 SHA-256으로 계산한 앞 16자리입니다. 원장 수정 여부를 대조하는 보조값이며 공인전자서명을 의미하지 않습니다.</p><script>window.onload=()=>window.print()<\/script></body></html>`);
+  popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${escapeHtml(course.title || "교육")} 실제 출석자 명단</title><style>@page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;color:#172033;margin:0;font-size:9.5pt;word-break:keep-all;overflow-wrap:break-word}h1{font-size:19pt;margin:0 0 8px}.meta{display:grid;grid-template-columns:1fr 1fr;gap:4px 18px;margin:0 0 10px;font-size:10pt}.notice{padding:7px 9px;border:1px solid #9ca3af;background:#f8fafc;font-size:9pt;color:#4b5563;margin:8px 0 10px}table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:9pt}thead{display:table-header-group}tr{break-inside:avoid}th,td{border:1px solid #444;padding:5px 4px;text-align:left;vertical-align:middle}th{background:#f1f3f5;text-align:center}th:first-child,td:first-child{width:34px;text-align:center}th:nth-child(2),td:nth-child(2){width:78px}th:nth-child(3),td:nth-child(3){width:112px}th:nth-child(4),td:nth-child(4){width:88px}th:nth-child(5),td:nth-child(5){width:52px}th:nth-child(6),td:nth-child(6){width:105px}th:nth-child(7),td:nth-child(7){width:62px}th:nth-child(8),td:nth-child(8){width:130px}.photo-denied{font-weight:900;color:#b42318}.footer{margin-top:10px;font-size:9pt;color:#5d6775}@media print{body{margin:0}}</style></head><body><h1>실제 출석자 명단</h1><div class="meta"><div><strong>교육</strong> ${escapeHtml(course.title || "교육")}</div><div><strong>운영 단체</strong> ${escapeHtml(organization?.name || "모두의 인문학")}</div><div><strong>일시</strong> ${escapeHtml(formatDateTime(course.starts_at))}</div><div><strong>장소</strong> ${escapeHtml([venue?.name, venue?.address, venue?.detail].filter(Boolean).join(" · ") || "장소 미정")}</div><div><strong>출력 시각(KST)</strong> ${escapeHtml(formatDateTime(generatedAt))}</div><div><strong>실제 체크인</strong> ${rows.length.toLocaleString("ko-KR")}명</div></div><p class="notice"><strong>관리자 전용 개인정보 문서</strong>입니다. QR 체크인이 완료된 실제 출석자만 표시하며, 사업 보고·출석 증빙 목적 범위에서 안전하게 보관하고 불필요한 복사·공유를 피해주세요.</p><table><thead><tr><th>번호</th><th>이름</th><th>휴대전화번호</th><th>생년월일</th><th>성별</th><th>참여 경로</th><th>사진 촬영·이용</th><th>체크인 시각·방법</th></tr></thead><tbody>${rows.map((record) => `<tr><td>${record.index}</td><td>${escapeHtml(record.participant_name || "미입력")}</td><td>${escapeHtml(record.phone ? formatMobilePhone(record.phone) : "삭제됨")}</td><td>${escapeHtml(record.birth_date || "미입력")}</td><td>${escapeHtml(checkinGenderLabel(record.gender))}</td><td>${escapeHtml(checkinParticipationRouteLabel(record))}</td><td class="${record.photo_consent_status === "DENIED" ? "photo-denied" : ""}">${escapeHtml(checkinPhotoConsentLabel(record.photo_consent_status))}</td><td>${escapeHtml(formatDateTime(record.checked_in_at))}<br>${escapeHtml(courseCheckinMethodLabel(record.checkin_method))}</td></tr>`).join("") || '<tr><td colspan="8">실제 체크인 기록이 없습니다.</td></tr>'}</tbody></table><p class="footer">신청자 명단이나 빈 서명 칸은 포함하지 않습니다. 이 명단은 시스템에 실제 체크인 시각이 기록된 사람만 가나다순으로 표시합니다.</p><script>window.onload=()=>window.print()<\/script></body></html>`);
   popup.document.close();
 }
 
@@ -4649,7 +4689,7 @@ function courseCheckinAdminHtml(course, result) {
       ` : '<p class="muted">설정을 한 번 저장하면 익명 피드백용 256비트 난수 QR 주소가 생성됩니다.</p>'}
     </section>
     <section class="section" style="margin-top: 16px;">
-      <div class="section-heading"><div><h3>온라인 체크인 ${records.length.toLocaleString()}명</h3><p class="muted">로그인·QR 체크인 원장을 전자 출석확인서로 출력할 수 있습니다.</p></div><button class="btn small secondary" type="button" data-print-electronic-attendance ${records.length ? "" : "disabled"}>전자 출석확인서 출력</button></div>
+      <div class="section-heading"><div><h3>온라인 체크인 ${records.length.toLocaleString()}명</h3><p class="muted">실제 체크인한 사람의 출석자 명단을 출력할 수 있습니다.</p></div><button class="btn small secondary" type="button" data-print-electronic-attendance ${records.length ? "" : "disabled"}>실제 출석자 명단 출력</button></div>
       ${records.length ? `<div class="admin-list">${records.map((record) => `
         <div class="admin-row">
           <div><strong>${escapeHtml(record.participant_name)}</strong><p>${escapeHtml(record.phone || "번호 삭제됨")} · ${escapeHtml(formatDateTime(record.checked_in_at))}</p></div>
@@ -5263,6 +5303,76 @@ function filteredFeedbacks() {
   ));
 }
 
+async function loadAttendanceManagement(courseId) {
+  const course = courseById(courseId);
+  if (!course || effectiveCourseStatus(course) !== "finished") {
+    state.attendanceManagement.records = [];
+    state.attendanceManagement.loading = false;
+    state.attendanceManagement.error = "교육이 종료된 뒤 실제 출석자 명단을 확인할 수 있습니다.";
+    renderAttendanceManagement();
+    return;
+  }
+  state.attendanceManagement.loading = true;
+  state.attendanceManagement.error = "";
+  renderAttendanceManagement();
+  try {
+    const result = await invokeCourseCheckinAdmin("admin_get", courseId);
+    if (state.attendanceManagement.courseId !== courseId) return;
+    state.attendanceManagement.records = actualAttendanceRecords(result.records || []);
+  } catch (error) {
+    if (state.attendanceManagement.courseId !== courseId) return;
+    state.attendanceManagement.records = [];
+    state.attendanceManagement.error = error.message || "출석 정보를 불러오지 못했습니다.";
+  } finally {
+    if (state.attendanceManagement.courseId === courseId) {
+      state.attendanceManagement.loading = false;
+      renderAttendanceManagement();
+    }
+  }
+}
+
+function renderAttendanceManagement() {
+  const management = state.attendanceManagement;
+  const course = courseById(management.courseId);
+  const records = actualAttendanceRecords(management.records);
+  const deniedCount = records.filter((record) => record.photo_consent_status === "DENIED").length;
+  elements.adminContent.innerHTML = `
+    <h2>출석 관리</h2>
+    <p class="muted">종료된 교육의 실제 QR 체크인 완료자만 확인하고 제출용 명단을 출력합니다. 신청만 하고 참석하지 않은 사람, 취소 신청자와 빈칸은 포함하지 않습니다.</p>
+    <div class="section" style="margin: 12px 0 14px;">
+      <h3>종료 교육 찾기</h3>
+      ${renderCourseFilterControl("attendance", management.courseId, { emptyLabel: "출석을 확인할 종료 교육을 선택해 주세요." })}
+    </div>
+    ${!course ? '<div class="empty">교육을 검색해 선택하면 실제 출석자 정보와 출력 버튼이 표시됩니다.</div>' : management.loading ? '<div class="empty">실제 출석 정보를 불러오는 중입니다.</div>' : management.error ? `<div class="empty">${escapeHtml(management.error)}</div>` : `
+      <section class="section">
+        <div class="section-heading">
+          <div>
+            <h3>${escapeHtml(course.title || "교육")}</h3>
+            <p class="muted">${escapeHtml(formatDateTime(course.starts_at))} · ${escapeHtml(organizationById(course.organization_id)?.name || "단체 미정")}</p>
+          </div>
+          <div class="actions">
+            <span class="badge green">실제 출석 ${records.length.toLocaleString("ko-KR")}명</span>
+            ${deniedCount ? `<span class="badge red">사진 거부 ${deniedCount.toLocaleString("ko-KR")}명</span>` : ""}
+            <button class="btn small" type="button" data-print-actual-attendance ${records.length ? "" : "disabled"}>실제 출석자 명단 출력</button>
+          </div>
+        </div>
+        <p class="muted">명단에는 성명, 전체 휴대전화번호, 생년월일, 성별, 참여 경로, 사진 촬영·이용 동의 상태, 체크인 시각과 방법이 표시됩니다. UUID·내부 상태값은 출력하지 않습니다.</p>
+        ${records.length ? `<div class="admin-list">${records.map((record) => `
+          <div class="admin-row">
+            <div>
+              <strong>${escapeHtml(record.participant_name || "미입력")}</strong>
+              <p>${escapeHtml(record.phone ? formatMobilePhone(record.phone) : "번호 삭제됨")} · ${escapeHtml(record.birth_date || "생년월일 미입력")} · ${escapeHtml(checkinGenderLabel(record.gender))}</p>
+              <p>${escapeHtml(checkinParticipationRouteLabel(record))} · ${escapeHtml(formatDateTime(record.checked_in_at))}</p>
+            </div>
+            <div class="badge-row">
+              <span class="badge">${escapeHtml(courseCheckinMethodLabel(record.checkin_method))}</span>
+              <span class="badge ${record.photo_consent_status === "DENIED" ? "red" : record.photo_consent_status === "GRANTED" ? "green" : "gray"}">사진 ${escapeHtml(checkinPhotoConsentLabel(record.photo_consent_status))}</span>
+            </div>
+          </div>`).join("")}</div>` : '<div class="empty">이 교육의 실제 QR 체크인 기록이 없습니다.</div>'}
+      </section>`}
+  `;
+}
+
 function feedbackOptionCounts(feedbacks, property, labels) {
   const counts = new Map(Object.keys(labels).map((value) => [value, 0]));
   feedbacks.forEach((feedback) => {
@@ -5291,17 +5401,22 @@ function feedbackResponseTagsHtml(values, labels) {
 function renderFeedbackResponse(feedback) {
   const isAnonymousQr = feedback.submission_mode === "anonymous_qr";
   return `
-    <div class="table-row">
-      <div class="row-top">
-        <strong>${escapeHtml(courseName(feedback.course_id))}</strong>
-        <span class="badge-row"><span class="badge ${isAnonymousQr ? "gray" : "green"}">${isAnonymousQr ? "익명 QR" : "이전 참석 연계 방식"}</span><span class="badge green">${escapeHtml(feedbackRatingLabel(feedback.rating))}</span></span>
+    <details class="admin-accordion">
+      <summary>
+        <span class="admin-accordion-heading">
+          <strong>${escapeHtml(courseName(feedback.course_id))}</strong>
+          <small>제출 ${escapeHtml(formatDateTime(feedback.created_at))}${isAnonymousQr ? " · 익명 QR" : " · 이전 참석 연계 방식"}</small>
+        </span>
+        <span class="badge green">${escapeHtml(feedbackRatingLabel(feedback.rating))}</span>
+      </summary>
+      <div class="admin-accordion-body">
+        <p class="muted">${isAnonymousQr ? "수정 불가 · 식별정보 미수집" : "신청자 식별정보 비표시"}</p>
+        <p><strong>좋았던 점</strong><br>${feedbackResponseTagsHtml(feedback.strengths, FEEDBACK_STRENGTH_LABELS)}</p>
+        <p><strong>개선되었으면 하는 점</strong><br>${feedbackResponseTagsHtml(feedback.improvements, FEEDBACK_IMPROVEMENT_LABELS)}</p>
+        ${feedback.comment ? `<p><strong>운영진에게 전한 의견</strong><br>${escapeHtml(feedback.comment)}</p>` : `<p class="muted">자유 의견 없음</p>`}
+        ${isAnonymousQr ? `<div class="actions"><button class="btn small danger" type="button" data-delete-anonymous-feedback="${escapeHtml(feedback.id)}" data-course-id="${escapeHtml(feedback.course_id)}">응답 삭제</button></div>` : ""}
       </div>
-      <p class="muted">제출 ${escapeHtml(formatDateTime(feedback.created_at))}${isAnonymousQr ? " · 수정 불가 · 식별정보 미수집" : " · 신청자 식별정보 비표시"}</p>
-      <p><strong>좋았던 점</strong><br>${feedbackResponseTagsHtml(feedback.strengths, FEEDBACK_STRENGTH_LABELS)}</p>
-      <p><strong>개선되었으면 하는 점</strong><br>${feedbackResponseTagsHtml(feedback.improvements, FEEDBACK_IMPROVEMENT_LABELS)}</p>
-      ${feedback.comment ? `<p><strong>운영진에게 전한 의견</strong><br>${escapeHtml(feedback.comment)}</p>` : `<p class="muted">자유 의견 없음</p>`}
-      ${isAnonymousQr ? `<div class="actions"><button class="btn small danger" type="button" data-delete-anonymous-feedback="${escapeHtml(feedback.id)}" data-course-id="${escapeHtml(feedback.course_id)}">응답 삭제</button></div>` : ""}
-    </div>
+    </details>
   `;
 }
 
@@ -5316,6 +5431,7 @@ function renderFeedbacks() {
   const positiveRate = feedbacks.length ? positiveCount / feedbacks.length : null;
   const strengthCounts = feedbackOptionCounts(feedbacks, "strengths", FEEDBACK_STRENGTH_LABELS);
   const improvementCounts = feedbackOptionCounts(feedbacks, "improvements", FEEDBACK_IMPROVEMENT_LABELS);
+  const comments = feedbacks.filter((feedback) => String(feedback.comment || "").trim());
 
   elements.adminContent.innerHTML = `
     <h2>교육 피드백 관리</h2>
@@ -5341,8 +5457,17 @@ function renderFeedbacks() {
         ${feedbackSummaryTagsHtml(improvementCounts, "아직 선택된 항목이 없습니다.")}
       </section>
     </div>
+    <section class="section" style="margin-bottom: 16px;">
+      <h3>자유 의견 ${comments.length.toLocaleString("ko-KR")}건</h3>
+      <p class="muted">운영진에게 전한 자유 의견만 먼저 모아 봅니다.</p>
+      ${comments.length ? `<div class="table-list">${comments.map((feedback) => `
+        <div class="table-row">
+          <div class="row-top"><strong>${escapeHtml(courseName(feedback.course_id))}</strong><span class="badge gray">${escapeHtml(formatDateTime(feedback.created_at))}</span></div>
+          <p>${escapeHtml(feedback.comment)}</p>
+        </div>`).join("")}</div>` : '<div class="empty">작성된 자유 의견이 없습니다.</div>'}
+    </section>
     <h3>개별 응답</h3>
-    <div class="table-list">
+    <div>
       ${feedbacks.map(renderFeedbackResponse).join("") || `<div class="empty">아직 교육 피드백이 없습니다.</div>`}
     </div>
   `;
@@ -5640,6 +5765,7 @@ function render() {
   else if (state.tab === "courses") renderCourses();
   else if (state.tab === "notifications") renderNotificationManagement();
   else if (state.tab === "applications") renderApplications();
+  else if (state.tab === "attendance") renderAttendanceManagement();
   else if (state.tab === "expectations") renderExpectations();
   else if (state.tab === "archive") renderArchive();
   else if (state.tab === "feedback") renderFeedbacks();
@@ -7015,6 +7141,7 @@ async function reload() {
     state.sessions = [];
     state.archives = [];
     state.applications = [];
+    state.attendanceManagement = { courseId: "", records: [], loading: false, error: "" };
     state.attendanceDocuments = [];
     state.reviews = [];
     state.feedbacks = [];
@@ -7037,6 +7164,9 @@ async function reload() {
   }
   await syncCourseStatuses();
   await loadAdminData();
+  if (state.tab === "attendance" && state.attendanceManagement.courseId) {
+    await loadAttendanceManagement(state.attendanceManagement.courseId);
+  }
 }
 
 function bindEvents() {
@@ -7074,6 +7204,7 @@ function bindEvents() {
     const attendanceButton = event.target.closest("[data-confirm-attendance]");
     const unconfirmAttendanceButton = event.target.closest("[data-unconfirm-attendance]");
     const rosterButton = event.target.closest("[data-print-roster]");
+    const printActualAttendanceButton = event.target.closest("[data-print-actual-attendance]");
     const addWalkInButton = event.target.closest("[data-add-walk-in-attendee]");
     const attendanceDocumentButton = event.target.closest("[data-open-attendance-document]");
     const editArchiveButton = event.target.closest("[data-edit-archive]");
@@ -7680,6 +7811,22 @@ function bindEvents() {
     if (rosterButton) {
       event.preventDefault();
       await printApplicationRoster(rosterButton.dataset.printRoster);
+      return;
+    }
+    if (printActualAttendanceButton) {
+      const course = courseById(state.attendanceManagement.courseId);
+      if (!course || effectiveCourseStatus(course) !== "finished") {
+        showToast("종료된 교육을 다시 선택해 주세요.");
+        return;
+      }
+      try {
+        printActualAttendanceButton.disabled = true;
+        await printElectronicAttendanceReport(course, state.attendanceManagement.records);
+      } catch (error) {
+        showToast(error.message || "실제 출석자 명단을 만들지 못했습니다.");
+      } finally {
+        if (printActualAttendanceButton.isConnected) printActualAttendanceButton.disabled = false;
+      }
       return;
     }
     if (addWalkInButton) {
