@@ -667,6 +667,35 @@ function getSubmitForm(event) {
   return event.target instanceof HTMLFormElement ? event.target : null;
 }
 
+const activeFormSubmissions = new WeakSet();
+
+async function submitFormOnce(event, handler) {
+  event.preventDefault();
+  const form = getSubmitForm(event);
+  if (!form || activeFormSubmissions.has(form)) return;
+
+  activeFormSubmissions.add(form);
+  form.setAttribute("aria-busy", "true");
+  const submitControls = [...form.querySelectorAll('button:not([type]), button[type="submit"], input[type="submit"], input[type="image"]')];
+  const disabledStates = submitControls.map((control) => control.disabled);
+
+  try {
+    const pending = handler(event);
+    submitControls.forEach((control) => {
+      control.disabled = true;
+    });
+    return await pending;
+  } finally {
+    activeFormSubmissions.delete(form);
+    if (form.isConnected) {
+      form.removeAttribute("aria-busy");
+      submitControls.forEach((control, index) => {
+        control.disabled = disabledStates[index];
+      });
+    }
+  }
+}
+
 async function withTimeoutResult(promise, timeoutMs, fallback) {
   let timeoutId;
   try {
@@ -6271,26 +6300,36 @@ function bindEvents() {
     if (form) capturePublicFormDraft(form);
   });
 
-  document.body.addEventListener("submit", (event) => {
-    if (event.target.id === "qrCheckinForm") return handleQrCheckinSubmit(event);
-    if (event.target.id === "anonymousFeedbackForm") return handleAnonymousFeedbackSubmit(event);
-    if (event.target.id === "applicationForm") return handleApplicationSubmit(event);
-    if (event.target.id === "guestReviewAccessForm") return handleGuestReviewAccessSubmit(event);
-    if (event.target.id === "demographicsForm") return handleDemographicsSubmit(event);
-    if (event.target.id === "coopDemographicConflictForm") {
-      event.preventDefault();
-      const fields = [...new FormData(event.target).getAll("use_partner_fields")].map(String);
-      return resolveCoopDemographicConflicts(event.target, fields);
+  document.body.addEventListener("submit", async (event) => {
+    let handler = null;
+    if (event.target.id === "qrCheckinForm") handler = handleQrCheckinSubmit;
+    else if (event.target.id === "anonymousFeedbackForm") handler = handleAnonymousFeedbackSubmit;
+    else if (event.target.id === "applicationForm") handler = handleApplicationSubmit;
+    else if (event.target.id === "guestReviewAccessForm") handler = handleGuestReviewAccessSubmit;
+    else if (event.target.id === "demographicsForm") handler = handleDemographicsSubmit;
+    else if (event.target.id === "coopDemographicConflictForm") {
+      handler = (submitEvent) => {
+        const form = getSubmitForm(submitEvent);
+        const fields = [...new FormData(form).getAll("use_partner_fields")].map(String);
+        return resolveCoopDemographicConflicts(form, fields);
+      };
+    } else if (event.target.id === "interestNotificationsForm") handler = handleInterestNotificationsSubmit;
+    else if (event.target.matches("[data-course-notification-form]")) handler = handleCourseNotificationPreferencesSubmit;
+    else if (event.target.matches("[data-guest-course-notification-form]")) handler = handleGuestCourseNotificationPreferencesSubmit;
+    else if (event.target.matches("[data-roundtable-consent-form]")) handler = handleRoundtableConsentSubmit;
+    else if (event.target.matches("[data-guest-roundtable-consent-form]")) handler = handleGuestRoundtableConsentSubmit;
+    else if (event.target.matches("[data-application-note-form]")) handler = handleApplicationNoteSubmit;
+    else if (event.target.id === "courseFeedbackForm") handler = handleCourseFeedbackSubmit;
+    else if (event.target.id === "reviewForm") handler = handleReviewSubmit;
+    else if (event.target.id === "reportForm") handler = handleReportSubmit;
+    if (!handler) return;
+
+    try {
+      return await submitFormOnce(event, handler);
+    } catch (error) {
+      console.error("Form submission failed", error);
+      showToast(error?.message || "요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.");
     }
-    if (event.target.id === "interestNotificationsForm") return handleInterestNotificationsSubmit(event);
-    if (event.target.matches("[data-course-notification-form]")) return handleCourseNotificationPreferencesSubmit(event);
-    if (event.target.matches("[data-guest-course-notification-form]")) return handleGuestCourseNotificationPreferencesSubmit(event);
-    if (event.target.matches("[data-roundtable-consent-form]")) return handleRoundtableConsentSubmit(event);
-    if (event.target.matches("[data-guest-roundtable-consent-form]")) return handleGuestRoundtableConsentSubmit(event);
-    if (event.target.matches("[data-application-note-form]")) return handleApplicationNoteSubmit(event);
-    if (event.target.id === "courseFeedbackForm") return handleCourseFeedbackSubmit(event);
-    if (event.target.id === "reviewForm") return handleReviewSubmit(event);
-    if (event.target.id === "reportForm") return handleReportSubmit(event);
   });
 
   document.querySelectorAll(".modal").forEach((modal) => {

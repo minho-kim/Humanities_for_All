@@ -1830,12 +1830,64 @@ async function uploadArchiveFile(file, courseId, baseName) {
   return { publicUrl: data.publicUrl, path, archiveType: fileRule.type };
 }
 
-async function removeUploadedArchiveFile(path, { strict = false } = {}) {
+async function fileSha256Hex(file) {
+  if (!globalThis.crypto?.subtle || typeof file?.arrayBuffer !== "function") {
+    throw new Error("이 브라우저에서는 파일 중복 확인을 지원하지 않습니다. 최신 브라우저에서 다시 시도해 주세요.");
+  }
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+async function findDuplicateCourseFile(courseId, contentSha256, excludeArchiveId = "") {
+  if (!courseId || !contentSha256) return null;
+  let query = supabase
+    .from("course_archives")
+    .select("id,title,url,content_sha256")
+    .eq("course_id", courseId)
+    .eq("type", "file");
+  if (excludeArchiveId) query = query.neq("id", excludeArchiveId);
+  const { data, error } = await query;
+  if (error) throw error;
+
+  for (const archive of data || []) {
+    if (archive.content_sha256 === contentSha256) return archive;
+    if (archive.content_sha256) continue;
+
+    const legacyUrl = normalizeSafeUrl(archive.url, URL_RULES.archive);
+    if (!legacyUrl) throw new Error("기존 교육 자료의 중복 여부를 확인할 수 없습니다. 자료를 확인한 뒤 다시 시도해 주세요.");
+    const response = await fetch(legacyUrl, { cache: "no-store" });
+    if (!response.ok) throw new Error("기존 교육 자료의 중복 여부를 확인할 수 없습니다. 자료를 확인한 뒤 다시 시도해 주세요.");
+    const legacySha256 = await fileSha256Hex(await response.blob());
+    const { error: backfillError } = await supabase
+      .from("course_archives")
+      .update({ content_sha256: legacySha256 })
+      .eq("id", archive.id)
+      .is("content_sha256", null);
+    if (backfillError) console.warn("[모두의 인문학] 기존 교육 자료 지문 보완 실패", backfillError);
+    if (legacySha256 === contentSha256) return archive;
+  }
+  return null;
+}
+
+function duplicateCourseFileMessage(duplicate = null) {
+  const title = String(duplicate?.title || "").trim();
+  return title
+    ? `같은 교육 자료가 이미 등록되어 있습니다: ${title}`
+    : "같은 교육 자료가 이미 등록되어 있어 파일을 추가하지 않았습니다.";
+}
+
+async function removeUploadedArchiveFile(path, { strict = false, attempts = 3 } = {}) {
   if (!path) return;
-  const { error } = await supabase.storage.from(ARCHIVE_BUCKET).remove([path]);
-  if (error) {
-    console.warn("[모두의 인문학] 아카이브 파일 삭제 실패", error);
-    if (strict) throw error;
+  let lastError = null;
+  for (let attempt = 1; attempt <= Math.max(1, attempts); attempt += 1) {
+    const { error } = await supabase.storage.from(ARCHIVE_BUCKET).remove([path]);
+    if (!error) return;
+    lastError = error;
+    if (attempt < attempts) await wait(180 * attempt);
+  }
+  console.warn("[모두의 인문학] 아카이브 파일 삭제 실패", lastError);
+  if (strict) {
+    throw new Error("서버 파일을 삭제하지 못해 DB 기록도 유지했습니다. 잠시 후 다시 시도해 주세요.");
   }
 }
 
@@ -2726,6 +2778,35 @@ function courseDeleteSummary(courseId) {
 
 function getSubmitForm(event) {
   return event.target instanceof HTMLFormElement ? event.target : null;
+}
+
+const activeFormSubmissions = new WeakSet();
+
+async function submitFormOnce(event, handler) {
+  event.preventDefault();
+  const form = getSubmitForm(event);
+  if (!form || activeFormSubmissions.has(form)) return;
+
+  activeFormSubmissions.add(form);
+  form.setAttribute("aria-busy", "true");
+  const submitControls = [...form.querySelectorAll('button:not([type]), button[type="submit"], input[type="submit"], input[type="image"]')];
+  const disabledStates = submitControls.map((control) => control.disabled);
+
+  try {
+    const pending = handler(event);
+    submitControls.forEach((control) => {
+      control.disabled = true;
+    });
+    return await pending;
+  } finally {
+    activeFormSubmissions.delete(form);
+    if (form.isConnected) {
+      form.removeAttribute("aria-busy");
+      submitControls.forEach((control, index) => {
+        control.disabled = disabledStates[index];
+      });
+    }
+  }
 }
 
 function wait(ms) {
@@ -6001,6 +6082,15 @@ async function saveCourse(event) {
   const notificationPlan = courseChangeNotificationPlan(existingCourse, payload);
   if (requireChangeNotificationConfirmation(form, notificationPlan)) return;
 
+  const courseFile = formData.get("course_file");
+  const courseFileTitle = hasSelectedFile(courseFile)
+    ? String(formData.get("course_file_title") || "").trim() || `${payload.title} 교육 자료`
+    : "";
+  const courseFileSha256 = hasSelectedFile(courseFile) ? await fileSha256Hex(courseFile) : "";
+  let duplicateCourseFile = courseId && courseFileSha256
+    ? await findDuplicateCourseFile(courseId, courseFileSha256)
+    : null;
+
   let savedCourse;
   let linkedSeriesId = "";
   if (courseId) {
@@ -6046,22 +6136,25 @@ async function saveCourse(event) {
     else await supabase.from("course_sessions").insert(sessionPayload);
   }
 
-  const courseFile = formData.get("course_file");
-  if (hasSelectedFile(courseFile)) {
-    const courseFileTitle = String(formData.get("course_file_title") || "").trim() || `${payload.title} 교육 자료`;
+  let courseFileAdded = false;
+  if (hasSelectedFile(courseFile) && !duplicateCourseFile) {
     const uploaded = await uploadArchiveFile(courseFile, savedCourse.id, courseFileTitle);
     const { error: archiveError } = await supabase.from("course_archives").insert({
       course_id: savedCourse.id,
       type: uploaded.archiveType,
       title: courseFileTitle,
       url: uploaded.publicUrl,
+      content_sha256: courseFileSha256,
       caption: "교육 관리에서 업로드한 자료입니다.",
       is_public: true,
       created_by: state.user.id,
     });
     if (archiveError) {
       await removeUploadedArchiveFile(uploaded.path);
-      throw archiveError;
+      if (archiveError.code === "23505") duplicateCourseFile = { title: courseFileTitle };
+      else throw archiveError;
+    } else {
+      courseFileAdded = true;
     }
   }
 
@@ -6069,8 +6162,13 @@ async function saveCourse(event) {
 
   const savedMessage = seriesPreviousCourseId ? "교육을 저장하고 연강으로 연결했습니다." : "교육을 저장했습니다.";
   const notificationMessage = notificationPlan ? " 신청자 변경 안내 메일·문자도 등록했습니다." : "";
+  const fileMessage = courseFileAdded
+    ? `${savedMessage} 자료도 등록했습니다.`
+    : duplicateCourseFile
+      ? `${savedMessage} ${duplicateCourseFileMessage(duplicateCourseFile)}`
+      : savedMessage;
   clearAdminFormDraft(form);
-  showToast(`${hasSelectedFile(formData.get("course_file")) ? `${savedMessage} 자료도 등록했습니다.` : savedMessage}${notificationMessage}`);
+  showToast(`${fileMessage}${notificationMessage}`);
   await reload();
   state.tab = "courses";
   clearCourseTemplateDraft();
@@ -6298,9 +6396,9 @@ async function deleteArchiveRowsAndFiles(rows) {
   if (!rows.length) return;
   const ids = rows.map((row) => row.id);
   const paths = [...new Set(rows.map((row) => archiveStoragePathFromUrl(row.url)).filter(Boolean))];
+  for (const path of paths) await removeUploadedArchiveFile(path, { strict: true });
   const { error } = await supabase.from("course_archives").delete().in("id", ids);
-  if (error) throw error;
-  for (const path of paths) await removeUploadedArchiveFile(path);
+  if (error) throw new Error("서버 파일은 삭제했지만 DB 기록 삭제에 실패했습니다. 같은 삭제를 다시 실행해 주세요.");
 }
 
 async function saveArchive(event) {
@@ -6370,11 +6468,20 @@ async function saveArchive(event) {
     } else {
       const primary = existingGroup?.items?.[0] || null;
       let url = "";
+      let fileSha256 = "";
       if (["video", "link"].includes(archiveType)) {
         url = requireSafeUrl(formData.get("url"), "외부 URL", URL_RULES.archive);
       } else if (archiveType === "file") {
         const pendingFile = pendingFiles.find((item) => item.archiveType === "file");
-        if (pendingFile) uploadedFiles.push(await uploadArchiveFile(pendingFile.file, courseId, title));
+        if (pendingFile) {
+          fileSha256 = await fileSha256Hex(pendingFile.file);
+          const duplicate = await findDuplicateCourseFile(courseId, fileSha256, primary?.id || "");
+          if (duplicate) {
+            showToast(duplicateCourseFileMessage(duplicate));
+            return;
+          }
+          uploadedFiles.push(await uploadArchiveFile(pendingFile.file, courseId, title));
+        }
         url = uploadedFiles[0]?.publicUrl || normalizeSafeUrl(primary?.url, URL_RULES.archive);
       }
       if (!url) {
@@ -6387,6 +6494,7 @@ async function saveArchive(event) {
         type: archiveType,
         title,
         url,
+        content_sha256: archiveType === "file" ? fileSha256 || primary?.content_sha256 || null : null,
         caption,
         is_public: true,
         sort_order: 0,
@@ -6406,6 +6514,7 @@ async function saveArchive(event) {
     }
   } catch (error) {
     if (!insertedRowsSaved) await Promise.all(uploadedFiles.map((uploaded) => removeUploadedArchiveFile(uploaded.path)));
+    if (error?.code === "23505") throw new Error("같은 교육 자료가 이미 등록되어 있어 파일을 추가하지 않았습니다.");
     throw error;
   }
 
@@ -7174,7 +7283,10 @@ function bindEvents() {
       return;
     }
     if (confirmChangeNotificationButton) {
+      if (confirmChangeNotificationButton.disabled) return;
       const form = document.getElementById(confirmChangeNotificationButton.dataset.confirmChangeNotification);
+      confirmChangeNotificationButton.disabled = true;
+      confirmChangeNotificationButton.textContent = "저장 준비 중...";
       closeModal(elements.adminNoticeModal);
       if (form instanceof HTMLFormElement) {
         form.dataset.changeNotificationConfirmed = "true";
@@ -7432,10 +7544,16 @@ function bindEvents() {
       return;
     }
     if (reviewButton) {
+      if (reviewButton.disabled) return;
+      const defaultLabel = reviewButton.textContent;
       try {
+        reviewButton.disabled = true;
+        reviewButton.textContent = "저장 중...";
         await updateReview(reviewButton.dataset.reviewId, reviewButton.dataset.reviewAction);
       } catch (error) {
         showToast(`후기 변경 실패: ${error.message}`);
+        reviewButton.disabled = false;
+        reviewButton.textContent = defaultLabel;
       }
       return;
     }
@@ -7947,22 +8065,26 @@ function bindEvents() {
   });
 
   document.body.addEventListener("submit", async (event) => {
+    let handler = null;
+    if (event.target.id === "organizationForm") handler = saveOrganization;
+    else if (event.target.id === "instructorForm") handler = saveInstructor;
+    else if (event.target.id === "venueForm") handler = saveVenue;
+    else if (event.target.id === "courseForm") handler = saveCourse;
+    else if (event.target.id === "archiveForm") handler = saveArchive;
+    else if (event.target.id === "organizationAdminForm") handler = inviteOrganizationAdmin;
+    else if (event.target.matches("[data-application-name-search-form]")) handler = applyApplicationNameSearch;
+    else if (event.target.matches("[data-admin-course-notification-form]")) handler = saveAdminCourseNotificationPreferences;
+    else if (event.target.matches("[data-admin-roundtable-consent-form]")) handler = saveAdminRoundtableConsent;
+    else if (event.target.matches("[data-roundtable-sms-form]")) handler = queueRoundtableSms;
+    else if (event.target.matches("[data-attendance-document-form]")) handler = saveAttendanceDocument;
+    else if (event.target.matches("[data-walk-in-search-form]")) handler = searchWalkInCandidates;
+    else if (event.target.matches("[data-guest-walk-in-form]")) handler = addGuestWalkInAttendee;
+    else if (event.target.matches("[data-sms-test-form]")) handler = handleSmsTestSubmit;
+    else if (event.target.id === "drawForm") handler = runDraw;
+    if (!handler) return;
+
     try {
-      if (event.target.id === "organizationForm") return await saveOrganization(event);
-      if (event.target.id === "instructorForm") return await saveInstructor(event);
-      if (event.target.id === "venueForm") return await saveVenue(event);
-      if (event.target.id === "courseForm") return await saveCourse(event);
-      if (event.target.id === "archiveForm") return await saveArchive(event);
-      if (event.target.id === "organizationAdminForm") return await inviteOrganizationAdmin(event);
-      if (event.target.matches("[data-application-name-search-form]")) return applyApplicationNameSearch(event);
-      if (event.target.matches("[data-admin-course-notification-form]")) return await saveAdminCourseNotificationPreferences(event);
-      if (event.target.matches("[data-admin-roundtable-consent-form]")) return await saveAdminRoundtableConsent(event);
-      if (event.target.matches("[data-roundtable-sms-form]")) return await queueRoundtableSms(event);
-      if (event.target.matches("[data-attendance-document-form]")) return await saveAttendanceDocument(event);
-      if (event.target.matches("[data-walk-in-search-form]")) return await searchWalkInCandidates(event);
-      if (event.target.matches("[data-guest-walk-in-form]")) return await addGuestWalkInAttendee(event);
-      if (event.target.matches("[data-sms-test-form]")) return await handleSmsTestSubmit(event);
-      if (event.target.id === "drawForm") return await runDraw(event);
+      return await submitFormOnce(event, handler);
     } catch (error) {
       showToast(`작업 실패: ${error.message}`);
     }
