@@ -222,7 +222,13 @@ let residenceSearchForm = null;
 let courseLoadObserver = null;
 let courseStatusRefreshTimer = null;
 let applicationClientIdFallback = "";
-let qrCheckinState = { token: "", context: null, partner: null, optionalHandoffToken: "" };
+let qrCheckinState = {
+  token: "",
+  context: null,
+  partner: null,
+  partnerPromise: null,
+  optionalHandoffToken: "",
+};
 let anonymousFeedbackState = { token: "", context: null, submitted: false };
 let authDialogMode = "login";
 
@@ -5857,9 +5863,30 @@ function showQrCheckinForm(forceManual = false) {
   window.setTimeout(() => elements.qrCheckinName?.focus(), 0);
 }
 
-function continueQrCheckinAfterEntry() {
+async function resolveQrCheckinPartner() {
+  if (qrCheckinState.partner) return qrCheckinState.partner;
+  if (!qrCheckinState.partnerPromise) {
+    qrCheckinState.partnerPromise = callPublicFunction(COOP_INTEGRATION_URL, COOP_PUBLISHABLE_KEY, {
+      action: "resolve",
+      humanities_course_id: qrCheckinState.context?.course_id,
+    })
+      .catch(() => ({ ok: true, linked: false }))
+      .then((partner) => {
+        qrCheckinState.partner = partner;
+        return partner;
+      });
+  }
+  return qrCheckinState.partnerPromise;
+}
+
+async function continueQrCheckinAfterEntry() {
   elements.qrCheckinEntry?.classList.add("hidden");
   elements.qrCheckinConsent?.classList.remove("hidden");
+  if (!qrCheckinState.partner) {
+    setQrCheckinStatus("연결된 교육 정보를 확인하고 있습니다.");
+    await resolveQrCheckinPartner();
+    setQrCheckinStatus("");
+  }
   if (qrCheckinState.partner?.linked) {
     prepareQrOptionalInfo();
     elements.qrCheckinPartnerChoices?.classList.remove("hidden");
@@ -5966,6 +5993,7 @@ async function initializeQrCheckin() {
     token,
     context: null,
     partner: null,
+    partnerPromise: null,
     optionalHandoffToken: /^[0-9a-f]{64}$/.test(optionalHandoffToken) ? optionalHandoffToken : "",
   };
   openModal(elements.qrCheckinModal);
@@ -6008,19 +6036,17 @@ async function initializeQrCheckin() {
       setQrCheckinStatus("체크인 시간이 종료되었습니다.", "warning");
       return;
     }
-    const partner = await callPublicFunction(COOP_INTEGRATION_URL, COOP_PUBLISHABLE_KEY, {
-      action: "resolve", humanities_course_id: context.course_id,
-    }).catch(() => ({ ok: true, linked: false }));
-    qrCheckinState.partner = partner;
     if (url.searchParams.get("partner_fallback") === "1") {
+      qrCheckinState.partner = { ok: true, linked: false };
       setQrCheckinStatus("조합원 정보를 찾을 수 없어 일반 체크인으로 전환됩니다.", "warning");
       if (qrCheckinState.optionalHandoffToken) showQrOptionalHandoffReady();
       showQrCheckinForm();
       return;
     }
+    void resolveQrCheckinPartner();
     setQrCheckinStatus("");
     if (!state.user) showQrCheckinEntry();
-    else continueQrCheckinAfterEntry();
+    else await continueQrCheckinAfterEntry();
   } catch (error) {
     setQrCheckinStatus(error?.message || "사용할 수 없는 체크인 QR입니다.", "danger");
   }
@@ -6449,18 +6475,28 @@ async function initialize() {
   applyRouteFromHash();
   bindEvents();
   setupCourseLoadMore();
-  await processInterestUnsubscribe(interestUnsubscribeToken);
-  await loadLandingData();
-  if (state.activePage !== "courses") {
-    await ensureFullDataLoaded({ waitForSupplementary: pageNeedsSupplementaryData(state.activePage) });
-  }
-  const supabase = await getSupabaseClient();
-  const sessionUser = await refreshSession(supabase);
+  const authenticationReady = (async () => {
+    const supabase = await getSupabaseClient();
+    const sessionUser = await refreshSession(supabase);
+    return { supabase, sessionUser };
+  })();
+  const pageDataReady = (async () => {
+    await processInterestUnsubscribe(interestUnsubscribeToken);
+    await loadLandingData();
+    if (state.activePage !== "courses") {
+      await ensureFullDataLoaded({ waitForSupplementary: pageNeedsSupplementaryData(state.activePage) });
+    }
+  })();
+  const qrCheckinReady = initializeQrCheckin();
+  const [{ supabase, sessionUser }] = await Promise.all([
+    authenticationReady,
+    pageDataReady,
+    qrCheckinReady,
+  ]);
   if (sessionUser) await Promise.all([loadApplicationState(supabase), loadCoopLinkState()]);
   startCourseStatusMonitor();
   await openRequestedCourseFromUrl();
   await initializeAnonymousFeedback();
-  await initializeQrCheckin();
   startAuthMonitor();
 }
 
