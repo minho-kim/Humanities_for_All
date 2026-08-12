@@ -202,15 +202,6 @@
       </div>
       <div id="qrCheckinMeta" class="qr-checkin-meta muted"></div>
       <div id="qrCheckinStatus" class="inline-message" role="status" aria-live="polite"></div>
-      <div id="qrCheckinEntry" class="qr-checkin-entry hidden">
-        <p><strong>체크인 방법을 선택해 주세요.</strong></p>
-        <div class="qr-checkin-entry-actions">
-          <button class="btn" type="button" id="qrCheckinLogin">로그인하고 체크인</button>
-          <button class="btn secondary" type="button" id="qrCheckinGuest">로그인 없이 체크인</button>
-        </div>
-        <button class="qr-checkin-signup" type="button" id="qrCheckinSignup">처음 이용하시나요? 회원가입</button>
-        <p class="muted small-copy">가입 후 교육을 신청하면 다음 체크인에서 저장된 신청자 정보를 사용할 수 있습니다. 조합원은 가입 후 나의 정보에서 조합원 정보를 연동할 수 있습니다.</p>
-      </div>
       <div id="qrCheckinConsent" class="qr-checkin-consent hidden">
         <label class="check-row"><input id="qrCheckinAge" type="checkbox"> <span>만 14세 이상입니다.</span></label>
         <label class="check-row"><input id="qrCheckinPrivacy" type="checkbox"> <span>이름·휴대전화번호·출석 기록 수집과 교육 종료일부터 5년간 출석 증빙 보관에 동의합니다. 연동 교육이면 공동운영 단체의 출석 확인 명단에도 같은 정보를 제공합니다.</span></label>
@@ -265,13 +256,8 @@
             </div>
           </fieldset>
         </div>
-        <p class="muted small-copy">성별·생년월일·참여 경로는 회차별 참여 통계와 출석부 기입 생략에 사용합니다. 로그인 이용자의 저장된 성별·생년월일은 다시 입력하지 않습니다.</p>
+        <p class="muted small-copy">성별·생년월일·참여 경로는 회차별 참여 통계와 출석부 기입 생략에 사용하며, 체크인할 때 직접 확인합니다.</p>
       </section>
-      <div id="qrCheckinAccount" class="qr-checkin-form hidden">
-        <p><strong id="qrCheckinAccountName">로그인 정보로 출석할 수 있습니다.</strong></p>
-        <p class="muted small-copy">저장된 교육 신청자 정보를 사용하므로 이름과 휴대전화번호를 다시 입력하지 않습니다.</p>
-        <button class="btn" id="qrCheckinAccountSubmit" type="button">로그인 정보로 출석 체크인</button>
-      </div>
       <form id="qrCheckinForm" class="qr-checkin-form hidden">
         <label>이름<input id="qrCheckinName" name="participant_name" maxlength="80" autocomplete="name" required></label>
         <label>휴대전화번호
@@ -299,6 +285,6 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <!-- public.js를 변경해 배포할 때 v 값도 함께 올려 기존 브라우저 캐시를 교체한다. -->
-  <script type="module" src="./assets/public.js?v=202608121930"></script>
+  <script type="module" src="./assets/public.js?v=202608121945"></script>
 </body>
 </html>

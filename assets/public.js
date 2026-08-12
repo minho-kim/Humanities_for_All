@@ -144,10 +144,6 @@ const elements = {
   qrCheckinTitle: document.getElementById("qrCheckinTitle"),
   qrCheckinMeta: document.getElementById("qrCheckinMeta"),
   qrCheckinStatus: document.getElementById("qrCheckinStatus"),
-  qrCheckinEntry: document.getElementById("qrCheckinEntry"),
-  qrCheckinLogin: document.getElementById("qrCheckinLogin"),
-  qrCheckinGuest: document.getElementById("qrCheckinGuest"),
-  qrCheckinSignup: document.getElementById("qrCheckinSignup"),
   qrCheckinConsent: document.getElementById("qrCheckinConsent"),
   qrCheckinAge: document.getElementById("qrCheckinAge"),
   qrCheckinPrivacy: document.getElementById("qrCheckinPrivacy"),
@@ -167,9 +163,6 @@ const elements = {
   qrCheckinParticipationRouteOther: document.getElementById("qrCheckinParticipationRouteOther"),
   qrCheckinPhotoConsentGranted: document.getElementById("qrCheckinPhotoConsentGranted"),
   qrCheckinPhotoConsentDenied: document.getElementById("qrCheckinPhotoConsentDenied"),
-  qrCheckinAccount: document.getElementById("qrCheckinAccount"),
-  qrCheckinAccountName: document.getElementById("qrCheckinAccountName"),
-  qrCheckinAccountSubmit: document.getElementById("qrCheckinAccountSubmit"),
   qrCheckinForm: document.getElementById("qrCheckinForm"),
   qrCheckinName: document.getElementById("qrCheckinName"),
   qrCheckinPhone: document.getElementById("qrCheckinPhone"),
@@ -5732,8 +5725,8 @@ function latestEligibleBirthDate() {
 
 function qrOptionalProfileState() {
   return {
-    genderRecorded: Boolean(state.user && state.demographics?.gender),
-    birthDateRecorded: Boolean(state.user && state.demographics?.birth_date),
+    genderRecorded: false,
+    birthDateRecorded: false,
   };
 }
 
@@ -5838,28 +5831,18 @@ async function createQrOptionalHandoff(optionalInfo) {
     qr_token: qrCheckinState.token,
     ...optionalInfo,
   };
-  const result = state.user
-    ? await callAuthenticatedCourseFunction(payload)
-    : await callPublicFunction(COURSE_CHECKIN_FUNCTION_URL, SUPABASE_PUBLISHABLE_KEY, payload);
+  const result = await callPublicFunction(COURSE_CHECKIN_FUNCTION_URL, SUPABASE_PUBLISHABLE_KEY, payload);
   const token = String(result?.optional_handoff_token || "").trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(token)) throw new Error("출석 정보 전달 확인값을 만들지 못했습니다.");
   return token;
 }
 
-function showQrCheckinForm(forceManual = false) {
-  elements.qrCheckinEntry?.classList.add("hidden");
+function showQrCheckinForm() {
   elements.qrCheckinConsent?.classList.remove("hidden");
   elements.qrCheckinPartnerChoices?.classList.add("hidden");
-  elements.qrCheckinAccount?.classList.add("hidden");
   elements.qrCheckinForm?.classList.add("hidden");
   if (qrCheckinState.optionalHandoffToken) showQrOptionalHandoffReady();
   else if (elements.qrCheckinOptional?.classList.contains("hidden")) prepareQrOptionalInfo();
-  if (state.user && !forceManual) {
-    if (elements.qrCheckinAccountName) elements.qrCheckinAccountName.textContent = `${getReviewAuthorName(state.user)}님 로그인 정보로 출석할 수 있습니다.`;
-    elements.qrCheckinAccount?.classList.remove("hidden");
-    window.setTimeout(() => elements.qrCheckinAccountSubmit?.focus(), 0);
-    return;
-  }
   elements.qrCheckinForm?.classList.remove("hidden");
   window.setTimeout(() => elements.qrCheckinName?.focus(), 0);
 }
@@ -5908,8 +5891,7 @@ function setQrCheckinPartnerBusy(busy) {
   if (elements.qrCheckinPartnerNo) elements.qrCheckinPartnerNo.disabled = busy;
 }
 
-async function continueQrCheckinAfterEntry() {
-  elements.qrCheckinEntry?.classList.add("hidden");
+async function continueQrCheckin() {
   elements.qrCheckinConsent?.classList.remove("hidden");
   if (!qrCheckinState.partner) {
     setQrCheckinStatus("연결된 교육 정보를 확인하고 있습니다.");
@@ -5925,16 +5907,6 @@ async function continueQrCheckinAfterEntry() {
   showQrCheckinForm();
 }
 
-function showQrCheckinEntry() {
-  elements.qrCheckinConsent?.classList.add("hidden");
-  elements.qrCheckinPartnerChoices?.classList.add("hidden");
-  elements.qrCheckinOptional?.classList.add("hidden");
-  elements.qrCheckinAccount?.classList.add("hidden");
-  elements.qrCheckinForm?.classList.add("hidden");
-  elements.qrCheckinEntry?.classList.remove("hidden");
-  window.setTimeout(() => elements.qrCheckinLogin?.focus(), 0);
-}
-
 function qrCheckinCompletionMessage(result) {
   const title = result.title || qrCheckinState.context?.title || "교육";
   const attendanceMessage = result.status === "ALREADY_RECORDED"
@@ -5943,38 +5915,6 @@ function qrCheckinCompletionMessage(result) {
   return result.optional_info_save_failed === true
     ? `${attendanceMessage} 다만 출석 부가정보는 저장되지 않았으니 담당자에게 확인해 주세요.`
     : attendanceMessage;
-}
-
-async function handleQrAuthenticatedCheckin() {
-  if (!qrCheckinConsentReady() || elements.qrCheckinAccountSubmit?.disabled) return;
-  const optionalInfo = qrOptionalPayload();
-  if (!optionalInfo) return;
-  elements.qrCheckinAccountSubmit.disabled = true;
-  setQrCheckinStatus("로그인 정보로 출석을 기록하는 중입니다.");
-  try {
-    const result = await callAuthenticatedCourseFunction({
-      action: "authenticated_checkin",
-      qr_token: qrCheckinState.token,
-      handoff_token: qrCheckinState.partner?.linked ? (qrCheckinState.partner?.handoff_token || null) : null,
-      age_confirmed: true,
-      privacy_consent: true,
-      terms_version: QR_CHECKIN_TERMS_VERSION,
-      ...optionalInfo,
-    });
-    elements.qrCheckinConsent?.classList.add("hidden");
-    elements.qrCheckinOptional?.classList.add("hidden");
-    elements.qrCheckinAccount?.classList.add("hidden");
-    setQrCheckinStatus(qrCheckinCompletionMessage(result), result.optional_info_save_failed ? "warning" : "success");
-  } catch (error) {
-    if (error?.code === "ACCOUNT_PROFILE_REQUIRED") {
-      setQrCheckinStatus("저장된 신청자 정보가 없어 이름과 휴대전화번호를 한 번 확인해 주세요.", "warning");
-      showQrCheckinForm(true);
-    } else {
-      setQrCheckinStatus(error?.message || "로그인 정보로 체크인을 완료하지 못했습니다.", "danger");
-    }
-  } finally {
-    if (elements.qrCheckinAccountSubmit) elements.qrCheckinAccountSubmit.disabled = false;
-  }
 }
 
 async function handleQrCheckinSubmit(event) {
@@ -6029,11 +5969,9 @@ async function initializeQrCheckin() {
   elements.qrCheckinTitle.textContent = "교육 확인 중";
   elements.qrCheckinMeta.textContent = "";
   elements.qrCheckinConsent.classList.add("hidden");
-  elements.qrCheckinEntry?.classList.add("hidden");
   elements.qrCheckinPartnerChoices.classList.add("hidden");
   setQrCheckinPartnerBusy(false);
   elements.qrCheckinOptional?.classList.add("hidden");
-  elements.qrCheckinAccount?.classList.add("hidden");
   elements.qrCheckinForm.classList.add("hidden");
   setQrCheckinStatus("QR 정보를 확인하고 있습니다.");
   try {
@@ -6075,8 +6013,7 @@ async function initializeQrCheckin() {
     }
     void resolveQrCheckinPartner();
     setQrCheckinStatus("");
-    if (!state.user) showQrCheckinEntry();
-    else await continueQrCheckinAfterEntry();
+    await continueQrCheckin();
   } catch (error) {
     setQrCheckinStatus(error?.message || "사용할 수 없는 체크인 QR입니다.", "danger");
   }
@@ -6438,9 +6375,6 @@ function bindEvents() {
   elements.googleLoginButton.addEventListener("click", handleGoogleLogin);
   elements.loginForm.addEventListener("submit", handleLogin);
   elements.logoutButton.addEventListener("click", handleLogout);
-  elements.qrCheckinLogin?.addEventListener("click", () => openAuthModal("login", elements.qrCheckinLogin));
-  elements.qrCheckinSignup?.addEventListener("click", () => openAuthModal("signup", elements.qrCheckinSignup));
-  elements.qrCheckinGuest?.addEventListener("click", continueQrCheckinAfterEntry);
   elements.qrCheckinPartnerYes?.addEventListener("click", async () => {
     if (!qrCheckinConsentReady()) return;
     const memberUrl = qrCheckinState.partner?.member_url;
@@ -6464,7 +6398,6 @@ function bindEvents() {
     if (!qrCheckinConsentReady()) return;
     showQrCheckinForm();
   });
-  elements.qrCheckinAccountSubmit?.addEventListener("click", handleQrAuthenticatedCheckin);
   elements.qrCheckinOptionalConsent?.addEventListener("change", () => {
     elements.qrCheckinOptionalFields?.classList.toggle("hidden", elements.qrCheckinOptionalConsent.checked !== true);
     if (elements.qrCheckinOptionalConsent.checked) {
