@@ -581,9 +581,21 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 .qr-phone-input { display: flex; align-items: stretch; margin-top: 7px; }
 .qr-phone-prefix { display: inline-flex; align-items: center; flex: 0 0 auto; min-height: 44px; padding: 0 12px; border: 1px solid var(--line); border-right: 0; border-radius: 0.7rem 0 0 0.7rem; background: var(--surface-soft); color: var(--ink); font-weight: 800; font-variant-numeric: tabular-nums; }
 .qr-phone-input input { flex: 1 1 auto; width: auto; min-width: 0; margin-top: 0; border-radius: 0 0.7rem 0.7rem 0; }
-.qr-checkin-partner { padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: #f7faff; }
+.qr-checkin-partner { padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface-soft); }
 .qr-checkin-partner p { margin: 0 0 12px; }
 .qr-checkin-partner .small-copy { margin: 12px 0 0; font-size: .86rem; }
+.qr-checkin-partner .actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.qr-checkin-partner .actions .btn { width: 100%; color: var(--ink); box-shadow: none; }
+.qr-checkin-partner.is-loading #qrCheckinPartnerYes::before {
+  width: 16px;
+  height: 16px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  content: "";
+  animation: qr-partner-spin .75s linear infinite;
+}
+@keyframes qr-partner-spin { to { transform: rotate(360deg); } }
 .qr-checkin-optional { padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface-soft); }
 .qr-checkin-optional h3, .qr-checkin-optional p { margin-top: 0; }
 .qr-checkin-optional .row-top { align-items: flex-start; margin-bottom: 12px; }
@@ -596,6 +608,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 
 @media (max-width: 640px) {
   .qr-checkin-entry-actions { grid-template-columns: 1fr; }
+  .qr-checkin-partner .actions { grid-template-columns: 1fr; }
   .qr-checkin-optional-fields { grid-template-columns: 1fr; }
   .qr-photo-consent-choices { grid-template-columns: 1fr; }
   #qrCheckinModal {
@@ -1606,6 +1619,12 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
   color: var(--brand);
 }
 
+:root[data-theme="dark"] .qr-checkin-partner .actions .btn.secondary {
+  border-color: var(--line);
+  background: var(--card);
+  color: var(--ink);
+}
+
 :root[data-theme="dark"] .page-tabs a.active,
 :root[data-theme="dark"] .toggle button.active,
 :root[data-theme="dark"] .admin-nav button.active,
@@ -1781,4 +1800,5 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 
 @media (prefers-reduced-motion: reduce) {
   .course-card { transition: none; }
+  .qr-checkin-partner.is-loading #qrCheckinPartnerYes::before { animation: none; }
 }

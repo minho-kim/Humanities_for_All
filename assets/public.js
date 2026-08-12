@@ -200,6 +200,7 @@ const QR_PHOTO_CONSENT_VERSION = "course-photo-v1-2026-08-11";
 const ANONYMOUS_FEEDBACK_NOTICE_VERSION = "2026-08-12-v2";
 const COURSE_CHECKIN_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/course-checkin`;
 const COOP_INTEGRATION_URL = "https://ifdqlwxgqgsvnawmhlfc.supabase.co/functions/v1/erp-humanities-integration";
+const COOP_MEMBER_ORIGIN = "https://www.yonginsolar.kr";
 const COOP_PUBLISHABLE_KEY = "sb_publishable_lkVhLJDe8WmOPzsWOMkKdg_pjVwVS-h";
 const GUEST_CONTACT_SESSION_KEY = "humanities-guest-contact";
 const GUEST_ACCESS_TOKEN_SESSION_KEY = "humanities-guest-access-tokens";
@@ -5873,10 +5874,38 @@ async function resolveQrCheckinPartner() {
       .catch(() => ({ ok: true, linked: false }))
       .then((partner) => {
         qrCheckinState.partner = partner;
+        warmQrCheckinPartnerOrigin(partner?.member_url);
         return partner;
       });
   }
   return qrCheckinState.partnerPromise;
+}
+
+function warmQrCheckinPartnerOrigin(memberUrl) {
+  try {
+    if (new URL(String(memberUrl || "")).origin !== COOP_MEMBER_ORIGIN) return;
+    if (document.head.querySelector(`link[rel="preconnect"][href="${COOP_MEMBER_ORIGIN}"]`)) return;
+    const link = document.createElement("link");
+    link.rel = "preconnect";
+    link.href = COOP_MEMBER_ORIGIN;
+    link.crossOrigin = "anonymous";
+    document.head.append(link);
+  } catch {
+    // 연결 대상은 허용된 협동조합 출처일 때만 미리 연결한다.
+  }
+}
+
+function setQrCheckinPartnerBusy(busy) {
+  if (!elements.qrCheckinPartnerChoices) return;
+  elements.qrCheckinPartnerChoices.classList.toggle("is-loading", busy);
+  elements.qrCheckinPartnerChoices.setAttribute("aria-busy", busy ? "true" : "false");
+  if (elements.qrCheckinPartnerYes) {
+    elements.qrCheckinPartnerYes.disabled = busy;
+    elements.qrCheckinPartnerYes.textContent = busy
+      ? "협동조합 화면 여는 중"
+      : "조합원 본인 확인으로 이동";
+  }
+  if (elements.qrCheckinPartnerNo) elements.qrCheckinPartnerNo.disabled = busy;
 }
 
 async function continueQrCheckinAfterEntry() {
@@ -6002,6 +6031,7 @@ async function initializeQrCheckin() {
   elements.qrCheckinConsent.classList.add("hidden");
   elements.qrCheckinEntry?.classList.add("hidden");
   elements.qrCheckinPartnerChoices.classList.add("hidden");
+  setQrCheckinPartnerBusy(false);
   elements.qrCheckinOptional?.classList.add("hidden");
   elements.qrCheckinAccount?.classList.add("hidden");
   elements.qrCheckinForm.classList.add("hidden");
@@ -6417,8 +6447,8 @@ function bindEvents() {
     if (!memberUrl) return showQrCheckinForm();
     const optionalInfo = qrOptionalPayload();
     if (!optionalInfo || elements.qrCheckinPartnerYes.disabled) return;
-    elements.qrCheckinPartnerYes.disabled = true;
-    setQrCheckinStatus("협동조합 확인 화면으로 안전하게 연결하는 중입니다.");
+    setQrCheckinPartnerBusy(true);
+    setQrCheckinStatus("입력 정보를 안전하게 준비한 뒤 협동조합 로그인 화면을 엽니다.");
     try {
       const optionalToken = await createQrOptionalHandoff(optionalInfo);
       const url = new URL(memberUrl);
@@ -6427,7 +6457,7 @@ function bindEvents() {
       window.location.href = url.toString();
     } catch (error) {
       setQrCheckinStatus(error?.message || "출석 정보를 안전하게 연결하지 못했습니다. 다시 시도하거나 일반 체크인을 이용해 주세요.", "warning");
-      elements.qrCheckinPartnerYes.disabled = false;
+      setQrCheckinPartnerBusy(false);
     }
   });
   elements.qrCheckinPartnerNo?.addEventListener("click", () => {
@@ -6456,6 +6486,14 @@ function bindEvents() {
     if (value.startsWith("010") && value.length > 8) value = value.slice(3);
     value = value.slice(0, 8);
     event.target.value = value.length <= 4 ? value : `${value.slice(0, 4)}-${value.slice(4)}`;
+  });
+  elements.qrCheckinBirthDate?.addEventListener("input", (event) => {
+    const digits = event.target.value.replace(/\D/g, "").slice(0, 8);
+    event.target.value = digits.length <= 4
+      ? digits
+      : digits.length <= 6
+        ? `${digits.slice(0, 4)}-${digits.slice(4)}`
+        : `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
   });
   window.addEventListener("message", handleResidenceSearchMessage);
   window.addEventListener("hashchange", async () => {
