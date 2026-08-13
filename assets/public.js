@@ -886,6 +886,27 @@ function applyLandingSummary(summary = {}) {
   populateFilters();
 }
 
+function applyLandingFilterOptions(dataByKey = new Map()) {
+  const organizations = (dataByKey.get("organizations") || [])
+    .filter((organization) => organization?.is_active !== false && organization?.name);
+  const courseRows = dataByKey.get("courses") || [];
+  const publishedInstructorIds = new Set(courseRows
+    .filter((course) => course?.published !== false && course?.instructor_id)
+    .map((course) => course.instructor_id));
+  const instructors = (dataByKey.get("instructors") || [])
+    .filter((instructor) => (
+      instructor?.is_active !== false
+      && instructor?.name
+      && (!courseRows.length || publishedInstructorIds.has(instructor.id))
+    ));
+
+  if (organizations.length) state.organizations = organizations;
+  if (instructors.length) state.instructors = instructors;
+  composeCourses();
+  state.landingCourses = state.composedCourses.filter((course) => course.status !== "finished");
+  populateFilters();
+}
+
 const APPLICATION_SIGNAL_MESSAGES = Object.freeze({
   none: Object.freeze({ summary: "지금 신청할 수 있어요.", callToAction: "함께해 보세요!" }),
   some: Object.freeze({ summary: "참여를 신청하신 분이 있어요.", callToAction: "함께해 보세요!" }),
@@ -1416,9 +1437,22 @@ function startCourseStatusMonitor() {
 async function loadLandingData() {
   if (state.activePage === "courses") elements.resultSummary.textContent = "교육 요약을 불러오는 중입니다.";
   else renderActivePageLoading();
-  const [summaryResult] = await Promise.all([
+  const [summaryResult, , filterDataByKey] = await Promise.all([
     fetchPublicRpc("get_public_landing_summary", { p_limit: 6 }, LANDING_SUMMARY_TIMEOUT_MS),
     loadApplicationSignals(),
+    resolveDataRequests([
+      ["organizations", loadPublicRows("organizations", {
+        select: "id,slug,name,is_active,sort_order",
+        order: "sort_order.asc",
+      })],
+      ["instructors", loadPublicRows("instructors", {
+        select: "id,name,title,is_active",
+        order: "name.asc",
+      })],
+      ["courses", loadPublicRows("courses", {
+        select: "instructor_id,published",
+      })],
+    ]),
   ]);
   const { data, error } = summaryResult;
   if (error) {
@@ -1438,13 +1472,14 @@ async function loadLandingData() {
     state.sessions = [];
     state.composedCourses = [];
     state.landingCourses = [];
-    populateFilters();
+    applyLandingFilterOptions(filterDataByKey);
     if (state.activePage === "courses") render();
     else renderActivePageLoading();
     return;
   }
 
   applyLandingSummary(data || {});
+  applyLandingFilterOptions(filterDataByKey);
   if (state.activePage === "courses") render();
   else renderActivePageLoading();
 }
@@ -1665,8 +1700,15 @@ async function loadApplicationState(supabase) {
 
 function populateFilters() {
   if (!state.fullDataLoaded) {
-    populateSelect(elements.orgFilter, "전체 단체", []);
-    elements.instructorFilter.innerHTML = `<option value="">전체 강사</option>`;
+    const orgNames = state.organizations
+      .filter((organization) => organization?.is_active !== false && organization?.name)
+      .map((organization) => organization.name);
+    const instructors = state.instructors
+      .filter((instructor) => instructor?.is_active !== false && instructor?.name)
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name, "ko"));
+    populateSelect(elements.orgFilter, "전체 단체", orgNames);
+    elements.instructorFilter.innerHTML = `<option value="">전체 강사</option>${instructors.map((instructor) => `<option value="${escapeHtml(instructor.id)}">${escapeHtml(instructor.name)}</option>`).join("")}`;
     elements.courseFilter.innerHTML = `<option value="">전체 강의</option>`;
     syncCourseFilterInputs();
     return;
