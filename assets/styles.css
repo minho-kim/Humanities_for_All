@@ -227,9 +227,12 @@ h1 {
 }
 
 .stat-link {
+  display: block;
   width: 100%;
   color: inherit;
   text-align: left;
+  text-decoration: none;
+  cursor: pointer;
   transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease;
 }
 
