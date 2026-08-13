@@ -2720,6 +2720,8 @@ function renderApplicationHistory() {
 
 function renderCourseNotificationPreferences(application) {
   if (!application || isCancelledApplication(application)) return "";
+  const course = courseById(application.course_id);
+  if (course && effectiveCourseStatus(course) === "finished") return "";
   const emailEnabled = application.email_course_notice_enabled !== false;
   const smsEnabled = application.sms_course_notice_enabled !== false;
   return `
@@ -3724,6 +3726,22 @@ function renderPostCourseResponseEditor(course) {
     `;
   }
 
+  const existingReview = currentReviewForCourse(course.id);
+  if (existingReview) {
+    return `
+      <div class="section post-course-response-section" style="grid-column: 1 / -1;">
+        ${renderMyInfoAccordion({
+          id: "publicReviewSection",
+          title: "내 공개 후기",
+          description: "이미 작성했습니다. 수정하거나 삭제하려면 펼쳐보세요.",
+          badge: "작성 완료",
+          badgeClass: "green",
+          content: renderReviewForm(course),
+        })}
+      </div>
+    `;
+  }
+
   return `
     <div class="section post-course-response-section" style="grid-column: 1 / -1;">
       <div class="post-course-response-grid single-response-card">
@@ -3825,6 +3843,7 @@ function applicationPrivacyConsentHtml({ guest = false, roundtableEnabled = fals
 
 function renderGuestCourseNotificationPreferences(course, access) {
   if (!course || !access || access.application_status === "cancelled") return "";
+  if (effectiveCourseStatus(course) === "finished") return "";
   const emailAvailable = access.email_available === true;
   const smsAvailable = access.sms_available === true;
   return `
@@ -6229,7 +6248,11 @@ function bindEvents() {
     }
     if (loginForReview) {
       const reviewForm = document.getElementById("reviewForm") || document.getElementById("guestReviewAccessForm");
-      if (reviewForm) reviewForm.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (reviewForm) {
+        const reviewAccordion = reviewForm.closest("details");
+        if (reviewAccordion) reviewAccordion.open = true;
+        reviewForm.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
       else openModal(elements.loginModal);
       return;
     }
