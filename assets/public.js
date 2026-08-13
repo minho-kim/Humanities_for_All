@@ -3409,11 +3409,13 @@ function buildHumanitiesBadges() {
     },
   };
 
-  return HUMANITIES_BADGE_DEFINITIONS.map((definition) => ({
+  return HUMANITIES_BADGE_DEFINITIONS
+    .filter((definition) => definition.id !== "series_finisher" || seriesProgress.total >= 2)
+    .map((definition) => ({
     ...definition,
     ...badgeState[definition.id],
     earned: Boolean(badgeState[definition.id]?.earnedAt),
-  }));
+    }));
 }
 
 function humanitiesBadgeDetailHtml(badge) {
@@ -3442,7 +3444,7 @@ function renderHumanitiesBadgeCollection() {
       <div class="row-top">
         <div>
           <h3 id="humanitiesBadgeTitle">나의 배지함</h3>
-          <p class="muted">출석·기대평·후기 기록으로 자동 계산됩니다. 다른 사람과 순위를 매기지 않으며 본인에게만 보입니다.</p>
+          <p class="muted">출석·기대평·후기 기록이 쌓이면 새로운 배지가 열립니다.</p>
         </div>
         <span class="badge green">${earnedBadges.length}/${badges.length} 획득</span>
       </div>
