@@ -3314,9 +3314,11 @@ function pendingReviewApplications() {
 
 const HUMANITIES_BADGE_DEFINITIONS = Object.freeze([
   Object.freeze({ id: "first_step", name: "첫걸음", icon: "🌱", color: "#2f855a", description: "모두의 인문학 교육에 처음 참석하면 획득합니다." }),
-  Object.freeze({ id: "learning_habit", name: "배움이 일상이 되다", icon: "📚", color: "#315ea8", description: "서로 다른 교육에 3회 참석하면 획득합니다." }),
+  Object.freeze({ id: "learning_habit", name: "배움의 단골", icon: "📚", color: "#315ea8", description: "서로 다른 교육에 5회 참석하면 획득합니다." }),
+  Object.freeze({ id: "ten_meetings", name: "열 번의 만남", icon: "🏅", color: "#b7791f", description: "서로 다른 교육에 10회 참석하면 획득합니다." }),
   Object.freeze({ id: "curious_mind", name: "질문하는 사람", icon: "❓", color: "#9a5b13", description: "교육 신청에서 기대평이나 질문을 처음 남기면 획득합니다." }),
   Object.freeze({ id: "thought_sharer", name: "생각을 나누는 사람", icon: "💬", color: "#8a3c72", description: "참석한 교육에 공개 후기를 처음 남기면 획득합니다." }),
+  Object.freeze({ id: "new_perspective", name: "새로운 시선", icon: "🔭", color: "#6b46c1", description: "서로 다른 강사 3명의 교육에 참석하면 획득합니다." }),
   Object.freeze({ id: "community_explorer", name: "동네를 잇는 배움", icon: "🧭", color: "#147d80", description: "서로 다른 주관 단체 3곳의 교육에 참석하면 획득합니다." }),
   Object.freeze({ id: "series_finisher", name: "함께 완주", icon: "🏁", color: "#805ad5", description: "두 강 이상으로 연결된 연강 하나를 모두 참석하면 획득합니다." }),
 ]);
@@ -3373,12 +3375,21 @@ function buildHumanitiesBadges() {
     .slice()
     .sort((a, b) => humanitiesBadgeTime(a.expectation_written_at || a.created_at) - humanitiesBadgeTime(b.expectation_written_at || b.created_at));
   const organizationIds = new Set();
+  const instructorIds = new Set();
   let thirdOrganizationAt = "";
+  let thirdInstructorAt = "";
   attendedApplications.forEach((application) => {
-    const organizationId = String(courseById(application.course_id)?.organization_id || "").trim();
-    if (!organizationId || organizationIds.has(organizationId)) return;
-    organizationIds.add(organizationId);
-    if (organizationIds.size === 3) thirdOrganizationAt = application.attendance_confirmed_at || "";
+    const course = courseById(application.course_id);
+    const organizationId = String(course?.organization_id || "").trim();
+    const instructorId = String(course?.instructor_id || "").trim();
+    if (organizationId && !organizationIds.has(organizationId)) {
+      organizationIds.add(organizationId);
+      if (organizationIds.size === 3) thirdOrganizationAt = application.attendance_confirmed_at || "";
+    }
+    if (instructorId && !instructorIds.has(instructorId)) {
+      instructorIds.add(instructorId);
+      if (instructorIds.size === 3) thirdInstructorAt = application.attendance_confirmed_at || "";
+    }
   });
   const seriesProgress = humanitiesBadgeSeriesProgress(attendedApplications);
 
@@ -3388,8 +3399,12 @@ function buildHumanitiesBadges() {
       progress: `${Math.min(attendedApplications.length, 1)}/1회 참석`,
     },
     learning_habit: {
-      earnedAt: humanitiesBadgeThresholdDate(attendedApplications, 3, "attendance_confirmed_at"),
-      progress: `${Math.min(attendedApplications.length, 3)}/3회 참석`,
+      earnedAt: humanitiesBadgeThresholdDate(attendedApplications, 5, "attendance_confirmed_at"),
+      progress: `${Math.min(attendedApplications.length, 5)}/5회 참석`,
+    },
+    ten_meetings: {
+      earnedAt: humanitiesBadgeThresholdDate(attendedApplications, 10, "attendance_confirmed_at"),
+      progress: `${Math.min(attendedApplications.length, 10)}/10회 참석`,
     },
     curious_mind: {
       earnedAt: writtenExpectations[0]?.expectation_written_at || writtenExpectations[0]?.created_at || "",
@@ -3398,6 +3413,10 @@ function buildHumanitiesBadges() {
     thought_sharer: {
       earnedAt: publicReviews[0]?.created_at || "",
       progress: `${Math.min(publicReviews.length, 1)}/1회 작성`,
+    },
+    new_perspective: {
+      earnedAt: thirdInstructorAt,
+      progress: `${Math.min(instructorIds.size, 3)}/3명 강사`,
     },
     community_explorer: {
       earnedAt: thirdOrganizationAt,
@@ -3410,7 +3429,13 @@ function buildHumanitiesBadges() {
   };
 
   return HUMANITIES_BADGE_DEFINITIONS
-    .filter((definition) => definition.id !== "series_finisher" || seriesProgress.total >= 2)
+    .filter((definition) => {
+      if (definition.id === "learning_habit") return attendedApplications.length >= 1;
+      if (definition.id === "ten_meetings") return attendedApplications.length >= 5;
+      if (definition.id === "new_perspective") return attendedApplications.length >= 1;
+      if (definition.id === "series_finisher") return seriesProgress.total >= 2;
+      return true;
+    })
     .map((definition) => ({
       ...definition,
       ...badgeState[definition.id],
