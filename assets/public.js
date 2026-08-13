@@ -53,6 +53,7 @@ const state = {
     reviews: null,
   },
   featuredMode: "",
+  landingDataLoadingPromise: null,
   fullDataLoaded: false,
   fullDataLoadingPromise: null,
   supplementaryLoaded: false,
@@ -1251,7 +1252,17 @@ function navigate(page, slug = "") {
   [...document.querySelectorAll(".modal.open")].reverse().forEach(closeModal);
   if (window.location.hash === nextHash) {
     applyRouteFromHash();
-    render();
+    if (state.activePage !== "courses" && !state.fullDataLoaded) {
+      renderActivePageLoading();
+      ensureFullDataLoaded({ waitForSupplementary: pageNeedsSupplementaryData(state.activePage) })
+        .then(render)
+        .catch((error) => {
+          console.warn("[모두의 인문학] 화면 데이터 확인 필요", error);
+          renderActivePageLoadError();
+        });
+    } else {
+      render();
+    }
   } else {
     window.location.hash = nextHash;
   }
@@ -1260,6 +1271,41 @@ function navigate(page, slug = "") {
 
 function pageNeedsSupplementaryData(page) {
   return ["completed", "reviews", "expectations", "archive"].includes(page);
+}
+
+function activePageLoadingTitle(page = state.activePage) {
+  return {
+    completed: "완료된 교육",
+    organizations: "참여 단체",
+    organization: "단체 교육",
+    instructors: "강사",
+    instructor: "강사 교육",
+    reviews: "후기",
+    expectations: "기대평·질문",
+    archive: "사진·영상·자료",
+  }[page] || "교육 정보";
+}
+
+function renderActivePageLoading() {
+  const title = activePageLoadingTitle();
+  setPageHeader({
+    title,
+    description: `${title} 전체 정보를 불러오는 중입니다.`,
+    summary: "잠시만 기다려 주세요.",
+  });
+  elements.courseResults.className = "content-stack";
+  elements.courseResults.innerHTML = `<div class="empty" role="status" aria-live="polite">${escapeHtml(title)} 정보를 불러오는 중입니다.</div>`;
+}
+
+function renderActivePageLoadError() {
+  const title = activePageLoadingTitle();
+  setPageHeader({
+    title,
+    description: `${title} 정보를 불러오지 못했습니다.`,
+    summary: "잠시 후 다시 선택해 주세요.",
+  });
+  elements.courseResults.className = "content-stack";
+  elements.courseResults.innerHTML = `<div class="empty" role="alert">${escapeHtml(title)} 정보를 불러오지 못했습니다. 네트워크 연결을 확인한 뒤 다시 시도해 주세요.</div>`;
 }
 
 function setPageHeader({ title, description, showCourseTools = false, showContentTools = false, showStatusFilter = true, summary = "" }) {
@@ -1368,7 +1414,8 @@ function startCourseStatusMonitor() {
 }
 
 async function loadLandingData() {
-  elements.resultSummary.textContent = "교육 요약을 불러오는 중입니다.";
+  if (state.activePage === "courses") elements.resultSummary.textContent = "교육 요약을 불러오는 중입니다.";
+  else renderActivePageLoading();
   const [summaryResult] = await Promise.all([
     fetchPublicRpc("get_public_landing_summary", { p_limit: 6 }, LANDING_SUMMARY_TIMEOUT_MS),
     loadApplicationSignals(),
@@ -1392,12 +1439,14 @@ async function loadLandingData() {
     state.composedCourses = [];
     state.landingCourses = [];
     populateFilters();
-    render();
+    if (state.activePage === "courses") render();
+    else renderActivePageLoading();
     return;
   }
 
   applyLandingSummary(data || {});
-  render();
+  if (state.activePage === "courses") render();
+  else renderActivePageLoading();
 }
 
 async function loadData({ waitForSupplementary = false } = {}) {
@@ -1436,6 +1485,9 @@ async function loadData({ waitForSupplementary = false } = {}) {
 }
 
 async function ensureFullDataLoaded({ waitForSupplementary = false } = {}) {
+  if (!state.fullDataLoaded && state.landingDataLoadingPromise) {
+    await state.landingDataLoadingPromise;
+  }
   if (!state.fullDataLoaded) {
     if (!state.fullDataLoadingPromise) {
       state.fullDataLoadingPromise = loadData({ waitForSupplementary })
@@ -2361,9 +2413,29 @@ function renderExpectationsPage() {
   `;
 }
 
-function openInstructorProfile(instructorId) {
+async function openInstructorProfile(instructorId) {
+  if (!state.fullDataLoaded) {
+    elements.profileEyebrow.textContent = "강사 프로필";
+    elements.profileTitle.textContent = "강사 정보 불러오는 중";
+    elements.profileBody.innerHTML = `<div class="empty" role="status" aria-live="polite">강사 정보를 불러오는 중입니다.</div>`;
+    openModal(elements.profileModal);
+    try {
+      await ensureFullDataLoaded();
+    } catch (error) {
+      console.warn("[모두의 인문학] 강사 정보 확인 필요", error);
+      elements.profileTitle.textContent = "강사 정보 확인 필요";
+      elements.profileBody.innerHTML = `<div class="empty" role="alert">강사 정보를 불러오지 못했습니다. 잠시 후 다시 선택해 주세요.</div>`;
+      return;
+    }
+  }
   const instructor = state.instructors.find((item) => item.id === instructorId);
-  if (!instructor) return;
+  if (!instructor) {
+    elements.profileEyebrow.textContent = "강사 프로필";
+    elements.profileTitle.textContent = "강사 정보 확인 필요";
+    elements.profileBody.innerHTML = `<div class="empty" role="alert">선택한 강사 정보를 찾을 수 없습니다.</div>`;
+    openModal(elements.profileModal);
+    return;
+  }
   const photoUrl = normalizeSafeUrl(instructor.photo_url, URL_RULES.image);
   const profileUrl = normalizeSafeUrl(instructor.profile_url, URL_RULES.external);
   elements.profileEyebrow.textContent = "강사 프로필";
@@ -6017,9 +6089,6 @@ function bindEvents() {
     if (routeControl) {
       event.preventDefault();
       const route = routeControl.dataset.route;
-      if (route !== "courses") {
-        await ensureFullDataLoaded({ waitForSupplementary: pageNeedsSupplementaryData(route) });
-      }
       navigate(route);
       return;
     }
@@ -6028,16 +6097,14 @@ function bindEvents() {
       return;
     }
     if (organizationButton) {
-      await ensureFullDataLoaded();
       navigate("organization", organizationButton.dataset.openOrganization);
       return;
     }
     if (instructorButton) {
-      openInstructorProfile(instructorButton.dataset.openInstructor);
+      await openInstructorProfile(instructorButton.dataset.openInstructor);
       return;
     }
     if (instructorCoursesButton) {
-      await ensureFullDataLoaded();
       navigate("instructor", instructorCoursesButton.dataset.openInstructorCourses);
       return;
     }
@@ -6306,7 +6373,16 @@ function bindEvents() {
   window.addEventListener("hashchange", async () => {
     applyRouteFromHash();
     if (state.activePage !== "courses") {
-      await ensureFullDataLoaded({ waitForSupplementary: pageNeedsSupplementaryData(state.activePage) });
+      if (!state.fullDataLoaded || (pageNeedsSupplementaryData(state.activePage) && !state.supplementaryLoaded)) {
+        renderActivePageLoading();
+      }
+      try {
+        await ensureFullDataLoaded({ waitForSupplementary: pageNeedsSupplementaryData(state.activePage) });
+      } catch (error) {
+        console.warn("[모두의 인문학] 화면 데이터 확인 필요", error);
+        renderActivePageLoadError();
+        return;
+      }
     }
     render();
   });
@@ -6319,6 +6395,7 @@ async function initialize() {
   const interestUnsubscribeToken = takeInterestUnsubscribeToken();
   applyRouteFromHash();
   bindEvents();
+  if (state.activePage !== "courses") renderActivePageLoading();
   setupCourseLoadMore();
   const authenticationReady = (async () => {
     const supabase = await getSupabaseClient();
@@ -6335,7 +6412,11 @@ async function initialize() {
   });
   const pageDataReady = (async () => {
     await processInterestUnsubscribe(interestUnsubscribeToken);
-    await loadLandingData();
+    state.landingDataLoadingPromise = loadLandingData()
+      .finally(() => {
+        state.landingDataLoadingPromise = null;
+      });
+    await state.landingDataLoadingPromise;
     if (state.activePage !== "courses") {
       await ensureFullDataLoaded({ waitForSupplementary: pageNeedsSupplementaryData(state.activePage) });
     }
