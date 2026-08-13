@@ -1637,7 +1637,7 @@ async function loadApplicationState(supabase) {
       .maybeSingle(),
     supabase
       .from("course_applications")
-      .select("id,course_id,user_id,applicant_name,phone,note,status,created_at,attendance_confirmed_at,email_course_notice_enabled,sms_course_notice_enabled,roundtable_notice_enabled")
+      .select("id,course_id,user_id,applicant_name,phone,note,status,created_at,attendance_confirmed_at,expectation_written_at,email_course_notice_enabled,sms_course_notice_enabled,roundtable_notice_enabled")
       .eq("user_id", state.user.id)
       .order("created_at", { ascending: false }),
     supabase.rpc("get_my_reviews"),
@@ -3312,6 +3312,169 @@ function pendingReviewApplications() {
   ));
 }
 
+const HUMANITIES_BADGE_DEFINITIONS = Object.freeze([
+  Object.freeze({ id: "first_step", name: "첫걸음", icon: "🌱", color: "#2f855a", description: "모두의 인문학 교육에 처음 참석하면 획득합니다." }),
+  Object.freeze({ id: "learning_habit", name: "배움이 일상이 되다", icon: "📚", color: "#315ea8", description: "서로 다른 교육에 3회 참석하면 획득합니다." }),
+  Object.freeze({ id: "curious_mind", name: "질문하는 사람", icon: "❓", color: "#9a5b13", description: "교육 신청에서 기대평이나 질문을 처음 남기면 획득합니다." }),
+  Object.freeze({ id: "thought_sharer", name: "생각을 나누는 사람", icon: "💬", color: "#8a3c72", description: "참석한 교육에 공개 후기를 처음 남기면 획득합니다." }),
+  Object.freeze({ id: "community_explorer", name: "동네를 잇는 배움", icon: "🧭", color: "#147d80", description: "서로 다른 주관 단체 3곳의 교육에 참석하면 획득합니다." }),
+  Object.freeze({ id: "series_finisher", name: "함께 완주", icon: "🏁", color: "#805ad5", description: "두 강 이상으로 연결된 연강 하나를 모두 참석하면 획득합니다." }),
+]);
+
+function humanitiesBadgeTime(value) {
+  const time = new Date(value || 0).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function humanitiesBadgeThresholdDate(items, threshold, dateKey) {
+  const datedItems = items
+    .filter((item) => humanitiesBadgeTime(item?.[dateKey]) > 0)
+    .slice()
+    .sort((a, b) => humanitiesBadgeTime(a[dateKey]) - humanitiesBadgeTime(b[dateKey]));
+  return datedItems.length >= threshold ? datedItems[threshold - 1][dateKey] : "";
+}
+
+function humanitiesBadgeSeriesProgress(attendedApplications) {
+  const attendedByCourse = new Map(attendedApplications.map((application) => [application.course_id, application]));
+  const seriesGroups = groupBy(state.composedCourses.filter((course) => (
+    course.series_id && course.originalStatus !== "cancelled"
+  )), "series_id");
+  let bestProgress = { attended: 0, total: 0 };
+  let earnedAt = "";
+
+  seriesGroups.forEach((courses) => {
+    if (courses.length < 2) return;
+    const attended = courses.filter((course) => attendedByCourse.has(course.id));
+    if (!bestProgress.total || attended.length / courses.length > bestProgress.attended / bestProgress.total) {
+      bestProgress = { attended: attended.length, total: courses.length };
+    }
+    if (attended.length !== courses.length) return;
+    const completedAt = attended.reduce((latest, course) => {
+      const attendanceAt = attendedByCourse.get(course.id)?.attendance_confirmed_at || "";
+      return humanitiesBadgeTime(attendanceAt) > humanitiesBadgeTime(latest) ? attendanceAt : latest;
+    }, "");
+    if (completedAt && (!earnedAt || humanitiesBadgeTime(completedAt) < humanitiesBadgeTime(earnedAt))) earnedAt = completedAt;
+  });
+
+  return { earnedAt, ...bestProgress };
+}
+
+function buildHumanitiesBadges() {
+  const attendedApplications = activeApplications()
+    .filter(isAttendanceConfirmed)
+    .slice()
+    .sort((a, b) => humanitiesBadgeTime(a.attendance_confirmed_at) - humanitiesBadgeTime(b.attendance_confirmed_at));
+  const publicReviews = state.myReviews
+    .filter(isPublicReview)
+    .slice()
+    .sort((a, b) => humanitiesBadgeTime(a.created_at) - humanitiesBadgeTime(b.created_at));
+  const writtenExpectations = activeApplications()
+    .filter((application) => String(application.note || "").trim())
+    .slice()
+    .sort((a, b) => humanitiesBadgeTime(a.expectation_written_at || a.created_at) - humanitiesBadgeTime(b.expectation_written_at || b.created_at));
+  const organizationIds = new Set();
+  let thirdOrganizationAt = "";
+  attendedApplications.forEach((application) => {
+    const organizationId = String(courseById(application.course_id)?.organization_id || "").trim();
+    if (!organizationId || organizationIds.has(organizationId)) return;
+    organizationIds.add(organizationId);
+    if (organizationIds.size === 3) thirdOrganizationAt = application.attendance_confirmed_at || "";
+  });
+  const seriesProgress = humanitiesBadgeSeriesProgress(attendedApplications);
+
+  const badgeState = {
+    first_step: {
+      earnedAt: humanitiesBadgeThresholdDate(attendedApplications, 1, "attendance_confirmed_at"),
+      progress: `${Math.min(attendedApplications.length, 1)}/1회 참석`,
+    },
+    learning_habit: {
+      earnedAt: humanitiesBadgeThresholdDate(attendedApplications, 3, "attendance_confirmed_at"),
+      progress: `${Math.min(attendedApplications.length, 3)}/3회 참석`,
+    },
+    curious_mind: {
+      earnedAt: writtenExpectations[0]?.expectation_written_at || writtenExpectations[0]?.created_at || "",
+      progress: `${Math.min(writtenExpectations.length, 1)}/1회 작성`,
+    },
+    thought_sharer: {
+      earnedAt: publicReviews[0]?.created_at || "",
+      progress: `${Math.min(publicReviews.length, 1)}/1회 작성`,
+    },
+    community_explorer: {
+      earnedAt: thirdOrganizationAt,
+      progress: `${Math.min(organizationIds.size, 3)}/3개 단체`,
+    },
+    series_finisher: {
+      earnedAt: seriesProgress.earnedAt,
+      progress: seriesProgress.total ? `${seriesProgress.attended}/${seriesProgress.total}강 참석` : "연강 참여 전",
+    },
+  };
+
+  return HUMANITIES_BADGE_DEFINITIONS.map((definition) => ({
+    ...definition,
+    ...badgeState[definition.id],
+    earned: Boolean(badgeState[definition.id]?.earnedAt),
+  }));
+}
+
+function humanitiesBadgeDetailHtml(badge) {
+  if (!badge) return "";
+  return `
+    <span class="humanities-badge-detail-icon" style="--badge-accent:${escapeHtml(badge.color)}">${escapeHtml(badge.icon)}</span>
+    <div>
+      <div class="row-top humanities-badge-detail-heading">
+        <strong>${escapeHtml(badge.name)}</strong>
+        <span class="badge ${badge.earned ? "green" : "gray"}">${badge.earned ? "획득" : "미획득"}</span>
+      </div>
+      <p>${escapeHtml(badge.description)}</p>
+      <p class="muted">${badge.earned ? `${escapeHtml(shortDate(badge.earnedAt))} 획득` : `현재 ${escapeHtml(badge.progress)}`}</p>
+    </div>
+  `;
+}
+
+function renderHumanitiesBadgeCollection() {
+  const badges = buildHumanitiesBadges();
+  const earnedBadges = badges.filter((badge) => badge.earned);
+  const selectedBadge = earnedBadges
+    .slice()
+    .sort((a, b) => humanitiesBadgeTime(b.earnedAt) - humanitiesBadgeTime(a.earnedAt))[0] || badges[0];
+  return `
+    <section class="section humanities-badge-section" aria-labelledby="humanitiesBadgeTitle">
+      <div class="row-top">
+        <div>
+          <h3 id="humanitiesBadgeTitle">나의 배지함</h3>
+          <p class="muted">출석·기대평·후기 기록으로 자동 계산됩니다. 다른 사람과 순위를 매기지 않으며 본인에게만 보입니다.</p>
+        </div>
+        <span class="badge green">${earnedBadges.length}/${badges.length} 획득</span>
+      </div>
+      <div class="humanities-badge-collection" aria-label="나의 배지 컬렉션">
+        ${badges.map((badge) => `
+          <button class="humanities-badge-card ${badge.earned ? "is-earned" : "is-locked"} ${badge.id === selectedBadge.id ? "is-selected" : ""}" type="button" data-humanities-badge="${escapeHtml(badge.id)}" aria-pressed="${badge.id === selectedBadge.id}" aria-label="${escapeHtml(badge.name)} · ${badge.earned ? "획득" : `미획득, ${badge.progress}` }" style="--badge-accent:${escapeHtml(badge.color)}">
+            <span class="humanities-badge-icon" aria-hidden="true">${escapeHtml(badge.icon)}</span>
+            <strong>${escapeHtml(badge.name)}</strong>
+            <small>${badge.earned ? "획득" : escapeHtml(badge.progress)}</small>
+          </button>
+        `).join("")}
+      </div>
+      <div class="humanities-badge-detail" id="humanitiesBadgeDetail" aria-live="polite">
+        ${humanitiesBadgeDetailHtml(selectedBadge)}
+      </div>
+    </section>
+  `;
+}
+
+function selectHumanitiesBadge(button) {
+  const badgeId = String(button?.dataset?.humanitiesBadge || "");
+  const badge = buildHumanitiesBadges().find((item) => item.id === badgeId);
+  const detail = document.getElementById("humanitiesBadgeDetail");
+  if (!badge || !detail) return;
+  document.querySelectorAll("[data-humanities-badge]").forEach((item) => {
+    const selected = item === button;
+    item.classList.toggle("is-selected", selected);
+    item.setAttribute("aria-pressed", String(selected));
+  });
+  detail.innerHTML = humanitiesBadgeDetailHtml(badge);
+}
+
 function renderMyInfoAccordion({ id, title, description, badge, badgeClass = "gray", open = false, content }) {
   return `
     <details class="my-info-accordion" id="${escapeHtml(id)}" ${open ? "open" : ""}>
@@ -3375,6 +3538,7 @@ function openMyInfo() {
       </section>
     </div>
     ${renderCoopLinkSection()}
+    ${renderHumanitiesBadgeCollection()}
     <section class="section my-info-application-section">
       <div class="row-top">
         <div>
@@ -6100,6 +6264,11 @@ function bindEvents() {
     const addInterestKeywordButton = event.target.closest("[data-add-interest-keyword]");
     const removeInterestButton = event.target.closest("[data-remove-interest]");
     const applicationConsentPresetButton = event.target.closest("[data-application-consent-preset]");
+    const humanitiesBadgeButton = event.target.closest("[data-humanities-badge]");
+    if (humanitiesBadgeButton) {
+      selectHumanitiesBadge(humanitiesBadgeButton);
+      return;
+    }
     if (archiveFilterButton) {
       state.archiveFilter = archiveFilterButton.dataset.archiveFilter || "all";
       renderArchivePage();

@@ -885,6 +885,71 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 .my-info-application-section p { margin-top: 0; word-break: keep-all; overflow-wrap: break-word; }
 .my-info-application-section p { text-wrap: pretty; }
 
+.humanities-badge-section { margin-top: 14px; }
+.humanities-badge-section > .row-top { align-items: flex-start; margin-bottom: 12px; }
+.humanities-badge-section h3,
+.humanities-badge-section p { margin-top: 0; }
+.humanities-badge-section > .row-top p { max-width: 720px; margin-bottom: 0; text-wrap: pretty; }
+.humanities-badge-collection {
+  display: flex;
+  gap: 12px;
+  padding: 4px 2px 12px;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scroll-snap-type: inline proximity;
+  scrollbar-width: thin;
+}
+.humanities-badge-card {
+  --badge-accent: #6c757d;
+  display: grid;
+  flex: 0 0 116px;
+  min-height: 132px;
+  place-items: center;
+  align-content: center;
+  gap: 7px;
+  padding: 13px 10px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+  scroll-snap-align: start;
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+.humanities-badge-card:hover { transform: translateY(-2px); }
+.humanities-badge-card:focus-visible { outline: 3px solid rgba(38, 99, 174, 0.26); outline-offset: 2px; }
+.humanities-badge-card.is-selected { border-color: var(--badge-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--badge-accent) 18%, transparent); }
+.humanities-badge-icon,
+.humanities-badge-detail-icon {
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--badge-accent);
+  color: #fff;
+  box-shadow: 0 7px 18px rgba(25, 43, 67, 0.16);
+}
+.humanities-badge-icon { width: 58px; height: 58px; font-size: 1.75rem; }
+.humanities-badge-card strong { line-height: 1.25; word-break: keep-all; overflow-wrap: break-word; }
+.humanities-badge-card small { color: var(--muted); font-weight: 700; }
+.humanities-badge-card.is-locked { background: #f4f5f7; color: #8b949e; }
+.humanities-badge-card.is-locked .humanities-badge-icon { background: #d7dbe0; filter: grayscale(1); box-shadow: none; opacity: 0.76; }
+.humanities-badge-detail {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: center;
+  gap: 13px;
+  min-height: 88px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #f7f9fc;
+}
+.humanities-badge-detail-icon { width: 52px; height: 52px; font-size: 1.55rem; }
+.humanities-badge-detail-heading { margin-bottom: 4px; }
+.humanities-badge-detail p { margin: 3px 0 0; }
+
 .application-history-list { display: grid; gap: 10px; }
 .application-history-item,
 .my-info-accordion {
@@ -1522,6 +1587,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 :root[data-theme="dark"] .admin-accordion,
 :root[data-theme="dark"] .application-history-item,
 :root[data-theme="dark"] .my-info-accordion,
+:root[data-theme="dark"] .humanities-badge-card,
 :root[data-theme="dark"] .archive-course-group,
 :root[data-theme="dark"] .theme-switcher,
 :root[data-theme="dark"] .empty {
@@ -1651,6 +1717,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 }
 
 :root[data-theme="dark"] .post-course-response-section,
+:root[data-theme="dark"] .humanities-badge-detail,
 :root[data-theme="dark"] .feedback-privacy-details,
 :root[data-theme="dark"] .anonymous-feedback-notice,
 :root[data-theme="dark"] .course-reference-block,
@@ -1760,6 +1827,12 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 :root[data-theme="dark"] .keyword-bar {
   background: #303b4a;
   color: var(--ink);
+}
+
+:root[data-theme="dark"] .humanities-badge-card.is-locked {
+  border-color: var(--line);
+  background: #202c3c;
+  color: #91a0b2;
 }
 
 :root[data-theme="dark"] .metric-table th,
