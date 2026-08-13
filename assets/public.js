@@ -3412,9 +3412,9 @@ function buildHumanitiesBadges() {
   return HUMANITIES_BADGE_DEFINITIONS
     .filter((definition) => definition.id !== "series_finisher" || seriesProgress.total >= 2)
     .map((definition) => ({
-    ...definition,
-    ...badgeState[definition.id],
-    earned: Boolean(badgeState[definition.id]?.earnedAt),
+      ...definition,
+      ...badgeState[definition.id],
+      earned: Boolean(badgeState[definition.id]?.earnedAt),
     }));
 }
 
