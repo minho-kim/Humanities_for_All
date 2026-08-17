@@ -3002,7 +3002,7 @@ async function loadAdminData() {
     p_course_id: null,
   });
 
-  const [requests, ownerSummaryResults, smsDeliveryResult] = await Promise.all([
+  const [requests, ownerSummaryResults, , smsDeliveryResult] = await Promise.all([
     dataRequests,
     ownerSummaryRequests,
     organizationAdminRequest,
