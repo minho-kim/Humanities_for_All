@@ -5892,6 +5892,7 @@ function renderDraws() {
 }
 
 function render() {
+  elements.adminContent.removeAttribute("aria-busy");
   if ((!state.user || !isAdmin()) && elements.applicationDetailModal.classList.contains("open")) {
     closeApplicationDetailModal();
   }
@@ -7326,8 +7327,16 @@ async function reloadAdminData() {
     render();
     return;
   }
-  await syncCourseStatuses();
+  if (state.tab === "dashboard") {
+    elements.adminContent.setAttribute("aria-busy", "true");
+    elements.adminContent.innerHTML = `
+      <h2>운영 현황</h2>
+      <div class="empty" role="status" aria-live="polite">최신 운영 현황을 불러오는 중입니다.</div>
+    `;
+  }
+  const courseStatusSyncRequest = syncCourseStatuses();
   await loadAdminData();
+  await courseStatusSyncRequest;
   if (state.tab === "admins" && isOwner()) {
     const organizationAdminsRequest = loadOrganizationAdmins();
     renderOrganizationAdmins();
