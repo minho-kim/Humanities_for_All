@@ -2989,23 +2989,14 @@ async function loadAdminData() {
     ])
     : Promise.resolve(null);
 
-  const organizationAdminRequest = isOwner()
-    ? loadOrganizationAdmins()
-    : Promise.resolve().then(() => {
-      state.organizationAdmins = [];
-      state.platformAdmins = [];
-      state.organizationAdminsError = "";
-    });
-
   const smsDeliveryRequest = supabase.rpc("get_managed_sms_deliveries", {
     p_limit: 100,
     p_course_id: null,
   });
 
-  const [requests, ownerSummaryResults, , smsDeliveryResult] = await Promise.all([
+  const [requests, ownerSummaryResults, smsDeliveryResult] = await Promise.all([
     dataRequests,
     ownerSummaryRequests,
-    organizationAdminRequest,
     smsDeliveryRequest,
   ]);
 
@@ -3072,6 +3063,12 @@ async function loadAdminData() {
     } else {
       state.operationalHealth = operationalHealthResult.data || null;
     }
+  }
+
+  if (!isOwner()) {
+    state.organizationAdmins = [];
+    state.platformAdmins = [];
+    state.organizationAdminsError = "";
   }
 
   const { data: smsDeliveries, error: smsDeliveriesError } = smsDeliveryResult;
@@ -7331,6 +7328,12 @@ async function reloadAdminData() {
   }
   await syncCourseStatuses();
   await loadAdminData();
+  if (state.tab === "admins" && isOwner()) {
+    const organizationAdminsRequest = loadOrganizationAdmins();
+    renderOrganizationAdmins();
+    await organizationAdminsRequest;
+    if (state.tab === "admins") renderOrganizationAdmins();
+  }
   if (state.tab === "attendance" && state.attendanceManagement.courseId) {
     await loadAttendanceManagement(state.attendanceManagement.courseId);
   }
@@ -7838,6 +7841,13 @@ function bindEvents() {
       if (draftResult.fileSelectionDiscarded) showToast("작성 내용은 임시 보관했지만 파일은 다시 선택해야 합니다.");
       if (state.tab === "archive" && tabButton.dataset.adminTab !== "archive") resetArchiveEditor();
       state.tab = tabButton.dataset.adminTab;
+      if (state.tab === "admins" && isOwner()) {
+        const organizationAdminsRequest = loadOrganizationAdmins();
+        render();
+        await organizationAdminsRequest;
+        if (state.tab === "admins") renderOrganizationAdmins();
+        return;
+      }
       render();
       return;
     }
