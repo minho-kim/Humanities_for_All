@@ -150,6 +150,7 @@ const ADMIN_DRAFT_FORM_ID_FIELDS = Object.freeze({
   archiveForm: "archive_id",
 });
 const adminFormBaselines = new WeakMap();
+let adminReloadPromise = null;
 
 const elements = {
   adminLoginForm: document.getElementById("adminLoginForm"),
@@ -2959,7 +2960,12 @@ function renderAuthStatus() {
 }
 
 async function loadAdminData() {
-  const requests = await Promise.all([
+  state.demographicSummary = null;
+  state.memberSummary = null;
+  state.operationalHealth = null;
+  state.operationalHealthError = "";
+
+  const dataRequests = Promise.all([
     supabase.from("organizations").select("*").order("sort_order", { ascending: true }),
     supabase.from("instructors").select("*").order("name", { ascending: true }),
     supabase.from("venues").select("*").order("name", { ascending: true }),
@@ -2973,6 +2979,34 @@ async function loadAdminData() {
     supabase.from("content_reports").select("*").order("created_at", { ascending: false }),
     supabase.from("review_draws").select("*").order("created_at", { ascending: false }),
     supabase.from("review_draw_winners").select("*").order("created_at", { ascending: false }),
+  ]);
+
+  const ownerSummaryRequests = isOwner()
+    ? Promise.all([
+      supabase.rpc("get_demographic_summary"),
+      supabase.rpc("get_owner_member_summary"),
+      supabase.rpc("get_owner_operational_health_v1"),
+    ])
+    : Promise.resolve(null);
+
+  const organizationAdminRequest = isOwner()
+    ? loadOrganizationAdmins()
+    : Promise.resolve().then(() => {
+      state.organizationAdmins = [];
+      state.platformAdmins = [];
+      state.organizationAdminsError = "";
+    });
+
+  const smsDeliveryRequest = supabase.rpc("get_managed_sms_deliveries", {
+    p_limit: 100,
+    p_course_id: null,
+  });
+
+  const [requests, ownerSummaryResults, smsDeliveryResult] = await Promise.all([
+    dataRequests,
+    ownerSummaryRequests,
+    organizationAdminRequest,
+    smsDeliveryRequest,
   ]);
 
   const error = requests.find((result) => result.error)?.error;
@@ -3025,16 +3059,8 @@ async function loadAdminData() {
   state.instructors = instructors;
   state.venues = venues;
 
-  state.demographicSummary = null;
-  state.memberSummary = null;
-  state.operationalHealth = null;
-  state.operationalHealthError = "";
-  if (isOwner()) {
-    const [demographicResult, memberResult, operationalHealthResult] = await Promise.all([
-      supabase.rpc("get_demographic_summary"),
-      supabase.rpc("get_owner_member_summary"),
-      supabase.rpc("get_owner_operational_health_v1"),
-    ]);
+  if (ownerSummaryResults) {
+    const [demographicResult, memberResult, operationalHealthResult] = ownerSummaryResults;
     const { data, error: demographicError } = demographicResult;
     if (demographicError) console.warn("[모두의 인문학] 선택 이용자 통계 확인 지연", demographicError);
     else state.demographicSummary = data || null;
@@ -3048,17 +3074,7 @@ async function loadAdminData() {
     }
   }
 
-  if (isOwner()) await loadOrganizationAdmins();
-  else {
-    state.organizationAdmins = [];
-    state.platformAdmins = [];
-    state.organizationAdminsError = "";
-  }
-
-  const { data: smsDeliveries, error: smsDeliveriesError } = await supabase.rpc("get_managed_sms_deliveries", {
-    p_limit: 100,
-    p_course_id: null,
-  });
+  const { data: smsDeliveries, error: smsDeliveriesError } = smsDeliveryResult;
   if (smsDeliveriesError) {
     console.warn("[모두의 인문학] 문자 발송 현황 확인 지연", smsDeliveriesError);
     state.smsDeliveries = [];
@@ -7272,6 +7288,16 @@ async function runDraw(event) {
 }
 
 async function reload() {
+  if (adminReloadPromise) return adminReloadPromise;
+  adminReloadPromise = reloadAdminData();
+  try {
+    return await adminReloadPromise;
+  } finally {
+    adminReloadPromise = null;
+  }
+}
+
+async function reloadAdminData() {
   await refreshSession();
   if (!isAdmin()) {
     state.formDrafts = {};
