@@ -131,6 +131,7 @@ const state = {
   memberSummary: null,
   operationalHealth: null,
   operationalHealthError: "",
+  dashboardSupplementLoading: false,
   notificationManagement: {
     data: null,
     loading: false,
@@ -2964,21 +2965,26 @@ async function loadAdminData() {
   state.memberSummary = null;
   state.operationalHealth = null;
   state.operationalHealthError = "";
+  state.smsDeliveries = [];
+  state.dashboardSupplementLoading = true;
 
-  const dataRequests = Promise.all([
+  const dashboardDataRequests = Promise.all([
     supabase.from("organizations").select("*").order("sort_order", { ascending: true }),
     supabase.from("instructors").select("*").order("name", { ascending: true }),
-    supabase.from("venues").select("*").order("name", { ascending: true }),
     supabase.from("courses").select("*").order("starts_at", { ascending: true }),
-    supabase.from("course_sessions").select("*").order("starts_at", { ascending: true }),
     supabase.from("course_archives").select("*").order("created_at", { ascending: false }),
     supabase.from("course_applications").select("*").order("created_at", { ascending: false }),
-    supabase.from("course_attendance_documents").select("*").order("created_at", { ascending: false }),
     supabase.from("reviews").select("*").order("created_at", { ascending: false }),
     supabase.rpc("get_managed_course_feedback"),
-    supabase.from("content_reports").select("*").order("created_at", { ascending: false }),
     supabase.from("review_draws").select("*").order("created_at", { ascending: false }),
     supabase.from("review_draw_winners").select("*").order("created_at", { ascending: false }),
+  ]);
+
+  const managementDataRequests = Promise.all([
+    supabase.from("venues").select("*").order("name", { ascending: true }),
+    supabase.from("course_sessions").select("*").order("starts_at", { ascending: true }),
+    supabase.from("course_attendance_documents").select("*").order("created_at", { ascending: false }),
+    supabase.from("content_reports").select("*").order("created_at", { ascending: false }),
   ]);
 
   const ownerSummaryRequests = isOwner()
@@ -2994,11 +3000,7 @@ async function loadAdminData() {
     p_course_id: null,
   });
 
-  const [requests, ownerSummaryResults, smsDeliveryResult] = await Promise.all([
-    dataRequests,
-    ownerSummaryRequests,
-    smsDeliveryRequest,
-  ]);
+  const requests = await dashboardDataRequests;
 
   const error = requests.find((result) => result.error)?.error;
   if (error && isAdmin()) throw error;
@@ -3006,15 +3008,11 @@ async function loadAdminData() {
   const [
     organizations,
     instructors,
-    venues,
     courses,
-    sessions,
     archives,
     applications,
-    attendanceDocuments,
     reviews,
     feedbacks,
-    contentReports,
     draws,
     winners,
   ] = requests.map((result) => result.data || []);
@@ -3022,13 +3020,10 @@ async function loadAdminData() {
   if (isOwner()) {
     state.organizations = organizations;
     state.courses = courses;
-    state.sessions = sessions;
     state.archives = archives;
     state.applications = applications;
-    state.attendanceDocuments = attendanceDocuments;
     state.reviews = reviews;
     state.feedbacks = feedbacks;
-    state.contentReports = contentReports;
     state.draws = draws;
     state.winners = winners;
   } else {
@@ -3037,18 +3032,41 @@ async function loadAdminData() {
     const courseIds = courseIdsSet(scopedCourses);
     state.organizations = organizations.filter((organization) => organizationIds.has(organization.id));
     state.courses = scopedCourses;
-    state.sessions = sessions.filter((session) => courseIds.has(session.course_id));
     state.archives = archives.filter((archive) => courseIds.has(archive.course_id));
     state.applications = applications.filter((application) => courseIds.has(application.course_id));
-    state.attendanceDocuments = attendanceDocuments.filter((document) => courseIds.has(document.course_id));
     state.reviews = reviews.filter((review) => courseIds.has(review.course_id));
     state.feedbacks = feedbacks.filter((feedback) => courseIds.has(feedback.course_id));
-    state.contentReports = contentReports.filter((report) => courseIds.has(report.course_id));
     state.draws = [];
     state.winners = [];
   }
   state.instructors = instructors;
+
+  if (state.tab === "dashboard") {
+    renderAuthStatus();
+    render();
+  }
+
+  const [managementRequests, ownerSummaryResults, smsDeliveryResult] = await Promise.all([
+    managementDataRequests,
+    ownerSummaryRequests,
+    smsDeliveryRequest,
+  ]);
+
+  const managementError = managementRequests.find((result) => result.error)?.error;
+  if (managementError && isAdmin()) throw managementError;
+
+  const [venues, sessions, attendanceDocuments, contentReports] = managementRequests.map((result) => result.data || []);
+  const managedCourseIds = courseIdsSet(state.courses);
   state.venues = venues;
+  if (isOwner()) {
+    state.sessions = sessions;
+    state.attendanceDocuments = attendanceDocuments;
+    state.contentReports = contentReports;
+  } else {
+    state.sessions = sessions.filter((session) => managedCourseIds.has(session.course_id));
+    state.attendanceDocuments = attendanceDocuments.filter((document) => managedCourseIds.has(document.course_id));
+    state.contentReports = contentReports.filter((report) => managedCourseIds.has(report.course_id));
+  }
 
   if (ownerSummaryResults) {
     const [demographicResult, memberResult, operationalHealthResult] = ownerSummaryResults;
@@ -3078,6 +3096,7 @@ async function loadAdminData() {
   } else {
     state.smsDeliveries = smsDeliveries || [];
   }
+  state.dashboardSupplementLoading = false;
 
   renderAuthStatus();
   render();
@@ -3394,7 +3413,10 @@ function renderDemographicSummary() {
   if (!isOwner()) return "";
   const summary = state.demographicSummary;
   if (!summary) {
-    return `<div class="section" style="margin-top: 16px;"><h3>선택 이용자 통계</h3><div class="empty compact-empty">선택 이용자 통계를 불러오지 못했습니다.</div></div>`;
+    const message = state.dashboardSupplementLoading
+      ? "선택 이용자 통계를 불러오는 중입니다."
+      : "선택 이용자 통계를 불러오지 못했습니다.";
+    return `<div class="section" style="margin-top: 16px;"><h3>선택 이용자 통계</h3><div class="empty compact-empty">${message}</div></div>`;
   }
   const groups = summary.groups || {};
   const groupSections = [
@@ -3468,6 +3490,17 @@ const SMS_STATUS_LABELS = {
 };
 
 function renderSmsDeliveryHistory() {
+  if (state.dashboardSupplementLoading) {
+    return `
+      <details class="admin-accordion">
+        <summary>
+          <span class="admin-accordion-heading"><strong>문자 발송 현황</strong><small>자동·수동 문자 이력과 처리 상태를 확인합니다.</small></span>
+          <span class="badge gray">확인 중</span>
+        </summary>
+        <div class="admin-accordion-body"><div class="empty compact-empty">문자 발송 현황을 불러오는 중입니다.</div></div>
+      </details>
+    `;
+  }
   const deliveries = state.smsDeliveries || [];
   const sentCount = deliveries.filter((item) => item.status === "sent").length;
   const pendingCount = deliveries.filter((item) => ["pending", "processing"].includes(item.status)).length;
@@ -3579,7 +3612,10 @@ function renderOwnerMemberSummary() {
   if (!isOwner()) return "";
   const summary = state.memberSummary;
   if (!summary) {
-    return `<section class="section" style="margin-top:16px;"><h3>가입자 현황</h3><p class="muted">가입자 집계를 불러오지 못했습니다. 새로고침해 주세요.</p></section>`;
+    const message = state.dashboardSupplementLoading
+      ? "가입자 현황을 불러오는 중입니다."
+      : "가입자 집계를 불러오지 못했습니다. 새로고침해 주세요.";
+    return `<section class="section" style="margin-top:16px;"><h3>가입자 현황</h3><p class="muted">${message}</p></section>`;
   }
   return `
     <section class="section" style="margin-top:16px;">
