@@ -1220,6 +1220,58 @@ function courseById(courseId) {
   return state.composedCourses.find((course) => course.id === courseId);
 }
 
+function courseShareUrl(courseId) {
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set("course", String(courseId || ""));
+  return url.toString();
+}
+
+function copyTextFallback(text) {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.setAttribute("aria-hidden", "true");
+  textarea.style.position = "fixed";
+  textarea.style.inset = "-9999px auto auto -9999px";
+  document.body.append(textarea);
+  try {
+    textarea.select();
+    textarea.setSelectionRange(0, textarea.value.length);
+    return document.execCommand("copy");
+  } finally {
+    textarea.remove();
+  }
+}
+
+async function copyCourseShareLink(button) {
+  const courseId = String(button?.dataset.copyCourseLink || "");
+  if (!courseById(courseId)) throw new Error("공유할 교육 정보를 찾지 못했습니다.");
+  const url = courseShareUrl(courseId);
+  let copied = false;
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(url);
+      copied = true;
+    } catch (error) {
+      console.warn("Course share clipboard API failed; trying fallback", error);
+    }
+  }
+  if (!copied) copied = copyTextFallback(url);
+  if (!copied) throw new Error("교육 링크를 복사하지 못했습니다.");
+
+  const originalLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = "링크 복사됨";
+  window.setTimeout(() => {
+    if (!button.isConnected) return;
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }, 1800);
+  showToast("교육 링크를 복사했습니다.");
+}
+
 function requestedCourseIdFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const courseParam = params.get("course");
@@ -4328,6 +4380,7 @@ function openCourseDetail(courseId, returnFocusElement = null) {
         <div class="actions" style="margin-top: 14px;">
           ${canApply ? `<button class="btn small" type="button" data-apply-course="${course.id}">신청하기</button>` : `<button class="btn small secondary" type="button" disabled>신청 마감</button>`}
           ${canReview ? `<button class="btn small secondary" type="button" data-login-for-review>${currentReviewForCourse(course.id) ? "공개 후기 수정" : "공개 후기"}</button>` : ""}
+          <button class="btn small secondary" type="button" data-copy-course-link="${escapeHtml(course.id)}">교육 공유하기</button>
         </div>
       </div>
       <aside class="section">
@@ -6267,6 +6320,7 @@ function bindEvents() {
     const loginForReview = event.target.closest("[data-login-for-review]");
     const loginForApplication = event.target.closest("[data-login-for-application]");
     const applyButton = event.target.closest("[data-apply-course]");
+    const copyCourseLinkButton = event.target.closest("[data-copy-course-link]");
     const cancelApplicationButton = event.target.closest("[data-cancel-application]");
     const cancelGuestApplicationButton = event.target.closest("[data-cancel-guest-application]");
     const archivePhotoButton = event.target.closest("[data-open-archive-photo]");
@@ -6316,6 +6370,14 @@ function bindEvents() {
     }
     if (applicationConsentPresetButton) {
       applyApplicationConsentPreset(applicationConsentPresetButton);
+      return;
+    }
+    if (copyCourseLinkButton) {
+      try {
+        await copyCourseShareLink(copyCourseLinkButton);
+      } catch (error) {
+        showToast(error.message || "교육 링크를 복사하지 못했습니다.");
+      }
       return;
     }
     if (addInterestKeywordButton) {
