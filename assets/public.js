@@ -1246,7 +1246,7 @@ async function courseShortCode(courseId) {
     "SHA-256",
     new TextEncoder().encode(`humanities:course:v1:${normalizedId}`),
   );
-  return `c-${courseShortCodeBytes(new Uint8Array(digest).slice(0, 9))}`;
+  return `c-${courseShortCodeBytes(new Uint8Array(digest).slice(0, 6))}`;
 }
 
 async function courseShortUrl(course) {
@@ -1260,7 +1260,7 @@ async function courseShortUrl(course) {
   if (codedCourses.filter((item) => item.code === code).length !== 1) {
     throw new Error("단축 주소가 다른 교육과 겹쳤습니다. 관리자에게 알려 주세요.");
   }
-  const url = new URL("./l.html", window.location.href);
+  const url = new URL("./l", window.location.href);
   url.search = "";
   url.hash = code;
   return url.toString();
@@ -1355,7 +1355,7 @@ async function openCourseShare(courseId, mode = "qr", returnFocusElement = null)
       <div class="course-checkin-qr-layout">
         <div class="course-checkin-qr-code"><img src="${escapeHtml(qrImageUrl)}" width="190" height="190" alt="${escapeHtml(course.title || "교육")} 공유 QR 코드"></div>
         <div>
-          <p class="muted">QR을 촬영하면 이 교육의 상세 화면이 열립니다. 출석 체크인 QR과는 별개입니다.</p>
+          <p class="muted">QR을 촬영하면 이 교육의 상세 화면이 열립니다.</p>
           <div class="actions">
             <a class="btn small" href="${escapeHtml(qrImageUrl)}" download="${escapeHtml(qrFileName)}">QR PNG 다운로드</a>
             <button class="btn small secondary" type="button" data-copy-course-share-url="${escapeHtml(shortUrl)}" data-copy-success="QR에 담긴 교육 단축 주소를 복사했습니다.">QR 주소 복사</button>

@@ -3,7 +3,8 @@ import { supabase } from "./supabaseClient.js";
 const GUEST_ACCESS_TOKEN_SESSION_KEY = "humanities-guest-access-tokens";
 const SHORT_CODE_PATTERN = /^[A-Za-z0-9_-]{24}$/;
 const ORGANIZATION_SHORT_CODE_PATTERN = /^o-[A-Za-z0-9_-]{12}$/;
-const COURSE_SHORT_CODE_PATTERN = /^c-[A-Za-z0-9_-]{12}$/;
+const COURSE_SHORT_CODE_PATTERN = /^c-[A-Za-z0-9_-]{8}$/;
+const LEGACY_COURSE_SHORT_CODE_PATTERN = /^c-[A-Za-z0-9_-]{12}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ORGANIZATION_SLUG_PATTERN = /^[a-z0-9][a-z0-9._-]{0,47}$/;
 const GUEST_TOKEN_PATTERN = /^[0-9a-f-]{36}\.[0-9a-f]{64}$/i;
@@ -54,14 +55,14 @@ async function organizationShortCode(organizationId) {
   return `o-${organizationShortCodeBytes(new Uint8Array(digest).slice(0, 9))}`;
 }
 
-async function courseShortCode(courseId) {
+async function courseShortCode(courseId, byteLength = 6) {
   const normalizedId = String(courseId || "").trim().toLowerCase();
   if (!UUID_PATTERN.test(normalizedId) || !globalThis.crypto?.subtle) return "";
   const digest = await globalThis.crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(`humanities:course:v1:${normalizedId}`),
   );
-  return `c-${organizationShortCodeBytes(new Uint8Array(digest).slice(0, 9))}`;
+  return `c-${organizationShortCodeBytes(new Uint8Array(digest).slice(0, byteLength))}`;
 }
 
 async function resolveOrganizationShortLink() {
@@ -102,9 +103,10 @@ async function resolveCourseShortLink() {
   if (error) throw error;
 
   const courses = Array.isArray(data) ? data : [];
+  const byteLength = LEGACY_COURSE_SHORT_CODE_PATTERN.test(shortCode) ? 9 : 6;
   const candidates = await Promise.all(courses.map(async (course) => ({
     course,
-    code: await courseShortCode(course.id),
+    code: await courseShortCode(course.id, byteLength),
   })));
   const matches = candidates.filter(({ course, code }) => (
     code === shortCode && UUID_PATTERN.test(String(course?.id || ""))
@@ -124,6 +126,7 @@ async function resolveShortLink() {
     !SHORT_CODE_PATTERN.test(shortCode)
     && !ORGANIZATION_SHORT_CODE_PATTERN.test(shortCode)
     && !COURSE_SHORT_CODE_PATTERN.test(shortCode)
+    && !LEGACY_COURSE_SHORT_CODE_PATTERN.test(shortCode)
   ) {
     showInvalidLink();
     return;
@@ -138,7 +141,7 @@ async function resolveShortLink() {
       await resolveOrganizationShortLink();
       return;
     }
-    if (COURSE_SHORT_CODE_PATTERN.test(shortCode)) {
+    if (COURSE_SHORT_CODE_PATTERN.test(shortCode) || LEGACY_COURSE_SHORT_CODE_PATTERN.test(shortCode)) {
       await resolveCourseShortLink();
       return;
     }
