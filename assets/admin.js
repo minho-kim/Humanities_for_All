@@ -4542,7 +4542,7 @@ function renderCourseForm(course = {}) {
             <button class="btn small secondary" type="button" data-open-course-share="${escapeHtml(course.id)}" data-share-mode="qr">공유 QR 생성</button>
             <button class="btn small secondary" type="button" data-open-course-share="${escapeHtml(course.id)}" data-share-mode="short">단축 주소 생성</button>
           </div>
-          <p class="media-upload-note">공유 QR은 교육 상세 화면을 여는 용도이며 `QR 출석·알림`의 체크인 QR과 다릅니다. 비공개 교육은 공개로 저장한 뒤 열립니다.</p>
+          <p class="media-upload-note">공유 QR은 교육 상세 화면을 여는 용도이며 <strong>QR 출석·알림</strong>의 체크인 QR과 다릅니다. 비공개 교육은 공개로 저장한 뒤 열립니다.</p>
         </div>
       ` : ""}
       <label style="margin-top: 10px;"><span><input name="published" type="checkbox" ${course.published !== false ? "checked" : ""} style="width:auto;min-height:auto;"> 공개</span></label>
