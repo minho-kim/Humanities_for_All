@@ -3,6 +3,7 @@ import { supabase } from "./supabaseClient.js";
 const GUEST_ACCESS_TOKEN_SESSION_KEY = "humanities-guest-access-tokens";
 const SHORT_CODE_PATTERN = /^[A-Za-z0-9_-]{24}$/;
 const ORGANIZATION_SHORT_CODE_PATTERN = /^o-[A-Za-z0-9_-]{12}$/;
+const COURSE_SHORT_CODE_PATTERN = /^c-[A-Za-z0-9_-]{12}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ORGANIZATION_SLUG_PATTERN = /^[a-z0-9][a-z0-9._-]{0,47}$/;
 const GUEST_TOKEN_PATTERN = /^[0-9a-f-]{36}\.[0-9a-f]{64}$/i;
@@ -53,6 +54,16 @@ async function organizationShortCode(organizationId) {
   return `o-${organizationShortCodeBytes(new Uint8Array(digest).slice(0, 9))}`;
 }
 
+async function courseShortCode(courseId) {
+  const normalizedId = String(courseId || "").trim().toLowerCase();
+  if (!UUID_PATTERN.test(normalizedId) || !globalThis.crypto?.subtle) return "";
+  const digest = await globalThis.crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`humanities:course:v1:${normalizedId}`),
+  );
+  return `c-${organizationShortCodeBytes(new Uint8Array(digest).slice(0, 9))}`;
+}
+
 async function resolveOrganizationShortLink() {
   document.title = "단체 교육 페이지로 이동 | 모두의 인문학";
   statusElement.textContent = "단체 교육 주소를 확인하고 있습니다. 잠시만 기다려 주세요.";
@@ -81,8 +92,39 @@ async function resolveOrganizationShortLink() {
   window.location.replace(target.href);
 }
 
+async function resolveCourseShortLink() {
+  document.title = "교육 페이지로 이동 | 모두의 인문학";
+  statusElement.textContent = "교육 주소를 확인하고 있습니다. 잠시만 기다려 주세요.";
+  const { data, error } = await supabase
+    .from("courses")
+    .select("id,published")
+    .eq("published", true);
+  if (error) throw error;
+
+  const courses = Array.isArray(data) ? data : [];
+  const candidates = await Promise.all(courses.map(async (course) => ({
+    course,
+    code: await courseShortCode(course.id),
+  })));
+  const matches = candidates.filter(({ course, code }) => (
+    code === shortCode && UUID_PATTERN.test(String(course?.id || ""))
+  ));
+  if (matches.length !== 1) {
+    showInvalidLink();
+    return;
+  }
+
+  const target = new URL("./index.html", window.location.href);
+  target.searchParams.set("course", matches[0].course.id);
+  window.location.replace(target.href);
+}
+
 async function resolveShortLink() {
-  if (!SHORT_CODE_PATTERN.test(shortCode) && !ORGANIZATION_SHORT_CODE_PATTERN.test(shortCode)) {
+  if (
+    !SHORT_CODE_PATTERN.test(shortCode)
+    && !ORGANIZATION_SHORT_CODE_PATTERN.test(shortCode)
+    && !COURSE_SHORT_CODE_PATTERN.test(shortCode)
+  ) {
     showInvalidLink();
     return;
   }
@@ -94,6 +136,10 @@ async function resolveShortLink() {
   try {
     if (ORGANIZATION_SHORT_CODE_PATTERN.test(shortCode)) {
       await resolveOrganizationShortLink();
+      return;
+    }
+    if (COURSE_SHORT_CODE_PATTERN.test(shortCode)) {
+      await resolveCourseShortLink();
       return;
     }
     const { data, error } = await supabase.rpc("resolve_application_short_link", { p_code: shortCode });

@@ -120,6 +120,9 @@ const elements = {
   detailBadges: document.getElementById("detailBadges"),
   detailTitle: document.getElementById("detailTitle"),
   detailBody: document.getElementById("detailBody"),
+  courseShareModal: document.getElementById("courseShareModal"),
+  courseShareTitle: document.getElementById("courseShareTitle"),
+  courseShareBody: document.getElementById("courseShareBody"),
   loginModal: document.getElementById("loginModal"),
   loginButton: document.getElementById("loginButton"),
   loginTitle: document.getElementById("loginTitle"),
@@ -1228,6 +1231,58 @@ function courseShareUrl(courseId) {
   return url.toString();
 }
 
+function courseShortCodeBytes(bytes) {
+  let binary = "";
+  bytes.forEach((value) => { binary += String.fromCharCode(value); });
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+async function courseShortCode(courseId) {
+  const normalizedId = String(courseId || "").trim().toLowerCase();
+  if (!UUID_PATTERN.test(normalizedId) || !globalThis.crypto?.subtle) {
+    throw new Error("교육 단축 주소를 만들 수 없습니다.");
+  }
+  const digest = await globalThis.crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`humanities:course:v1:${normalizedId}`),
+  );
+  return `c-${courseShortCodeBytes(new Uint8Array(digest).slice(0, 9))}`;
+}
+
+async function courseShortUrl(course) {
+  if (!course?.id || !courseShareUrl(course.id)) throw new Error("교육 정보를 찾지 못했습니다.");
+  const distinctCourseIds = [...new Set(state.composedCourses
+    .map((item) => String(item?.id || ""))
+    .filter((id) => UUID_PATTERN.test(id)))];
+  const codedCourses = await Promise.all(distinctCourseIds
+    .map(async (id) => ({ id, code: await courseShortCode(id) })));
+  const code = await courseShortCode(course.id);
+  if (codedCourses.filter((item) => item.code === code).length !== 1) {
+    throw new Error("단축 주소가 다른 교육과 겹쳤습니다. 관리자에게 알려 주세요.");
+  }
+  const url = new URL("./l.html", window.location.href);
+  url.search = "";
+  url.hash = code;
+  return url.toString();
+}
+
+function courseShareQrImage(qrUrl) {
+  if (!qrUrl || typeof window.QRCode !== "function") throw new Error("QR 이미지를 만들 수 없습니다.");
+  const target = document.createElement("div");
+  target.style.position = "fixed";
+  target.style.left = "-10000px";
+  target.style.top = "0";
+  document.body.appendChild(target);
+  try {
+    new window.QRCode(target, { text: qrUrl, width: 560, height: 560, correctLevel: window.QRCode.CorrectLevel.H });
+    const imageUrl = target.querySelector("canvas")?.toDataURL("image/png") || target.querySelector("img")?.src || "";
+    if (!imageUrl) throw new Error("QR 이미지를 아직 만들지 못했습니다.");
+    return imageUrl;
+  } finally {
+    target.remove();
+  }
+}
+
 function copyTextFallback(text) {
   const textarea = document.createElement("textarea");
   textarea.value = text;
@@ -1245,20 +1300,25 @@ function copyTextFallback(text) {
   }
 }
 
+async function copyPublicText(text) {
+  const value = String(text || "").trim();
+  if (!value) return false;
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch (error) {
+      console.warn("Public clipboard API failed; trying fallback", error);
+    }
+  }
+  return copyTextFallback(value);
+}
+
 async function copyCourseShareLink(button) {
   const courseId = String(button?.dataset.copyCourseLink || "");
   if (!courseById(courseId)) throw new Error("공유할 교육 정보를 찾지 못했습니다.");
   const url = courseShareUrl(courseId);
-  let copied = false;
-  if (window.isSecureContext && navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(url);
-      copied = true;
-    } catch (error) {
-      console.warn("Course share clipboard API failed; trying fallback", error);
-    }
-  }
-  if (!copied) copied = copyTextFallback(url);
+  const copied = await copyPublicText(url);
   if (!copied) throw new Error("교육 링크를 복사하지 못했습니다.");
 
   const originalLabel = button.textContent;
@@ -1270,6 +1330,49 @@ async function copyCourseShareLink(button) {
     button.textContent = originalLabel;
   }, 1800);
   showToast("교육 링크를 복사했습니다.");
+}
+
+async function openCourseShare(courseId, mode = "qr", returnFocusElement = null) {
+  const course = courseById(courseId);
+  if (!course) throw new Error("공유할 교육 정보를 찾지 못했습니다.");
+  const fullUrl = courseShareUrl(course.id);
+  const shortUrl = await courseShortUrl(course);
+  const qrImageUrl = courseShareQrImage(shortUrl);
+  const qrFileName = `course-${String(course.id).slice(0, 8)}-humanities-qr.png`;
+  const addressHtml = `
+    <div class="section" style="margin:0;">
+      <h3>교육 단축 주소</h3>
+      <label>공유 주소<input value="${escapeHtml(shortUrl)}" readonly></label>
+      <div class="actions" style="margin-top:10px;">
+        <button class="btn small" type="button" data-copy-course-share-url="${escapeHtml(shortUrl)}" data-copy-success="교육 단축 주소를 복사했습니다.">단축 주소 복사</button>
+        <a class="btn small secondary" href="${escapeHtml(shortUrl)}" target="_blank" rel="noopener noreferrer">주소 열기</a>
+      </div>
+      <p class="muted">이 교육에서 다시 생성해도 같은 주소가 나옵니다.</p>
+    </div>`;
+  const qrHtml = `
+    <div class="section" style="margin:0;">
+      <h3>교육 공유 QR</h3>
+      <div class="course-checkin-qr-layout">
+        <div class="course-checkin-qr-code"><img src="${escapeHtml(qrImageUrl)}" width="190" height="190" alt="${escapeHtml(course.title || "교육")} 공유 QR 코드"></div>
+        <div>
+          <p class="muted">QR을 촬영하면 이 교육의 상세 화면이 열립니다. 출석 체크인 QR과는 별개입니다.</p>
+          <div class="actions">
+            <a class="btn small" href="${escapeHtml(qrImageUrl)}" download="${escapeHtml(qrFileName)}">QR PNG 다운로드</a>
+            <button class="btn small secondary" type="button" data-copy-course-share-url="${escapeHtml(shortUrl)}" data-copy-success="QR에 담긴 교육 단축 주소를 복사했습니다.">QR 주소 복사</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  elements.courseShareTitle.textContent = mode === "short" ? "교육 단축 주소" : "교육 공유 QR";
+  elements.courseShareBody.innerHTML = `
+    <p><strong>${escapeHtml(course.title || "교육")}</strong> 공유 자료입니다.</p>
+    <div style="display:grid;gap:12px;">${mode === "short" ? `${addressHtml}${qrHtml}` : `${qrHtml}${addressHtml}`}</div>
+    <details style="margin-top:12px;">
+      <summary>기존 전체 주소 보기</summary>
+      <label style="margin-top:10px;">전체 주소<input value="${escapeHtml(fullUrl)}" readonly></label>
+      <button class="btn small secondary" style="margin-top:8px;" type="button" data-copy-course-share-url="${escapeHtml(fullUrl)}" data-copy-success="교육 전체 주소를 복사했습니다.">전체 주소 복사</button>
+    </details>`;
+  openModal(elements.courseShareModal, returnFocusElement || document.activeElement);
 }
 
 function requestedCourseIdFromUrl() {
@@ -4380,7 +4483,9 @@ function openCourseDetail(courseId, returnFocusElement = null) {
         <div class="actions" style="margin-top: 14px;">
           ${canApply ? `<button class="btn small" type="button" data-apply-course="${course.id}">신청하기</button>` : `<button class="btn small secondary" type="button" disabled>신청 마감</button>`}
           ${canReview ? `<button class="btn small secondary" type="button" data-login-for-review>${currentReviewForCourse(course.id) ? "공개 후기 수정" : "공개 후기"}</button>` : ""}
-          <button class="btn small secondary" type="button" data-copy-course-link="${escapeHtml(course.id)}">교육 공유하기</button>
+          <button class="btn small secondary" type="button" data-copy-course-link="${escapeHtml(course.id)}">교육 주소 복사</button>
+          <button class="btn small secondary" type="button" data-open-course-share="${escapeHtml(course.id)}" data-share-mode="qr">QR 생성</button>
+          <button class="btn small secondary" type="button" data-open-course-share="${escapeHtml(course.id)}" data-share-mode="short">단축 주소 생성</button>
         </div>
       </div>
       <aside class="section">
@@ -6321,6 +6426,8 @@ function bindEvents() {
     const loginForApplication = event.target.closest("[data-login-for-application]");
     const applyButton = event.target.closest("[data-apply-course]");
     const copyCourseLinkButton = event.target.closest("[data-copy-course-link]");
+    const copyCourseShareUrlButton = event.target.closest("[data-copy-course-share-url]");
+    const openCourseShareButton = event.target.closest("[data-open-course-share]");
     const cancelApplicationButton = event.target.closest("[data-cancel-application]");
     const cancelGuestApplicationButton = event.target.closest("[data-cancel-guest-application]");
     const archivePhotoButton = event.target.closest("[data-open-archive-photo]");
@@ -6377,6 +6484,38 @@ function bindEvents() {
         await copyCourseShareLink(copyCourseLinkButton);
       } catch (error) {
         showToast(error.message || "교육 링크를 복사하지 못했습니다.");
+      }
+      return;
+    }
+    if (openCourseShareButton) {
+      const originalLabel = openCourseShareButton.textContent;
+      try {
+        openCourseShareButton.disabled = true;
+        openCourseShareButton.textContent = "생성 중...";
+        await openCourseShare(
+          openCourseShareButton.dataset.openCourseShare,
+          openCourseShareButton.dataset.shareMode === "short" ? "short" : "qr",
+          openCourseShareButton,
+        );
+      } catch (error) {
+        console.error("Course share generation failed", error);
+        showToast(error.message || "교육 공유 자료를 만들지 못했습니다.");
+      } finally {
+        if (openCourseShareButton.isConnected) {
+          openCourseShareButton.disabled = false;
+          openCourseShareButton.textContent = originalLabel;
+        }
+      }
+      return;
+    }
+    if (copyCourseShareUrlButton) {
+      try {
+        const copied = await copyPublicText(copyCourseShareUrlButton.dataset.copyCourseShareUrl);
+        if (!copied) throw new Error("COPY_FAILED");
+        showToast(copyCourseShareUrlButton.dataset.copySuccess || "교육 주소를 복사했습니다.");
+      } catch (error) {
+        console.warn("Course share URL copy failed", error);
+        showToast("주소를 복사하지 못했습니다. 위 주소를 선택해 직접 복사해 주세요.");
       }
       return;
     }

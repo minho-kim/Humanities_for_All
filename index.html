@@ -136,6 +136,16 @@
     </article>
   </div>
 
+  <div class="modal" id="courseShareModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="courseShareTitle">
+    <article class="modal-card" style="max-width: 680px;">
+      <div class="modal-header">
+        <div><span class="eyebrow">모두의 인문학</span><h2 id="courseShareTitle">교육 공유</h2></div>
+        <button class="icon-btn" type="button" data-close-modal aria-label="교육 공유 닫기">×</button>
+      </div>
+      <div id="courseShareBody"></div>
+    </article>
+  </div>
+
   <div class="modal" id="loginModal" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
     <article class="modal-card" style="max-width: 560px;">
       <div class="modal-header">
@@ -278,7 +288,8 @@
   </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" integrity="sha512-CNgIRecGo7nphbeZ04Sc13ka07paqdeTu0WR1IM4kNcpmBAUSHSQX0FslNhTDadL4O5SAGapGt4FodqL8My0mA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <!-- public.js를 변경해 배포할 때 v 값도 함께 올려 기존 브라우저 캐시를 교체한다. -->
-  <script type="module" src="./assets/public.js?v=202609182245"></script>
+  <script type="module" src="./assets/public.js?v=202609261650"></script>
 </body>
 </html>

@@ -1888,6 +1888,86 @@ async function openOrganizationShare(organizationId, mode = "qr") {
   );
 }
 
+function coursePromotionUrl(course) {
+  if (!course?.id || !ORGANIZATION_ID_PATTERN.test(String(course.id))) return "";
+  return `${PUBLIC_SITE_URL}?course=${encodeURIComponent(course.id)}`;
+}
+
+async function courseShortCode(courseId) {
+  const normalizedId = String(courseId || "").trim().toLowerCase();
+  if (!ORGANIZATION_ID_PATTERN.test(normalizedId) || !globalThis.crypto?.subtle) {
+    throw new Error("교육 단축 주소를 만들 수 없습니다.");
+  }
+  const digest = await globalThis.crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`humanities:course:v1:${normalizedId}`),
+  );
+  return `c-${organizationShortCodeBytes(new Uint8Array(digest).slice(0, 9))}`;
+}
+
+async function courseShortUrl(course) {
+  if (!course?.id || !coursePromotionUrl(course)) {
+    throw new Error("교육을 먼저 저장한 뒤 주소를 만들어 주세요.");
+  }
+  const codedCourses = await Promise.all(state.courses
+    .filter((item) => ORGANIZATION_ID_PATTERN.test(String(item?.id || "")))
+    .map(async (item) => ({ id: item.id, code: await courseShortCode(item.id) })));
+  const code = await courseShortCode(course.id);
+  if (codedCourses.filter((item) => item.code === code).length !== 1) {
+    throw new Error("단축 주소가 다른 교육과 겹쳤습니다. 관리자에게 확인해 주세요.");
+  }
+  return `${PUBLIC_SITE_URL}l.html#${code}`;
+}
+
+async function openCourseShare(courseId, mode = "qr") {
+  const course = courseById(courseId);
+  if (!course) throw new Error("교육 정보를 찾지 못했습니다.");
+  const promotionUrl = coursePromotionUrl(course);
+  const shortUrl = await courseShortUrl(course);
+  const qrImageUrl = courseCheckinQrImage(shortUrl);
+  const qrFileName = `course-${String(course.id).slice(0, 8)}-humanities-qr.png`;
+  const visibilityNote = course.published === false
+    ? '<p class="inline-message warning">현재 비공개 교육입니다. 공개로 저장하기 전에는 이 주소와 QR로 교육을 열 수 없습니다.</p>'
+    : "";
+  const addressHtml = `
+    <div class="section" style="margin:0;">
+      <h3>교육 단축 주소</h3>
+      <label>공유 주소<input value="${escapeHtml(shortUrl)}" readonly></label>
+      <div class="actions" style="margin-top:10px;">
+        <button class="btn small" type="button" data-copy-course-url="${escapeHtml(shortUrl)}" data-copy-success="교육 단축 주소를 복사했습니다.">단축 주소 복사</button>
+        <a class="btn small secondary" href="${escapeHtml(shortUrl)}" target="_blank" rel="noopener noreferrer">주소 열기</a>
+      </div>
+      <p class="media-upload-note">이 교육에서 언제 다시 생성해도 같은 주소가 나옵니다. 외부 사이트로는 연결되지 않습니다.</p>
+    </div>`;
+  const qrHtml = `
+    <div class="section" style="margin:0;">
+      <h3>교육 공유 QR</h3>
+      <div class="course-checkin-qr-layout">
+        <div class="course-checkin-qr-code"><img src="${escapeHtml(qrImageUrl)}" width="190" height="190" alt="${escapeHtml(course.title || "교육")} 공유 QR 코드"></div>
+        <div>
+          <p class="muted">QR을 촬영하면 이 교육의 공개 상세 화면이 열립니다. 출석 체크인 QR과는 별개입니다.</p>
+          <div class="actions">
+            <a class="btn small" href="${escapeHtml(qrImageUrl)}" download="${escapeHtml(qrFileName)}">QR PNG 다운로드</a>
+            <button class="btn small secondary" type="button" data-copy-course-url="${escapeHtml(shortUrl)}" data-copy-success="QR에 담긴 교육 단축 주소를 복사했습니다.">QR 주소 복사</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  const originalAddressHtml = `
+    <details style="margin-top:12px;">
+      <summary>기존 전체 주소 보기</summary>
+      <label style="margin-top:10px;">전체 주소<input value="${escapeHtml(promotionUrl)}" readonly></label>
+      <button class="btn small secondary" style="margin-top:8px;" type="button" data-copy-course-url="${escapeHtml(promotionUrl)}" data-copy-success="교육 전체 주소를 복사했습니다.">전체 주소 복사</button>
+    </details>`;
+  openAdminNotice(
+    mode === "short" ? "교육 단축 주소" : "교육 공유 QR",
+    `<p><strong>${escapeHtml(course.title || "교육")}</strong> 공유 자료입니다.</p>
+     ${visibilityNote}
+     <div style="display:grid;gap:12px;">${mode === "short" ? `${addressHtml}${qrHtml}` : `${qrHtml}${addressHtml}`}</div>
+     ${originalAddressHtml}`,
+  );
+}
+
 async function uploadSiteImage(file, folder, baseName) {
   if (!hasSelectedFile(file)) return "";
   if (!SITE_IMAGE_TYPES.has(file.type)) {
@@ -4396,6 +4476,7 @@ function renderCourseSeriesManagement() {
 
 function renderCourseForm(course = {}) {
   const isEditing = Boolean(course.id);
+  const promotionUrl = isEditing ? coursePromotionUrl(course) : "";
   const seriesPreviousCourseId = isEditing ? "" : state.courseManagement.draftPreviousCourseId;
   const isDeleteAllowed = canDeleteCourse(course);
   const firstSession = state.sessions.find((session) => session.course_id === course.id) || {};
@@ -4452,6 +4533,18 @@ function renderCourseForm(course = {}) {
         <label>교육 자료 PDF 업로드<input name="course_file" type="file" accept="application/pdf,.pdf"></label>
       </div>
       <p class="media-upload-note">PDF 15MB 이하. 저장하면 해당 교육의 공개 자료로 함께 등록됩니다.</p>
+      ${promotionUrl ? `
+        <div style="margin-top: 10px;">
+          <label>공개 교육 주소<input value="${escapeHtml(promotionUrl)}" readonly></label>
+          <div class="actions" style="margin-top: 8px;">
+            <a class="btn small secondary" href="${escapeHtml(promotionUrl)}" target="_blank" rel="noopener noreferrer">주소 열기</a>
+            <button class="btn small secondary" type="button" data-copy-course-url="${escapeHtml(promotionUrl)}" data-copy-success="교육 주소를 복사했습니다.">주소 복사</button>
+            <button class="btn small secondary" type="button" data-open-course-share="${escapeHtml(course.id)}" data-share-mode="qr">공유 QR 생성</button>
+            <button class="btn small secondary" type="button" data-open-course-share="${escapeHtml(course.id)}" data-share-mode="short">단축 주소 생성</button>
+          </div>
+          <p class="media-upload-note">공유 QR은 교육 상세 화면을 여는 용도이며 `QR 출석·알림`의 체크인 QR과 다릅니다. 비공개 교육은 공개로 저장한 뒤 열립니다.</p>
+        </div>
+      ` : ""}
       <label style="margin-top: 10px;"><span><input name="published" type="checkbox" ${course.published !== false ? "checked" : ""} style="width:auto;min-height:auto;"> 공개</span></label>
       <div class="actions" style="margin-top: 14px;">
         <button class="btn" type="submit">${isEditing ? "교육 수정" : "교육 추가"}</button>
@@ -7565,7 +7658,9 @@ function bindEvents() {
     const openApplicationDetailButton = event.target.closest("[data-open-application-detail]");
     const closeApplicationDetailButton = event.target.closest("[data-close-application-detail]");
     const copyOrganizationUrlButton = event.target.closest("[data-copy-organization-url]");
+    const copyCourseUrlButton = event.target.closest("[data-copy-course-url]");
     const openOrganizationShareButton = event.target.closest("[data-open-organization-share]");
+    const openCourseShareButton = event.target.closest("[data-open-course-share]");
     const openCourseCheckinButton = event.target.closest("[data-open-course-checkin]");
     const refreshNotificationManagementButton = event.target.closest("[data-refresh-notification-management]");
     const createTelegramLinkButton = event.target.closest("[data-create-telegram-link]");
@@ -7724,6 +7819,37 @@ function bindEvents() {
           openOrganizationShareButton.disabled = false;
           openOrganizationShareButton.textContent = originalLabel;
         }
+      }
+      return;
+    }
+    if (openCourseShareButton) {
+      const originalLabel = openCourseShareButton.textContent;
+      try {
+        openCourseShareButton.disabled = true;
+        openCourseShareButton.textContent = "생성 중...";
+        await openCourseShare(
+          openCourseShareButton.dataset.openCourseShare,
+          openCourseShareButton.dataset.shareMode === "short" ? "short" : "qr",
+        );
+      } catch (error) {
+        console.error("Course share generation failed", error);
+        showToast(error.message || "교육 공유 자료를 만들지 못했습니다.");
+      } finally {
+        if (openCourseShareButton.isConnected) {
+          openCourseShareButton.disabled = false;
+          openCourseShareButton.textContent = originalLabel;
+        }
+      }
+      return;
+    }
+    if (copyCourseUrlButton) {
+      try {
+        const copied = await copyAdminText(copyCourseUrlButton.dataset.copyCourseUrl);
+        if (!copied) throw new Error("COPY_FAILED");
+        showToast(copyCourseUrlButton.dataset.copySuccess || "교육 주소를 복사했습니다.");
+      } catch (error) {
+        console.warn("Course promotion URL copy failed", error);
+        showToast("주소를 복사하지 못했습니다. 위 주소를 선택해 직접 복사해 주세요.");
       }
       return;
     }
