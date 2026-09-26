@@ -16,6 +16,7 @@ import {
 } from "./supabaseClient.js?v=202608041708";
 
 const PUBLIC_SITE_URL = "https://humanities.yll.or.kr/";
+const COURSE_SHORT_LINK_ORIGIN = "https://h.yll.or.kr";
 
 const state = {
   tab: "dashboard",
@@ -1916,7 +1917,7 @@ async function courseShortUrl(course) {
   if (codedCourses.filter((item) => item.code === code).length !== 1) {
     throw new Error("단축 주소가 다른 교육과 겹쳤습니다. 관리자에게 확인해 주세요.");
   }
-  return `${PUBLIC_SITE_URL}l#${code}`;
+  return `${COURSE_SHORT_LINK_ORIGIN}/${code.slice(2)}`;
 }
 
 async function openCourseShare(courseId, mode = "qr") {

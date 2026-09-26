@@ -18,6 +18,8 @@ import {
   URL_RULES,
 } from "./shared.js?v=202608041708";
 
+const COURSE_SHORT_LINK_ORIGIN = "https://h.yll.or.kr";
+
 const state = {
   organizations: [],
   instructors: [],
@@ -1260,10 +1262,7 @@ async function courseShortUrl(course) {
   if (codedCourses.filter((item) => item.code === code).length !== 1) {
     throw new Error("단축 주소가 다른 교육과 겹쳤습니다. 관리자에게 알려 주세요.");
   }
-  const url = new URL("./l", window.location.href);
-  url.search = "";
-  url.hash = code;
-  return url.toString();
+  return `${COURSE_SHORT_LINK_ORIGIN}/${code.slice(2)}`;
 }
 
 function courseShareQrImage(qrUrl) {
