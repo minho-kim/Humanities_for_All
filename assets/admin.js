@@ -1778,6 +1778,116 @@ function organizationPromotionUrl(organization) {
   return `${PUBLIC_SITE_URL}#organization/${encodeURIComponent(slug)}`;
 }
 
+const ORGANIZATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function organizationShortCodeBytes(bytes) {
+  let binary = "";
+  bytes.forEach((value) => { binary += String.fromCharCode(value); });
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+async function organizationShortCode(organizationId) {
+  const normalizedId = String(organizationId || "").trim().toLowerCase();
+  if (!ORGANIZATION_ID_PATTERN.test(normalizedId) || !globalThis.crypto?.subtle) {
+    throw new Error("단체 단축 주소를 만들 수 없습니다.");
+  }
+  const digest = await globalThis.crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`humanities:organization:v1:${normalizedId}`),
+  );
+  return `o-${organizationShortCodeBytes(new Uint8Array(digest).slice(0, 9))}`;
+}
+
+async function organizationShortUrl(organization) {
+  if (!organization?.id || !organizationPromotionUrl(organization)) {
+    throw new Error("단체를 먼저 저장한 뒤 주소를 만들어 주세요.");
+  }
+  const codedOrganizations = await Promise.all(state.organizations
+    .filter((item) => ORGANIZATION_ID_PATTERN.test(String(item?.id || "")))
+    .map(async (item) => ({ id: item.id, code: await organizationShortCode(item.id) })));
+  const code = await organizationShortCode(organization.id);
+  if (codedOrganizations.filter((item) => item.code === code).length !== 1) {
+    throw new Error("단축 주소가 다른 단체와 겹쳤습니다. 관리자에게 확인해 주세요.");
+  }
+  return `${PUBLIC_SITE_URL}l.html#${code}`;
+}
+
+function copyAdminTextFallback(text) {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.setAttribute("aria-hidden", "true");
+  textarea.style.position = "fixed";
+  textarea.style.inset = "-9999px auto auto -9999px";
+  document.body.appendChild(textarea);
+  try {
+    textarea.select();
+    textarea.setSelectionRange(0, textarea.value.length);
+    return document.execCommand("copy");
+  } finally {
+    textarea.remove();
+  }
+}
+
+async function copyAdminText(text) {
+  const value = String(text || "").trim();
+  if (!value) return false;
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch (error) {
+      console.warn("Admin clipboard API failed; trying fallback", error);
+    }
+  }
+  return copyAdminTextFallback(value);
+}
+
+async function openOrganizationShare(organizationId, mode = "qr") {
+  const organization = organizationById(organizationId);
+  if (!organization) throw new Error("단체 정보를 찾지 못했습니다.");
+  const promotionUrl = organizationPromotionUrl(organization);
+  const shortUrl = await organizationShortUrl(organization);
+  const qrImageUrl = courseCheckinQrImage(shortUrl);
+  const qrFileName = `${safeStorageSegment(organization.slug || organization.name, "organization")}-humanities-qr.png`;
+  const addressHtml = `
+    <div class="section" style="margin:0;">
+      <h3>단축 주소</h3>
+      <label>공유 주소<input value="${escapeHtml(shortUrl)}" readonly></label>
+      <div class="actions" style="margin-top:10px;">
+        <button class="btn small" type="button" data-copy-organization-url="${escapeHtml(shortUrl)}" data-copy-success="단축 주소를 복사했습니다.">단축 주소 복사</button>
+        <a class="btn small secondary" href="${escapeHtml(shortUrl)}" target="_blank" rel="noreferrer">주소 열기</a>
+      </div>
+      <p class="media-upload-note">이 단체에서 언제 다시 생성해도 같은 주소가 나옵니다. 외부 사이트로는 연결되지 않습니다.</p>
+    </div>`;
+  const qrHtml = `
+    <div class="section" style="margin:0;">
+      <h3>단체 교육 QR</h3>
+      <div class="course-checkin-qr-layout">
+        <div class="course-checkin-qr-code"><img src="${escapeHtml(qrImageUrl)}" width="190" height="190" alt="${escapeHtml(organization.name || "단체")} 교육 QR 코드"></div>
+        <div>
+          <p class="muted">QR을 촬영하면 이 단체의 소개와 공개 교육만 표시됩니다.</p>
+          <div class="actions">
+            <a class="btn small" href="${escapeHtml(qrImageUrl)}" download="${escapeHtml(qrFileName)}">QR PNG 다운로드</a>
+            <button class="btn small secondary" type="button" data-copy-organization-url="${escapeHtml(shortUrl)}" data-copy-success="QR에 담긴 단축 주소를 복사했습니다.">QR 주소 복사</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  const originalAddressHtml = `
+    <details style="margin-top:12px;">
+      <summary>기존 전체 주소 보기</summary>
+      <label style="margin-top:10px;">전체 주소<input value="${escapeHtml(promotionUrl)}" readonly></label>
+      <button class="btn small secondary" style="margin-top:8px;" type="button" data-copy-organization-url="${escapeHtml(promotionUrl)}" data-copy-success="전체 주소를 복사했습니다.">전체 주소 복사</button>
+    </details>`;
+  openAdminNotice(
+    mode === "short" ? "단체 단축 주소" : "단체 QR 코드",
+    `<p><strong>${escapeHtml(organization.name || "단체")}</strong> 공유 자료입니다.</p>
+     <div style="display:grid;gap:12px;">${mode === "short" ? `${addressHtml}${qrHtml}` : `${qrHtml}${addressHtml}`}</div>
+     ${originalAddressHtml}`,
+  );
+}
+
 async function uploadSiteImage(file, folder, baseName) {
   if (!hasSelectedFile(file)) return "";
   if (!SITE_IMAGE_TYPES.has(file.type)) {
@@ -3819,9 +3929,11 @@ function renderOrganizationForm(organization = {}) {
           <label>홍보용 단체 교육 주소<input value="${escapeHtml(promotionUrl)}" readonly></label>
           <div class="actions" style="margin-top: 8px;">
             <a class="btn small secondary" href="${escapeHtml(promotionUrl)}" target="_blank" rel="noreferrer">주소 열기</a>
-            <button class="btn small secondary" type="button" data-copy-organization-url="${escapeHtml(promotionUrl)}">QR 코드용 주소 복사</button>
+            <button class="btn small secondary" type="button" data-copy-organization-url="${escapeHtml(promotionUrl)}" data-copy-success="홍보용 단체 교육 주소를 복사했습니다.">주소 복사</button>
+            <button class="btn small secondary" type="button" data-open-organization-share="${escapeHtml(organization.id)}" data-share-mode="qr">QR 생성</button>
+            <button class="btn small secondary" type="button" data-open-organization-share="${escapeHtml(organization.id)}" data-share-mode="short">단축 주소 생성</button>
           </div>
-          <p class="media-upload-note">이 주소를 QR 코드로 만들면 이 단체의 공개 교육만 표시됩니다. 저장된 주소 이름은 변경할 수 없습니다.</p>
+          <p class="media-upload-note">QR과 단축 주소는 이 단체의 공개 교육만 표시하며, 같은 단체에서는 언제 다시 만들어도 그대로 유지됩니다. 저장된 주소 이름은 변경할 수 없습니다.</p>
         </div>
       ` : ""}
       <label style="margin-top: 10px;">단체 소개<textarea name="description" placeholder="공개 페이지에 표시할 단체 소개를 입력하세요.">${escapeHtml(organization.description || "")}</textarea></label>
@@ -7453,6 +7565,7 @@ function bindEvents() {
     const openApplicationDetailButton = event.target.closest("[data-open-application-detail]");
     const closeApplicationDetailButton = event.target.closest("[data-close-application-detail]");
     const copyOrganizationUrlButton = event.target.closest("[data-copy-organization-url]");
+    const openOrganizationShareButton = event.target.closest("[data-open-organization-share]");
     const openCourseCheckinButton = event.target.closest("[data-open-course-checkin]");
     const refreshNotificationManagementButton = event.target.closest("[data-refresh-notification-management]");
     const createTelegramLinkButton = event.target.closest("[data-create-telegram-link]");
@@ -7594,10 +7707,31 @@ function bindEvents() {
       await openCourseCheckinAdmin(openCourseCheckinButton.dataset.openCourseCheckin);
       return;
     }
+    if (openOrganizationShareButton) {
+      const originalLabel = openOrganizationShareButton.textContent;
+      try {
+        openOrganizationShareButton.disabled = true;
+        openOrganizationShareButton.textContent = "생성 중...";
+        await openOrganizationShare(
+          openOrganizationShareButton.dataset.openOrganizationShare,
+          openOrganizationShareButton.dataset.shareMode === "short" ? "short" : "qr",
+        );
+      } catch (error) {
+        console.error("Organization share generation failed", error);
+        showToast(error.message || "단체 공유 자료를 만들지 못했습니다.");
+      } finally {
+        if (openOrganizationShareButton.isConnected) {
+          openOrganizationShareButton.disabled = false;
+          openOrganizationShareButton.textContent = originalLabel;
+        }
+      }
+      return;
+    }
     if (copyOrganizationUrlButton) {
       try {
-        await navigator.clipboard.writeText(copyOrganizationUrlButton.dataset.copyOrganizationUrl);
-        showToast("홍보용 단체 교육 주소를 복사했습니다.");
+        const copied = await copyAdminText(copyOrganizationUrlButton.dataset.copyOrganizationUrl);
+        if (!copied) throw new Error("COPY_FAILED");
+        showToast(copyOrganizationUrlButton.dataset.copySuccess || "주소를 복사했습니다.");
       } catch (error) {
         console.warn("Organization promotion URL copy failed", error);
         showToast("주소를 복사하지 못했습니다. 위 주소를 선택해 직접 복사해 주세요.");
