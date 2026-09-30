@@ -41,6 +41,7 @@ const state = {
     records: [],
     loading: false,
     error: "",
+    editingRecordId: "",
   },
   activeApplicationId: "",
   expectationFilters: {
@@ -2401,6 +2402,7 @@ function setCourseFilterSelection(target, courseId = "") {
     state.attendanceManagement.courseId = courseId;
     state.attendanceManagement.records = [];
     state.attendanceManagement.error = "";
+    state.attendanceManagement.editingRecordId = "";
     closeModal(elements.adminNoticeModal);
     renderAttendanceManagement();
     if (courseId) loadAttendanceManagement(courseId);
@@ -5624,6 +5626,9 @@ async function loadAttendanceManagement(courseId) {
     const result = await invokeCourseCheckinAdmin("admin_get", courseId);
     if (state.attendanceManagement.courseId !== courseId) return;
     state.attendanceManagement.records = actualAttendanceRecords(result.records || []);
+    if (!state.attendanceManagement.records.some((record) => record.id === state.attendanceManagement.editingRecordId && record.manual_editable === true)) {
+      state.attendanceManagement.editingRecordId = "";
+    }
   } catch (error) {
     if (state.attendanceManagement.courseId !== courseId) return;
     state.attendanceManagement.records = [];
@@ -5640,6 +5645,8 @@ function renderAttendanceManagement() {
   const management = state.attendanceManagement;
   const course = courseById(management.courseId);
   const records = actualAttendanceRecords(management.records);
+  const editingRecord = records.find((record) => record.id === management.editingRecordId && record.manual_editable === true) || null;
+  const isEditing = Boolean(editingRecord);
   const deniedCount = records.filter((record) => record.photo_consent_status === "DENIED").length;
   elements.adminContent.innerHTML = `
     <h2>출석 관리</h2>
@@ -5661,63 +5668,72 @@ function renderAttendanceManagement() {
             <button class="btn small" type="button" data-print-actual-attendance ${records.length ? "" : "disabled"}>교육 출석부 출력</button>
           </div>
         </div>
-        <details class="privacy-details" style="margin: 14px 0;">
-          <summary>누락 참석자 추가</summary>
-          <p class="muted">현장에서 실제 참석했지만 QR 기록에서 빠진 사람만 등록합니다. 같은 교육의 같은 이름·전화번호는 중복 저장하지 않습니다.</p>
+        <details class="privacy-details" style="margin: 14px 0;" ${isEditing ? "open" : ""}>
+          <summary>누락 참석자 수기 등록·수정</summary>
+          <p class="muted">현장에서 실제 참석했지만 QR 기록에서 빠진 사람만 등록합니다. 관리자가 수기로 등록한 행은 아래 명단에서 수정할 수 있으며, 참가자가 직접 제출한 QR 출석은 여기서 바꾸지 않습니다.</p>
           <form data-admin-attendance-form>
             <input type="hidden" name="course_id" value="${escapeHtml(course.id)}">
+            <input type="hidden" name="record_id" value="${escapeHtml(editingRecord?.id || "")}">
             <div class="admin-grid">
-              <label>이름<input name="participant_name" maxlength="80" autocomplete="off" required></label>
-              <label>휴대전화번호<input name="phone" type="tel" maxlength="13" inputmode="numeric" placeholder="010-0000-0000" autocomplete="off" required></label>
+              <label>이름<input name="participant_name" maxlength="80" autocomplete="off" value="${escapeHtml(editingRecord?.participant_name || "")}" required></label>
+              <label>휴대전화번호<input name="phone" type="tel" maxlength="13" inputmode="numeric" placeholder="010-0000-0000" autocomplete="off" value="${escapeHtml(editingRecord?.phone ? formatMobilePhone(editingRecord.phone) : "")}" required></label>
               <label>성별
                 <select name="gender" required>
                   <option value="">선택해 주세요</option>
-                  <option value="male">남</option>
-                  <option value="female">여</option>
-                  <option value="other">기타</option>
+                  <option value="male" ${editingRecord?.gender === "male" ? "selected" : ""}>남</option>
+                  <option value="female" ${editingRecord?.gender === "female" ? "selected" : ""}>여</option>
+                  <option value="other" ${editingRecord?.gender === "other" ? "selected" : ""}>기타</option>
                 </select>
               </label>
               <label>생년월일
-                <input name="birth_date" type="text" maxlength="10" inputmode="numeric" placeholder="예: 1980-05-12" autocomplete="off" required>
+                <input name="birth_date" type="text" maxlength="10" inputmode="numeric" placeholder="예: 1980-05-12" autocomplete="off" value="${escapeHtml(editingRecord?.birth_date || "")}" required>
                 <small>숫자 8자리를 입력하면 하이픈이 자동으로 들어갑니다.</small>
               </label>
               <label>참여 경로
                 <select name="participation_route" required>
                   <option value="">선택해 주세요</option>
-                  <option value="website">홈페이지</option>
-                  <option value="sns">SNS</option>
-                  <option value="facility_board">시설 게시판</option>
-                  <option value="acquaintance">지인</option>
-                  <option value="other">기타</option>
+                  <option value="website" ${editingRecord?.participation_route === "website" ? "selected" : ""}>홈페이지</option>
+                  <option value="sns" ${editingRecord?.participation_route === "sns" ? "selected" : ""}>SNS</option>
+                  <option value="facility_board" ${editingRecord?.participation_route === "facility_board" ? "selected" : ""}>시설 게시판</option>
+                  <option value="acquaintance" ${editingRecord?.participation_route === "acquaintance" ? "selected" : ""}>지인</option>
+                  <option value="other" ${editingRecord?.participation_route === "other" ? "selected" : ""}>기타</option>
                 </select>
               </label>
-              <label class="hidden" data-admin-attendance-route-other>기타 참여 경로<input name="participation_route_other" maxlength="80" autocomplete="off"></label>
+              <label class="${editingRecord?.participation_route === "other" ? "" : "hidden"}" data-admin-attendance-route-other>기타 참여 경로<input name="participation_route_other" maxlength="80" autocomplete="off" value="${escapeHtml(editingRecord?.participation_route_other || "")}" ${editingRecord?.participation_route === "other" ? "required" : ""}></label>
             </div>
             <fieldset class="qr-photo-consent" style="margin-top: 12px;">
               <legend>사진 촬영·이용 확인</legend>
               <div class="actions">
-                <label class="check-row"><input name="photo_consent_status" type="radio" value="GRANTED" required><span>동의</span></label>
-                <label class="check-row"><input name="photo_consent_status" type="radio" value="DENIED" required><span>거부</span></label>
+                <label class="check-row"><input name="photo_consent_status" type="radio" value="GRANTED" ${editingRecord?.photo_consent_status === "GRANTED" ? "checked" : ""} required><span>동의</span></label>
+                <label class="check-row"><input name="photo_consent_status" type="radio" value="DENIED" ${editingRecord?.photo_consent_status === "DENIED" ? "checked" : ""} required><span>거부</span></label>
               </div>
             </fieldset>
-            <label class="check-row"><input name="age_confirmed" type="checkbox" required><span>참여자가 만 14세 이상임을 확인했습니다.</span></label>
-            <label class="check-row"><input name="privacy_confirmed" type="checkbox" required><span>참여자에게 이름·휴대전화번호·실제 출석 기록의 수집과 교육 종료일부터 5년간 출석 증빙 보관 동의를 확인했습니다.</span></label>
-            <label class="check-row"><input name="attendance_info_confirmed" type="checkbox" required><span>성별·생년월일·참여 경로와 사진 촬영·이용 동의 또는 거부 상태를 참여자에게 직접 확인했습니다.</span></label>
-            <div class="actions" style="margin-top: 12px;"><button class="btn small" type="submit">누락 참석자 등록</button></div>
+            ${isEditing ? `
+              <label class="check-row"><input name="attendance_info_confirmed" type="checkbox" required><span>수정할 이름·연락처·출석 정보를 참여자에게 다시 확인했습니다.</span></label>
+            ` : `
+              <label class="check-row"><input name="age_confirmed" type="checkbox" required><span>참여자가 만 14세 이상임을 확인했습니다.</span></label>
+              <label class="check-row"><input name="privacy_confirmed" type="checkbox" required><span>참여자에게 이름·휴대전화번호·실제 출석 기록의 수집과 교육 종료일부터 5년간 출석 증빙 보관 동의를 확인했습니다.</span></label>
+              <label class="check-row"><input name="attendance_info_confirmed" type="checkbox" required><span>성별·생년월일·참여 경로와 사진 촬영·이용 동의 또는 거부 상태를 참여자에게 직접 확인했습니다.</span></label>
+            `}
+            <div class="actions" style="margin-top: 12px;">
+              <button class="btn small" type="submit">${isEditing ? "수정 내용 저장" : "누락 참석자 등록"}</button>
+              ${isEditing ? '<button class="btn small secondary" type="button" data-cancel-admin-attendance-edit>수정 취소</button>' : ""}
+            </div>
           </form>
         </details>
         <p class="muted">명단에는 성명, 전체 휴대전화번호, 생년월일, 성별, 참여 경로, 사진 촬영·이용 동의 상태, 출석 시각과 방법이 표시됩니다. UUID·내부 상태값은 출력하지 않습니다.</p>
         ${records.length ? `<div class="admin-list">${records.map((record) => `
           <div class="admin-row">
             <div>
+              <div class="badge-row" style="margin-bottom: 7px;">
+                <span class="badge">${escapeHtml(courseCheckinMethodLabel(record.checkin_method))}</span>
+                <span class="badge ${record.photo_consent_status === "DENIED" ? "red" : record.photo_consent_status === "GRANTED" ? "green" : "gray"}">사진 ${escapeHtml(checkinPhotoConsentLabel(record.photo_consent_status))}</span>
+              </div>
               <strong>${escapeHtml(record.participant_name || "미입력")}</strong>
               <p>${escapeHtml(record.phone ? formatMobilePhone(record.phone) : "번호 삭제됨")} · ${escapeHtml(record.birth_date || "생년월일 미입력")} · ${escapeHtml(checkinGenderLabel(record.gender))}</p>
               <p>${escapeHtml(checkinParticipationRouteLabel(record))} · ${escapeHtml(formatDateTime(record.checked_in_at))}</p>
             </div>
-            <div class="badge-row">
-              <span class="badge">${escapeHtml(courseCheckinMethodLabel(record.checkin_method))}</span>
-              <span class="badge ${record.photo_consent_status === "DENIED" ? "red" : record.photo_consent_status === "GRANTED" ? "green" : "gray"}">사진 ${escapeHtml(checkinPhotoConsentLabel(record.photo_consent_status))}</span>
-            </div>
+            ${record.manual_editable === true ? `<div class="actions"><button class="btn small secondary" type="button" data-edit-admin-attendance="${escapeHtml(record.id)}">수정</button></div>` : ""}
           </div>`).join("")}</div>` : '<div class="empty">이 교육의 실제 출석 기록이 없습니다.</div>'}
       </section>`}
   `;
@@ -5729,6 +5745,8 @@ async function recordAdminAttendance(event) {
   if (!form) return;
   const formData = new FormData(form);
   const courseId = String(formData.get("course_id") || "");
+  const recordId = String(formData.get("record_id") || "");
+  const isEditing = Boolean(recordId);
   const course = courseById(courseId);
   const participantName = String(formData.get("participant_name") || "").trim();
   const phone = formatMobilePhone(formData.get("phone"));
@@ -5738,18 +5756,25 @@ async function recordAdminAttendance(event) {
     ? String(formData.get("participation_route_other") || "").trim()
     : "";
 
-  if (!course || !canManageCourseAttendance(course)) throw new Error("교육 시작 시각부터 누락 참석자를 추가할 수 있습니다.");
+  if (!course || !canManageCourseAttendance(course)) throw new Error("교육 시작 시각부터 누락 참석자를 관리할 수 있습니다.");
+  if (isEditing && !state.attendanceManagement.records.some((record) => record.id === recordId && record.manual_editable === true)) {
+    throw new Error("관리자가 수기로 등록한 누락 참석자만 수정할 수 있습니다.");
+  }
   if (!participantName) throw new Error("참석자 이름을 입력해 주세요.");
   if (!isValidMobilePhone(phone)) throw new Error("010으로 시작하는 휴대전화번호 11자리를 입력해 주세요.");
   if (!validAttendanceBirthDate(birthDate)) throw new Error("생년월일은 1900년 이후의 실제 날짜로 입력해 주세요. 참여자는 만 14세 이상이어야 합니다.");
   if (!participationRoute) throw new Error("참여 경로를 선택해 주세요.");
   if (participationRoute === "other" && !participationRouteOther) throw new Error("기타 참여 경로를 입력해 주세요.");
   if (!formData.get("photo_consent_status")) throw new Error("사진 촬영·이용 동의 또는 거부를 확인해 주세요.");
-  if (formData.get("age_confirmed") !== "on" || formData.get("privacy_confirmed") !== "on" || formData.get("attendance_info_confirmed") !== "on") {
+  if (isEditing && formData.get("attendance_info_confirmed") !== "on") {
+    throw new Error("수정 내용을 참여자에게 확인했는지 체크해 주세요.");
+  }
+  if (!isEditing && (formData.get("age_confirmed") !== "on" || formData.get("privacy_confirmed") !== "on" || formData.get("attendance_info_confirmed") !== "on")) {
     throw new Error("참여자에게 확인한 출석·개인정보 항목을 모두 체크해 주세요.");
   }
 
-  const result = await invokeCourseCheckinAdmin("admin_record_attendance", courseId, {
+  const result = await invokeCourseCheckinAdmin(isEditing ? "admin_update_attendance" : "admin_record_attendance", courseId, {
+    record_id: recordId || undefined,
     participant_name: participantName,
     phone,
     gender: String(formData.get("gender") || ""),
@@ -5757,14 +5782,17 @@ async function recordAdminAttendance(event) {
     participation_route: participationRoute,
     participation_route_other: participationRouteOther,
     photo_consent_status: String(formData.get("photo_consent_status") || ""),
-    age_confirmed: true,
-    privacy_confirmed: true,
+    age_confirmed: !isEditing,
+    privacy_confirmed: !isEditing,
     attendance_info_confirmed: true,
   });
   const duplicated = result.status === "ALREADY_RECORDED";
   if (!duplicated) form.reset();
+  state.attendanceManagement.editingRecordId = "";
   await loadAttendanceManagement(courseId);
-  showToast(duplicated
+  showToast(isEditing
+    ? result.status === "UNCHANGED" ? "변경된 출석 정보가 없습니다." : "누락 참석자 정보를 수정했습니다."
+    : duplicated
     ? "이미 등록된 실제 출석자라 중복 추가하지 않았습니다."
     : "누락 참석자를 실제 출석 명단에 등록했습니다.");
 }
@@ -7548,7 +7576,7 @@ async function reloadAdminData() {
     state.sessions = [];
     state.archives = [];
     state.applications = [];
-    state.attendanceManagement = { courseId: "", records: [], loading: false, error: "" };
+    state.attendanceManagement = { courseId: "", records: [], loading: false, error: "", editingRecordId: "" };
     state.attendanceDocuments = [];
     state.reviews = [];
     state.feedbacks = [];
@@ -7626,6 +7654,8 @@ function bindEvents() {
     const unconfirmAttendanceButton = event.target.closest("[data-unconfirm-attendance]");
     const rosterButton = event.target.closest("[data-print-roster]");
     const printActualAttendanceButton = event.target.closest("[data-print-actual-attendance]");
+    const editAdminAttendanceButton = event.target.closest("[data-edit-admin-attendance]");
+    const cancelAdminAttendanceEditButton = event.target.closest("[data-cancel-admin-attendance-edit]");
     const addWalkInButton = event.target.closest("[data-add-walk-in-attendee]");
     const attendanceDocumentButton = event.target.closest("[data-open-attendance-document]");
     const editArchiveButton = event.target.closest("[data-edit-archive]");
@@ -8310,6 +8340,27 @@ function bindEvents() {
       } finally {
         if (printActualAttendanceButton.isConnected) printActualAttendanceButton.disabled = false;
       }
+      return;
+    }
+    if (editAdminAttendanceButton) {
+      const recordId = String(editAdminAttendanceButton.dataset.editAdminAttendance || "");
+      const record = state.attendanceManagement.records.find((item) => item.id === recordId && item.manual_editable === true);
+      if (!record) {
+        showToast("수정할 수 있는 수기 출석 기록을 찾지 못했습니다.");
+        return;
+      }
+      state.attendanceManagement.editingRecordId = recordId;
+      renderAttendanceManagement();
+      window.requestAnimationFrame(() => {
+        const form = document.querySelector("[data-admin-attendance-form]");
+        form?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        form?.querySelector('input[name="participant_name"]')?.focus();
+      });
+      return;
+    }
+    if (cancelAdminAttendanceEditButton) {
+      state.attendanceManagement.editingRecordId = "";
+      renderAttendanceManagement();
       return;
     }
     if (addWalkInButton) {
