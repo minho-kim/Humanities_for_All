@@ -4856,7 +4856,7 @@ function courseCheckinMethodLabel(method) {
 }
 
 function checkinGenderLabel(value) {
-  return { male: "남", female: "여", other: "기타" }[String(value || "")] || "미입력";
+  return { male: "남", female: "여", other: "기타", prefer_not: "응답하지 않음" }[String(value || "")] || "미입력";
 }
 
 function checkinParticipationRouteLabel(record) {
@@ -5626,7 +5626,7 @@ async function loadAttendanceManagement(courseId) {
     const result = await invokeCourseCheckinAdmin("admin_get", courseId);
     if (state.attendanceManagement.courseId !== courseId) return;
     state.attendanceManagement.records = actualAttendanceRecords(result.records || []);
-    if (!state.attendanceManagement.records.some((record) => record.id === state.attendanceManagement.editingRecordId && record.manual_editable === true)) {
+    if (!state.attendanceManagement.records.some((record) => record.id === state.attendanceManagement.editingRecordId && record.record_editable === true)) {
       state.attendanceManagement.editingRecordId = "";
     }
   } catch (error) {
@@ -5645,7 +5645,7 @@ function renderAttendanceManagement() {
   const management = state.attendanceManagement;
   const course = courseById(management.courseId);
   const records = actualAttendanceRecords(management.records);
-  const editingRecord = records.find((record) => record.id === management.editingRecordId && record.manual_editable === true) || null;
+  const editingRecord = records.find((record) => record.id === management.editingRecordId && record.record_editable === true) || null;
   const isEditing = Boolean(editingRecord);
   const deniedCount = records.filter((record) => record.photo_consent_status === "DENIED").length;
   elements.adminContent.innerHTML = `
@@ -5669,8 +5669,8 @@ function renderAttendanceManagement() {
           </div>
         </div>
         <details class="privacy-details" style="margin: 14px 0;" ${isEditing ? "open" : ""}>
-          <summary>누락 참석자 수기 등록·수정</summary>
-          <p class="muted">현장에서 실제 참석했지만 QR 기록에서 빠진 사람만 등록합니다. 관리자가 수기로 등록한 행은 아래 명단에서 수정할 수 있으며, 참가자가 직접 제출한 QR 출석은 여기서 바꾸지 않습니다.</p>
+          <summary>누락 참석자 등록·출석 정보 수정</summary>
+          <p class="muted">현장에서 실제 참석했지만 QR 기록에서 빠진 사람을 등록합니다. 아래 명단의 수정 버튼으로 QR·수기 출석의 잘못 입력된 정보를 바로잡을 수 있으며, 삭제는 중복 등 오류가 확인된 관리자 수기 등록분만 가능합니다.</p>
           <form data-admin-attendance-form>
             <input type="hidden" name="course_id" value="${escapeHtml(course.id)}">
             <input type="hidden" name="record_id" value="${escapeHtml(editingRecord?.id || "")}">
@@ -5683,6 +5683,7 @@ function renderAttendanceManagement() {
                   <option value="male" ${editingRecord?.gender === "male" ? "selected" : ""}>남</option>
                   <option value="female" ${editingRecord?.gender === "female" ? "selected" : ""}>여</option>
                   <option value="other" ${editingRecord?.gender === "other" ? "selected" : ""}>기타</option>
+                  <option value="prefer_not" ${editingRecord?.gender === "prefer_not" ? "selected" : ""}>응답하지 않음</option>
                 </select>
               </label>
               <label>생년월일
@@ -5723,17 +5724,22 @@ function renderAttendanceManagement() {
         </details>
         <p class="muted">명단에는 성명, 전체 휴대전화번호, 생년월일, 성별, 참여 경로, 사진 촬영·이용 동의 상태, 출석 시각과 방법이 표시됩니다. UUID·내부 상태값은 출력하지 않습니다.</p>
         ${records.length ? `<div class="admin-list">${records.map((record) => `
-          <div class="admin-row">
-            <div>
-              <div class="badge-row" style="margin-bottom: 7px;">
-                <span class="badge">${escapeHtml(courseCheckinMethodLabel(record.checkin_method))}</span>
-                <span class="badge ${record.photo_consent_status === "DENIED" ? "red" : record.photo_consent_status === "GRANTED" ? "green" : "gray"}">사진 ${escapeHtml(checkinPhotoConsentLabel(record.photo_consent_status))}</span>
-              </div>
+          <div class="admin-row" style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:14px 0;border-bottom:1px solid var(--line);">
+            <div style="min-width:min(100%,260px);">
               <strong>${escapeHtml(record.participant_name || "미입력")}</strong>
               <p>${escapeHtml(record.phone ? formatMobilePhone(record.phone) : "번호 삭제됨")} · ${escapeHtml(record.birth_date || "생년월일 미입력")} · ${escapeHtml(checkinGenderLabel(record.gender))}</p>
               <p>${escapeHtml(checkinParticipationRouteLabel(record))} · ${escapeHtml(formatDateTime(record.checked_in_at))}</p>
             </div>
-            ${record.manual_editable === true ? `<div class="actions"><button class="btn small secondary" type="button" data-edit-admin-attendance="${escapeHtml(record.id)}">수정</button></div>` : ""}
+            <div style="display:grid;justify-items:end;gap:8px;margin-left:auto;">
+              <div class="badge-row" style="justify-content:flex-end;">
+                <span class="badge">${escapeHtml(courseCheckinMethodLabel(record.checkin_method))}</span>
+                <span class="badge ${record.photo_consent_status === "DENIED" ? "red" : record.photo_consent_status === "GRANTED" ? "green" : "gray"}">사진 ${escapeHtml(checkinPhotoConsentLabel(record.photo_consent_status))}</span>
+              </div>
+              <div class="actions" style="justify-content:flex-end;">
+                ${record.record_editable === true ? `<button class="btn small secondary" type="button" data-edit-admin-attendance="${escapeHtml(record.id)}">수정</button>` : ""}
+                ${record.manual_deletable === true ? `<button class="btn small danger" type="button" data-delete-admin-attendance="${escapeHtml(record.id)}">삭제</button>` : ""}
+              </div>
+            </div>
           </div>`).join("")}</div>` : '<div class="empty">이 교육의 실제 출석 기록이 없습니다.</div>'}
       </section>`}
   `;
@@ -5757,8 +5763,8 @@ async function recordAdminAttendance(event) {
     : "";
 
   if (!course || !canManageCourseAttendance(course)) throw new Error("교육 시작 시각부터 누락 참석자를 관리할 수 있습니다.");
-  if (isEditing && !state.attendanceManagement.records.some((record) => record.id === recordId && record.manual_editable === true)) {
-    throw new Error("관리자가 수기로 등록한 누락 참석자만 수정할 수 있습니다.");
+  if (isEditing && !state.attendanceManagement.records.some((record) => record.id === recordId && record.record_editable === true)) {
+    throw new Error("수정할 수 있는 출석 기록을 찾지 못했습니다.");
   }
   if (!participantName) throw new Error("참석자 이름을 입력해 주세요.");
   if (!isValidMobilePhone(phone)) throw new Error("010으로 시작하는 휴대전화번호 11자리를 입력해 주세요.");
@@ -5791,10 +5797,36 @@ async function recordAdminAttendance(event) {
   state.attendanceManagement.editingRecordId = "";
   await loadAttendanceManagement(courseId);
   showToast(isEditing
-    ? result.status === "UNCHANGED" ? "변경된 출석 정보가 없습니다." : "누락 참석자 정보를 수정했습니다."
+    ? result.status === "UNCHANGED" ? "변경된 출석 정보가 없습니다." : "출석 정보를 수정했습니다."
     : duplicated
     ? "이미 등록된 실제 출석자라 중복 추가하지 않았습니다."
     : "누락 참석자를 실제 출석 명단에 등록했습니다.");
+}
+
+async function deleteAdminAttendance(event) {
+  event.preventDefault();
+  const form = getSubmitForm(event);
+  if (!form) return;
+  const formData = new FormData(form);
+  const courseId = String(formData.get("course_id") || "");
+  const recordId = String(formData.get("record_id") || "");
+  const reason = String(formData.get("reason") || "").replace(/\s+/g, " ").trim();
+  const course = courseById(courseId);
+  const record = state.attendanceManagement.records.find((item) => item.id === recordId && item.manual_deletable === true);
+  if (!course || !canManageCourseAttendance(course)) throw new Error("이 교육의 출석 관리 권한을 확인해 주세요.");
+  if (!record) throw new Error("삭제할 수 있는 관리자 수기 출석 기록을 찾지 못했습니다.");
+  if (reason.length < 2) throw new Error("삭제 사유를 2자 이상 입력해 주세요.");
+
+  const result = await invokeCourseCheckinAdmin("admin_delete_attendance", courseId, {
+    record_id: recordId,
+    reason,
+  });
+  state.attendanceManagement.editingRecordId = "";
+  closeModal(elements.adminNoticeModal);
+  await loadAttendanceManagement(courseId);
+  showToast(result.status === "ALREADY_DELETED"
+    ? "이미 삭제된 수기 출석 기록입니다."
+    : "수기 출석 기록을 삭제했습니다.");
 }
 
 function feedbackOptionCounts(feedbacks, property, labels) {
@@ -7655,6 +7687,7 @@ function bindEvents() {
     const rosterButton = event.target.closest("[data-print-roster]");
     const printActualAttendanceButton = event.target.closest("[data-print-actual-attendance]");
     const editAdminAttendanceButton = event.target.closest("[data-edit-admin-attendance]");
+    const deleteAdminAttendanceButton = event.target.closest("[data-delete-admin-attendance]");
     const cancelAdminAttendanceEditButton = event.target.closest("[data-cancel-admin-attendance-edit]");
     const addWalkInButton = event.target.closest("[data-add-walk-in-attendee]");
     const attendanceDocumentButton = event.target.closest("[data-open-attendance-document]");
@@ -8344,9 +8377,9 @@ function bindEvents() {
     }
     if (editAdminAttendanceButton) {
       const recordId = String(editAdminAttendanceButton.dataset.editAdminAttendance || "");
-      const record = state.attendanceManagement.records.find((item) => item.id === recordId && item.manual_editable === true);
+      const record = state.attendanceManagement.records.find((item) => item.id === recordId && item.record_editable === true);
       if (!record) {
-        showToast("수정할 수 있는 수기 출석 기록을 찾지 못했습니다.");
+        showToast("수정할 수 있는 출석 기록을 찾지 못했습니다.");
         return;
       }
       state.attendanceManagement.editingRecordId = recordId;
@@ -8356,6 +8389,32 @@ function bindEvents() {
         form?.scrollIntoView({ behavior: "smooth", block: "nearest" });
         form?.querySelector('input[name="participant_name"]')?.focus();
       });
+      return;
+    }
+    if (deleteAdminAttendanceButton) {
+      const recordId = String(deleteAdminAttendanceButton.dataset.deleteAdminAttendance || "");
+      const record = state.attendanceManagement.records.find((item) => item.id === recordId && item.manual_deletable === true);
+      const course = courseById(state.attendanceManagement.courseId);
+      if (!record || !course || !canManageCourseAttendance(course)) {
+        showToast("삭제할 수 있는 관리자 수기 출석 기록을 찾지 못했습니다.");
+        return;
+      }
+      openAdminNotice("수기 출석 기록 삭제", `
+        <p><strong>${escapeHtml(record.participant_name || "참석자")}</strong>님의 관리자 수기 출석 기록을 삭제합니다.</p>
+        <p class="muted">QR 출석이 따로 있으면 QR 기록은 그대로 유지됩니다. 이 수기 기록과 연결된 수정 이력·후처리 자료는 함께 정리되며 삭제한 개인정보는 자동 복구할 수 없습니다.</p>
+        <form data-delete-admin-attendance-form>
+          <input type="hidden" name="course_id" value="${escapeHtml(course.id)}">
+          <input type="hidden" name="record_id" value="${escapeHtml(record.id)}">
+          <label>삭제 사유
+            <textarea name="reason" minlength="2" maxlength="300" required placeholder="예: QR 출석과 중복 등록"></textarea>
+          </label>
+          <div class="actions" style="margin-top:14px;">
+            <button class="btn danger" type="submit">사유를 기록하고 삭제</button>
+            <button class="btn secondary" type="button" data-close-admin-notice>취소</button>
+          </div>
+        </form>
+      `);
+      window.requestAnimationFrame(() => elements.adminNoticeBody.querySelector('textarea[name="reason"]')?.focus());
       return;
     }
     if (cancelAdminAttendanceEditButton) {
@@ -8781,6 +8840,7 @@ function bindEvents() {
     else if (event.target.matches("[data-roundtable-sms-form]")) handler = queueRoundtableSms;
     else if (event.target.matches("[data-attendance-document-form]")) handler = saveAttendanceDocument;
     else if (event.target.matches("[data-admin-attendance-form]")) handler = recordAdminAttendance;
+    else if (event.target.matches("[data-delete-admin-attendance-form]")) handler = deleteAdminAttendance;
     else if (event.target.matches("[data-walk-in-search-form]")) handler = searchWalkInCandidates;
     else if (event.target.matches("[data-guest-walk-in-form]")) handler = addGuestWalkInAttendee;
     else if (event.target.matches("[data-sms-test-form]")) handler = handleSmsTestSubmit;
