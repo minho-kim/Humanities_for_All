@@ -4056,15 +4056,21 @@ function renderPostCourseResponseEditor(course) {
     if (!canShowPostCourseContent(course)) return "";
     const accessGuide = state.user
       ? "교육 신청과 참석 확인이 완료된 참여자만 공개 후기를 작성할 수 있습니다. 익명 교육 피드백은 교육 종료 후 현장의 피드백 QR로 받습니다."
-      : "비회원 참여자는 신청 확인 문자에 포함된 안전한 확인 링크로 접속하면 참석 확인 후 공개 후기를 작성할 수 있습니다. 익명 교육 피드백은 교육 종료 후 현장의 피드백 QR로 받습니다.";
+      : "회원으로 신청하거나 출석하셨다면 당시 사용한 계정으로 로그인해 주세요. 로그인 후 참석 내역을 확인하여 공개 후기를 작성할 수 있습니다.";
     const accessBadge = state.user
       ? "참석 확인이 작성 권한 기준입니다"
-      : "이름과 전화번호만으로는 작성 권한을 확인하지 않습니다";
+      : "참석한 계정으로 로그인해 주세요";
     return `
       <div class="section" style="grid-column: 1 / -1;">
         <h3>교육 후기</h3>
         <div class="table-row">
           <p>${escapeHtml(accessGuide)}</p>
+          ${!state.user ? `
+            <div class="actions">
+              <button class="btn small" type="button" data-login-for-review>로그인하고 공개 후기 작성</button>
+            </div>
+            <p class="muted">비회원으로 참여하셨다면 신청 확인 문자에 포함된 안전한 확인 링크로 접속해 주세요. 참석 확인 후 공개 후기를 작성할 수 있습니다. 익명 교육 피드백은 교육 종료 후 현장의 피드백 QR로 받습니다.</p>
+          ` : ""}
           <span class="badge gray">${escapeHtml(accessBadge)}</span>
         </div>
       </div>
@@ -6649,7 +6655,7 @@ function bindEvents() {
         if (reviewAccordion) reviewAccordion.open = true;
         reviewForm.scrollIntoView({ behavior: "smooth", block: "start" });
       }
-      else openModal(elements.loginModal);
+      else openAuthModal("login", loginForReview);
       return;
     }
     if (loginForApplication) {
